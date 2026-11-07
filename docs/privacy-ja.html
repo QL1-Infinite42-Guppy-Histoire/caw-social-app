@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CAW Social — プライバシーポリシー</title>
+<meta name="description" content="CAW Social Android アプリのプライバシーポリシー：ノンカストディアルなオンチェーン SNS。あなたのキーはスマホの外に出ません。分析・広告・トラッカーなし。">
+<meta name="theme-color" content="#ffffff">
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="stylesheet" href="style.css?v=2">
+</head>
+<body>
+
+<div class="brandbar">
+  <div class="brandbar-inner">
+    <a class="brandbar-name" href="https://ql1-infinite42-guppy-histoire.github.io/links/" target="_blank" rel="noopener">🐟 Guppy's Guide <span class="brandbar-sub">（グッピーズガイド）</span></a>
+    <span class="brandbar-tag">Don't Panic — a hitchhiker's toolbox for 42 Chain &amp; QL1</span>
+    <a class="brandbar-more" href="https://ql1-infinite42-guppy-histoire.github.io/links/" target="_blank" rel="noopener">Guppy's Guide の他の製品 →</a>
+  </div>
+</div>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <img class="logo" src="icon.png" alt="">
+    <div>
+      <div class="title">CAW Social</div>
+      <div class="tag">プライバシーポリシー</div>
+    </div>
+    <div class="langs"><a href="privacy.html">English</a><a href="privacy-ja.html" class="active">日本語</a></div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="hero">
+    <h1>プライバシーポリシー</h1>
+    <p class="lead">CAW Social は、QL1 チェーン上の SNS「CAW」のための、コミュニティ製・ノンカストディアル（資産を預からない）アプリです。発行元は Guppy's Guide（QL1-Infinite42-Guppy-Histoire）で、CAW 公式チームが運営するものではありません。このページでは、アプリがあなたの情報をどう扱うかを分かりやすい言葉で説明します。対象は CAW Social の Android アプリです。</p>
+    <p>最終更新：2026年11月8日</p>
+  </div>
+
+  <section>
+    <h2>要点</h2>
+    <ul class="feats">
+      <li>ウォレットのキーと復旧フレーズは、<b>あなたのスマホの中だけ</b>で作られ、保存されます。私たちにも、誰にも、送られることはありません。</li>
+      <li>このアプリのための<b>サーバーは運用していません</b>し、<b>ユーザーアカウントもありません</b>。</li>
+      <li>アプリに<b>アクセス分析・広告・トラッキングは入っていません</b>。</li>
+      <li>ブロックチェーン上で行うこと — 投稿、いいね、フォロー、送金、スワップ — は、パブリックチェーンの性質上<b>誰でも見られる公開情報</b>です。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>ウォレットとキーについて</h2>
+    <p>CAW Social はノンカストディアルのウォレットアプリです。ウォレットを作成・インポートすると、秘密キー／復旧フレーズは端末の安全な保存領域にのみ保存され、アプリのパスワードまたは端末の生体認証で守られます。キーや復旧フレーズが外部に送信されることは決してなく、私たちがそれを見たり、復旧したり、リセットしたりすることもできません。復旧フレーズを失うと、私たちを含め誰もあなたのウォレットを元に戻せません。</p>
+  </section>
+
+  <section>
+    <h2>スマホの中にだけ保存されるもの</h2>
+    <p>次のものは端末内にだけ保存され、アップロードされることはありません：アプリの設定と言語、アドレス帳、投稿の下書き、フォロー中の名前、そしてプロフィール画像に選んだ写真（選んだ写真はこのスマホの中にだけあります）。</p>
+  </section>
+
+  <section>
+    <h2>スマホの外と通信するものと、その理由</h2>
+    <p>タイムラインの読み込みとウォレットの利用のために、アプリは公開されているブロックチェーンの基盤に直接つなぎます。これらのサービスには、他のブロックチェーンアプリと同様に、あなたの端末の IP アドレスと、リクエストに関わるウォレットアドレスが見えます：</p>
+    <ul class="feats">
+      <li><b>ブロックチェーンのノード（RPC）</b> — QL1、42 Chain、BNB Smart Chain、Ethereum。残高・タイムライン・価格をチェーン上のデータから読み取ることと、あなたが確認した取引を送信するために使います。</li>
+      <li><b>ブロックエクスプローラーの API</b>（scan.qom.network と scan.infinitedrive.xyz）— 投稿や取引の履歴を読み取るために使います。</li>
+      <li><b>公開 IPFS ゲートウェイ</b>（ipfs.io）— チェーン上に記録されたプロフィール画像を読み込むために使います。</li>
+    </ul>
+    <p>これらのサービスは私たちが管理するものではなく、あなたのリクエストのコピーが私たちに届くこともありません。あなたが確認して署名した取引はブロックチェーンに送信され、永久に残る公開記録になります。CAW の送金・スワップ・ブリッジ、投稿・いいね・フォローも含まれます。公開したくない内容はチェーン上に投稿しないでください。</p>
+  </section>
+
+  <section>
+    <h2>権限について</h2>
+    <ul class="feats">
+      <li><b>生体認証</b> — 有効にした場合のみ、アプリのロック解除と操作の確認に使います。</li>
+      <li><b>写真</b> — システムの写真ピッカーで、プロフィール画像に使う1枚を選ぶためだけに使います。写真ライブラリ全体を読み取ることはありません。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>お子様について</h2>
+    <p>このアプリは暗号資産ウォレット兼 SNS クライアントです。お子様向けではなく、お住まいの国で暗号資産サービスの利用が法的に認められていない方の利用には適しません。</p>
+  </section>
+
+  <section>
+    <h2>このポリシーの変更</h2>
+    <p>内容が変わる場合は、このページを更新し、「最終更新」の日付を新しいものにします。このアプリは MIT ライセンスのオープンソースなので、データの扱いに関する変更は公開ソースコードでも確認できます。</p>
+  </section>
+
+  <section>
+    <h2>お問い合わせ</h2>
+    <p>このポリシーについての質問は、アプリの公開リポジトリの Issue へお願いします — <a href="https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/issues" target="_blank" rel="noopener">github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/issues</a>。ソースコード：<a href="https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app" target="_blank" rel="noopener">github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app</a>。</p>
+  </section>
+
+  <footer>
+    <p class="foot-brand">🐟 <a href="https://ql1-infinite42-guppy-histoire.github.io/links/" target="_blank" rel="noopener">Guppy's Guide（グッピーズガイド）</a></p>
+    <p class="foot-tag">Don't Panic — a hitchhiker's toolbox for 42 Chain &amp; QL1</p>
+    <p><a href="ja.html">← ダウンロードページに戻る</a></p>
+  </footer>
+
+</div>
+</body>
+</html>

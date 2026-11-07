@@ -14,9 +14,20 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.3.10** — released 2026-11-08.
+- **現在版 / Current: v0.3.11** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.10/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.11/caw-social.apk
+  v0.3.11 changes no app behavior — it is Google Play
+  submission prep. The Actions workflow now also builds a
+  signed Android App Bundle (caw-social.aab, attached to the
+  Release next to the APK) via the production EAS profile,
+  signed with the same keystore as the APK. The app already
+  targets Android API 36 (verified in the built v0.3.10 APK),
+  which is what Play requires of new apps. Also added: a
+  privacy policy page for the store listing
+  (docs/privacy.html / docs/privacy-ja.html, live on the
+  download site) and listing drafts + a declaration checklist
+  (docs/play-listing.md).
   v0.3.10 is a small UX fix on top of v0.3.9: the restart
   notice shown when switching language across the RTL
   boundary fired on EVERY later switch in a Persian-booted

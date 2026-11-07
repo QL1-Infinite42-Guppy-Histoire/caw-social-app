@@ -55,3 +55,22 @@ jobs:
           name: caw-social-apk
           path: ${{ runner.temp }}/caw-social.apk
           if-no-files-found: error
+
+      # Google Play deliverable: same code, production EAS profile
+      # (buildType app-bundle). EAS keeps ONE Android keystore per
+      # project, so the AAB is signed with the same key as the APK
+      # above — Play App Signing enrollment stays consistent.
+      - name: Build AAB with EAS (local build on this runner)
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          eas build --platform android --profile production --local --non-interactive \
+            --output "${{ runner.temp }}/caw-social.aab"
+          test -s "${{ runner.temp }}/caw-social.aab"
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: caw-social-aab
+          path: ${{ runner.temp }}/caw-social.aab
+          if-no-files-found: error
