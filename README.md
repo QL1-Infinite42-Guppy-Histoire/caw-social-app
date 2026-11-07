@@ -14,9 +14,21 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.3.6** — released 2026-11-08.
+- **現在版 / Current: v0.3.7** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.6/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.7/caw-social.apk
+  v0.3.7 is a small UI/wording release on top of v0.3.6: the
+  v0.3.4 Home mini header is removed (it duplicated the app
+  header — "CAW Social" appeared twice) and its notification
+  bell, unread badge included, now lives in the app header next
+  to the language selector, always visible without scrolling;
+  the wallet card is the first element on Home again. Also, the
+  repost action is renamed from Share/シェア to "Recaw" in all
+  five languages (a fixed term, never translated) — action
+  buttons, the confirm dialog, timeline attribution lines,
+  inbox lines and the "Recawed by" header all use the chain
+  action's own name. (No OS share-sheet exists in the app, so
+  no genuine share label was touched.)
   v0.3.6 is a HOTFIX on top of everything in v0.3.4 (the v0.3.5
   build was superseded before release and folded in here): it
   fixes the critical bug that made EVERY HuntersSwap buy/sell

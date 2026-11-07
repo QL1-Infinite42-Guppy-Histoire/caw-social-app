@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BackHandler,
   Modal,
@@ -28,6 +28,9 @@ import ProfileScreen from './src/screens/ProfileScreen';
 import ComposeScreen from './src/screens/ComposeScreen';
 import PostDetailScreen from './src/screens/PostDetailScreen';
 import { HuntersSwapModal } from './src/screens/HuntersSwapScreen';
+import InboxScreen from './src/screens/InboxScreen';
+import { loadSeen, scanReactions } from './src/lib/inbox';
+import { storeKV } from './src/lib/stores';
 
 function LangToggle() {
   const { lang, changeLang } = useApp();
@@ -49,6 +52,47 @@ function LangToggle() {
 }
 
 function Header() {
+  const { address, myTokens } = useApp();
+  const [inboxOpen, setInboxOpen] = useState(false);
+  /* Unread-reaction bell (v0.3.7): the v0.3.4 Home mini header
+   * duplicated this app header ("CAW Social" twice), so the mini
+   * header is gone and the bell lives HERE, next to the language
+   * selector — always visible at the top, no scrolling. The badge
+   * machinery is unchanged from v0.3.4: the count is exactly what
+   * the inbox will show (loadSeen + scanReactions), refreshed on
+   * mount, when my names change, and after the inbox closes (the
+   * inbox marks everything seen, so the count drops to zero). */
+  const [unread, setUnread] = useState(0);
+  const badgeBusyRef = useRef(false);
+  const refreshBadge = useCallback(async () => {
+    if (!address || myTokens.length === 0) {
+      setUnread(0);
+      return;
+    }
+    if (badgeBusyRef.current) return;
+    badgeBusyRef.current = true;
+    try {
+      const myIds = new Set(myTokens.map((t) => t.id.toString()));
+      const seen = await loadSeen(storeKV, address);
+      const r = await scanReactions(myIds, seen);
+      setUnread(r.items.length);
+    } catch {
+      /* keep the last count; the next refresh retries */
+    } finally {
+      badgeBusyRef.current = false;
+    }
+  }, [address, myTokens]);
+
+  useEffect(() => {
+    refreshBadge();
+  }, [refreshBadge]);
+
+  const wasInboxOpenRef = useRef(false);
+  useEffect(() => {
+    if (wasInboxOpenRef.current && !inboxOpen) refreshBadge();
+    wasInboxOpenRef.current = inboxOpen;
+  }, [inboxOpen, refreshBadge]);
+
   return (
     <View style={styles.header}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
@@ -58,7 +102,34 @@ function Header() {
           <Text style={S.tiny}>{tr('app.tagline')}</Text>
         </View>
       </View>
-      <LangToggle />
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+        <Pressable
+          onPress={() => setInboxOpen(true)}
+          hitSlop={8}
+          style={({ pressed }) => [
+            styles.bellBtn,
+            pressed && { backgroundColor: '#e3e8ea' },
+          ]}
+          accessibilityLabel={tr('inbox.title')}
+        >
+          <Text style={{ fontSize: 19 }}>🔔</Text>
+          {unread > 0 ? (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>
+                {unread > 99 ? '99+' : String(unread)}
+              </Text>
+            </View>
+          ) : null}
+        </Pressable>
+        <LangToggle />
+      </View>
+      <Modal
+        visible={inboxOpen}
+        animationType="slide"
+        onRequestClose={() => setInboxOpen(false)}
+      >
+        <InboxScreen onClose={() => setInboxOpen(false)} />
+      </Modal>
     </View>
   );
 }
@@ -281,6 +352,31 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   brand: { fontSize: 19, fontWeight: '800', color: '#0f1419' },
+  bellBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#eff3f4',
+    backgroundColor: '#f7f9f9',
+  },
+  badge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    minWidth: 19,
+    height: 19,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    backgroundColor: ACCENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  badgeText: { fontSize: 10.5, fontWeight: '800', color: '#fff' },
   langCycle: { paddingVertical: 6, paddingHorizontal: 8, marginLeft: 8 },
   langCycleText: { fontSize: 13.5, color: '#536471', fontWeight: '600' },
   bottomNav: {

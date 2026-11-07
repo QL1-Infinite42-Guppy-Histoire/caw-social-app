@@ -13,7 +13,6 @@ import {
 import * as Clipboard from 'expo-clipboard';
 
 import {
-  AppLogo,
   Avatar,
   ConfirmSheet,
   HAIRLINE,
@@ -32,9 +31,6 @@ import {
   buildFollowIndex,
   refinedFollowListsOf,
 } from '../lib/followIndex';
-import { loadSeen, scanReactions } from '../lib/inbox';
-import { storeKV } from '../lib/stores';
-import InboxScreen from './InboxScreen';
 import SearchScreen from './SearchScreen';
 import SendScreen from './SendScreen';
 
@@ -63,7 +59,6 @@ export default function TimelineScreen() {
   );
   const [loading, setLoading] = useState(!feedCache);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [inboxOpen, setInboxOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   /* "Following" feed (v0.2.0): posts + shares by the names my
    * acting name follows, filtered from the same public feed. */
@@ -256,45 +251,6 @@ export default function TimelineScreen() {
     }
   }, [app, pending]);
 
-  /* ---------- sticky mini header: unread badge (v0.3.4) ----------
-   * The bell moved out of the scrolling list header into a slim
-   * bar that stays on screen. Its badge is the count of reactions
-   * newer than the inbox read position — the exact same scan the
-   * Inbox screen itself runs (loadSeen + scanReactions), so the
-   * number always matches what opening the bell will show. After
-   * the inbox closes (it marks everything seen), the count is
-   * refreshed and drops to zero. */
-  const [unread, setUnread] = useState(0);
-  const badgeBusyRef = React.useRef(false);
-  const refreshBadge = useCallback(async () => {
-    if (!address || myTokens.length === 0) {
-      setUnread(0);
-      return;
-    }
-    if (badgeBusyRef.current) return;
-    badgeBusyRef.current = true;
-    try {
-      const myIds = new Set(myTokens.map((t) => t.id.toString()));
-      const seen = await loadSeen(storeKV, address);
-      const r = await scanReactions(myIds, seen);
-      setUnread(r.items.length);
-    } catch {
-      /* keep the last count; the next refresh retries */
-    } finally {
-      badgeBusyRef.current = false;
-    }
-  }, [address, myTokens]);
-
-  useEffect(() => {
-    refreshBadge();
-  }, [refreshBadge]);
-
-  const wasInboxOpenRef = React.useRef(false);
-  useEffect(() => {
-    if (wasInboxOpenRef.current && !inboxOpen) refreshBadge();
-    wasInboxOpenRef.current = inboxOpen;
-  }, [inboxOpen, refreshBadge]);
-
   /* ---------- wallet card identity + address chip (v0.3.4) ---------- */
   const actingCustom = acting ? app.customFor(acting.id) : undefined;
   const displayName = acting
@@ -314,33 +270,6 @@ export default function TimelineScreen() {
     setAddrCopied(true);
     setTimeout(() => setAddrCopied(false), 2000);
   }, [address]);
-
-  const miniHeader = (
-    <View style={styles.miniHeader}>
-      <View style={styles.miniBrand}>
-        <AppLogo size={26} />
-        <Text style={styles.miniBrandText}>{tr('app.name')}</Text>
-      </View>
-      <Pressable
-        onPress={() => setInboxOpen(true)}
-        hitSlop={8}
-        style={({ pressed }) => [
-          styles.bellBtn,
-          pressed && { backgroundColor: '#e3e8ea' },
-        ]}
-        accessibilityLabel={tr('inbox.title')}
-      >
-        <Text style={{ fontSize: 19 }}>🔔</Text>
-        {unread > 0 ? (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>
-              {unread > 99 ? '99+' : String(unread)}
-            </Text>
-          </View>
-        ) : null}
-      </Pressable>
-    </View>
-  );
 
   const header = (
     <View>
@@ -453,7 +382,6 @@ export default function TimelineScreen() {
   if (mode === 'latest' && loading && items.length === 0) {
     return (
       <View style={S.screen}>
-        {miniHeader}
         {header}
         <View style={styles.center}>
           <ActivityIndicator color={ACCENT} />
@@ -466,7 +394,6 @@ export default function TimelineScreen() {
   if (mode === 'latest' && loadFailed && items.length === 0) {
     return (
       <View style={S.screen}>
-        {miniHeader}
         {header}
         <View style={styles.center}>
           <Text style={S.err}>{tr('tl.loadFail')}</Text>
@@ -498,7 +425,6 @@ export default function TimelineScreen() {
 
   return (
     <View style={S.screen}>
-      {miniHeader}
       <FlatList
         data={shownItems}
         keyExtractor={(item, idx) => item.hash + ':' + idx}
@@ -593,13 +519,6 @@ export default function TimelineScreen() {
         <SearchScreen onClose={() => setSearchOpen(false)} />
       </Modal>
       <Modal
-        visible={inboxOpen}
-        animationType="slide"
-        onRequestClose={() => setInboxOpen(false)}
-      >
-        <InboxScreen onClose={() => setInboxOpen(false)} />
-      </Modal>
-      <Modal
         visible={sendOpen}
         animationType="slide"
         onRequestClose={() => setSendOpen(false)}
@@ -611,46 +530,6 @@ export default function TimelineScreen() {
 }
 
 const styles = StyleSheet.create({
-  /* Sticky mini header (v0.3.4): rendered OUTSIDE the FlatList, so
-     the bell (and its unread badge) is reachable at any scroll
-     position. */
-  miniHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 7,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: HAIRLINE,
-  },
-  miniBrand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  miniBrandText: { fontSize: 15.5, fontWeight: '800', color: '#0f1419' },
-  bellBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: HAIRLINE,
-    backgroundColor: '#f7f9f9',
-  },
-  badge: {
-    position: 'absolute',
-    top: -5,
-    right: -5,
-    minWidth: 19,
-    height: 19,
-    borderRadius: 10,
-    paddingHorizontal: 5,
-    backgroundColor: ACCENT,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#fff',
-  },
-  badgeText: { fontSize: 10.5, fontWeight: '800', color: '#fff' },
   /* Wallet card (v0.3.4): one clean card — identity + copyable
      address chip on row 1, CAW (large) and QOM (smaller) stats on
      row 2. Numbers are single-line with adjustsFontSizeToFit so
