@@ -354,6 +354,7 @@ function PostCardBase({
   lang,
   onOpenProfile,
   onAction,
+  onOpenPost,
   actionStatus,
   busy,
   liked,
@@ -364,6 +365,8 @@ function PostCardBase({
   lang: string;
   onOpenProfile: (username: string) => void;
   onAction?: (kind: 1 | 2, item: TimelineItem) => void;
+  /** Tap on a post's text opens its detail (v0.2.0). */
+  onOpenPost?: (item: TimelineItem) => void;
   actionStatus?: string;
   busy?: boolean;
   /** This wallet already liked this post (remembered on the device). */
@@ -446,7 +449,13 @@ function PostCardBase({
           </Text>
         </View>
         {item.type === 0 && item.text ? (
-          <Text style={postStyles.text}>{item.text}</Text>
+          onOpenPost ? (
+            <Pressable onPress={() => onOpenPost(item)}>
+              <Text style={postStyles.text}>{item.text}</Text>
+            </Pressable>
+          ) : (
+            <Text style={postStyles.text}>{item.text}</Text>
+          )
         ) : null}
         {item.type === 1 || item.type === 2 ? (
           <TargetPostQuote item={item} lang={lang} onOpenProfile={onOpenProfile} />
@@ -524,6 +533,51 @@ function PostCardBase({
  *  re-renders when its own item or its like/share state changes. */
 export const PostCard = React.memo(PostCardBase);
 
+/**
+ * One name as a tappable row (avatar + @name + #id) — used by the
+ * post detail's liked-by / shared-by lists and the reactions
+ * inbox. The label comes from the name's card, like everywhere
+ * else; a name that cannot be resolved shows as #id only.
+ */
+export function NameRow({
+  nameId,
+  onOpenProfile,
+  right,
+}: {
+  nameId: bigint;
+  onOpenProfile: (username: string) => void;
+  right?: React.ReactNode;
+}) {
+  const [label, setLabel] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    resolveName(nameId)
+      .then((n) => live && setLabel(n))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [nameId]);
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        postStyles.nameRow,
+        pressed && { backgroundColor: '#f7f9f9' },
+      ]}
+      onPress={label ? () => onOpenProfile(label) : undefined}
+    >
+      <Avatar nameId={nameId} size={40} />
+      <View style={{ flex: 1, marginLeft: 10 }}>
+        <Text style={postStyles.name}>
+          {label ? '@' + label : tr('tl.unknownName') + nameId.toString()}
+        </Text>
+        <Text style={S.tiny}>#{nameId.toString()}</Text>
+      </View>
+      {right ?? null}
+    </Pressable>
+  );
+}
+
 const postStyles = StyleSheet.create({
   post: {
     flexDirection: 'row',
@@ -534,6 +588,15 @@ const postStyles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   name: { fontSize: 15, fontWeight: '700', color: '#0f1419' },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: HAIRLINE,
+    backgroundColor: '#fff',
+  },
   text: { fontSize: 15, color: '#0f1419', lineHeight: 21, marginTop: 2 },
   quote: {
     borderWidth: 1,

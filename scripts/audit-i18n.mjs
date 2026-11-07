@@ -79,6 +79,11 @@ const BUDGETS = [
     why: 'profile counts + list tabs share rows',
   },
   {
+    keys: ['tl.tabLatest', 'tl.tabFollowing'],
+    max: 17,
+    why: 'timeline segment tabs share one row (v0.2.0)',
+  },
+  {
     keys: [
       'act.like', 'act.share', 'act.follow', 'act.followed',
       'act.following', 'act.sending', 'act.done',
@@ -89,6 +94,8 @@ const BUDGETS = [
       'settings.lockNow', 'custom.save', 'custom.edit', 'profile.retry',
       'mine.deposit', 'mine.withdraw', 'unlock.open', 'wallet.done',
       'wallet.savedIt', 'wallet.importBtn',
+      'draft.discard', 'wallets.add', 'wallets.deleteOne',
+      'detail.likedBy', 'detail.sharedBy',
     ],
     max: 26,
     why: 'button labels',

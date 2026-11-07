@@ -14,9 +14,38 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.1.5** — released 2026-11-08.
+- **現在版 / Current: v0.2.0** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.1.5/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.2.0/caw-social.apk
+  v0.2.0 adds the five features approved the night before:
+  - **"Following" timeline.** Home gains Latest / Following tabs;
+    the Following tab shows only posts and shares by the names
+    your acting name follows (same follow index as the profile
+    lists).
+  - **Reactions to you.** A bell on Home opens an in-app inbox:
+    likes / shares on your names' posts and follows of your names
+    since you last opened it. There is no server, so there are no
+    push notifications — the page says so, gathers everything on
+    the phone, and remembers the read position per wallet.
+  - **Post detail.** Tapping a post opens its page with the names
+    that liked it and the names that shared it, gathered from the
+    feed between the post and now. Cross-checked live against the
+    chain's own like counter (`scripts/verify-reactions.mjs`,
+    9/9; like lists matched `likesCount` exactly on 6/6 sampled
+    posts).
+  - **Drafts.** The composer auto-saves on this phone as you type
+    and restores the draft when reopened; posting clears it.
+  - **Multiple wallets.** Keep several wallets on one phone and
+    switch between them in Settings (switching asks for
+    authentication; each wallet has its own names, acting name,
+    drafts and reaction state, and keys stay in SecureStore only).
+    The v0.1.x single wallet is adopted automatically.
+  - **Tips: deliberately NOT included.** The action format has two
+    tip lists, but a full-corpus scan (all 6,044 processAction
+    transactions / 5,297 actions) found not one action that uses
+    them — there is no real behaviour to verify a tip button
+    against, so none was built.
+  Previous release: v0.1.5 (2026-11-08) —
   v0.1.5 fixes the two safe-area problems reported from real-device
   use — the orange compose button sat half-hidden under the bottom
   tab bar, and the compose screen's title and close button slid
@@ -147,15 +176,18 @@ longer works. This app keeps the key on your phone (Android
 Keystore-backed secure storage) and signs in-app, exactly like the
 original signers did.
 
-## Features (v0.1.5)
+## Features (v0.2.0)
 
 - Wallet: create new (secret words) or import (secret words / private
   key). QL1 only. Unlock by password or biometrics — asked when the
   app opens and again before every signature.
 - Timeline in the familiar X style (white, one accent colour), with
-  like / share / follow context lines.
+  like / share / follow context lines, plus a Following tab and a
+  reactions inbox (in-app only — no server, no push).
+- Tap a post for its detail page: who liked it, who shared it.
 - Post, like, share, follow — confirmed on a sheet, signed in-app,
-  sent as a `processAction` batch.
+  sent as a `processAction` batch. Drafts auto-save on the phone.
+- Several wallets on one phone, switchable in Settings.
 - Profile pages: banner + avatar in the X layout, Following /
   Followers counts with tappable lists, that name's posts, follow
   button.

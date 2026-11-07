@@ -18,6 +18,7 @@ import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
 import { textBytes, type CawAction } from '../lib/cawCore';
+import { clearDraft, loadDraft, saveDraft } from '../lib/drafts';
 import { nowSec, randomCawId, submitAction } from '../lib/wallet';
 
 export default function ComposeScreen({ onClose }: { onClose: () => void }) {
@@ -30,7 +31,10 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState('');
   const [statusOk, setStatusOk] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const postedRef = useRef(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const scrollRef = useRef<any>(null);
 
@@ -47,6 +51,17 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     app.refreshMyTokens().catch(() => {});
+    // Restore this wallet's saved draft, if any (v0.2.0).
+    if (app.address) {
+      loadDraft(app.address)
+        .then((d) => {
+          if (d && d.text.trim().length > 0) {
+            setText(d.text);
+            setDraftRestored(true);
+          }
+        })
+        .catch(() => {});
+    }
     const sub = Keyboard.addListener(
       'keyboardDidShow',
       scrollComposerIntoView,
@@ -54,9 +69,33 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
     return () => {
       sub.remove();
       if (timerRef.current) clearTimeout(timerRef.current);
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-save the draft as the user types (debounced, on-device
+  // only). A successful post clears it in doPost.
+  useEffect(() => {
+    if (!app.address || postedRef.current) return;
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = setTimeout(() => {
+      if (app.address) {
+        saveDraft(app.address, {
+          text,
+          actingId: actingId ? actingId.toString() : null,
+          savedAt: Date.now(),
+        }).catch(() => {});
+      }
+    }, 500);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text]);
+
+  const discardDraft = async () => {
+    if (app.address) await clearDraft(app.address);
+    setText('');
+    setDraftRestored(false);
+  };
 
   const acting =
     myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
@@ -90,6 +129,8 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
         text: trimmed,
       };
       await submitAction(secret.kind, secret.secret, action);
+      postedRef.current = true;
+      if (app.address) await clearDraft(app.address);
       setConfirmOpen(false);
       setStatusOk(true);
       setStatus(tr('compose.posted'));
@@ -224,6 +265,20 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
                 {remaining}
               </Text>
             </View>
+            {draftRestored ? (
+              <View style={[S.row, { marginTop: 8, gap: 12 }]}>
+                <Text style={S.small}>{tr('draft.restored')}</Text>
+                <Pressable onPress={discardDraft} hitSlop={6}>
+                  <Text style={[S.small, { color: ACCENT, fontWeight: '700' }]}>
+                    {tr('draft.discard')}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : text.trim().length > 0 ? (
+              <Text style={[S.tiny, { marginTop: 8 }]}>
+                {tr('draft.autoSaved')}
+              </Text>
+            ) : null}
 
             {sending ? (
               <View style={[S.row, { marginTop: 14, gap: 8 }]}>

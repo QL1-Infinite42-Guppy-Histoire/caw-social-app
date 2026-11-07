@@ -5,23 +5,33 @@ import * as SecureStore from 'expo-secure-store';
 import { tr } from '../i18n';
 
 /**
- * Wallet secret storage (single wallet, QL1 only).
+ * Wallet secret storage (multiple wallets since v0.2.0, QL1 only).
  *
- * The secret words / private key live ONLY here, inside
+ * The secret words / private keys live ONLY here, inside
  * expo-secure-store (Android Keystore-backed,
- * WHEN_UNLOCKED_THIS_DEVICE_ONLY). They are never written to
- * AsyncStorage, files, or logs, and never sent anywhere. A separate
- * public record (address only) lets the UI show the address while
- * locked.
+ * WHEN_UNLOCKED_THIS_DEVICE_ONLY) — one record per wallet address.
+ * They are never written to AsyncStorage, files, or logs, and never
+ * sent anywhere. A public registry (addresses + kinds only) lets
+ * the UI list wallets and show the active address while locked.
  *
- * Unlock: an app password (salted SHA-256 verifier, the password itself
- * is never stored) and/or device biometrics — the user's choice at
- * setup. The gate is checked when the app opens and again before every
- * signature, like the user's other wallet.
+ * v0.1.x kept a single wallet under the legacy keys below. On first
+ * use the legacy wallet is adopted into the registry and its secret
+ * is copied to the per-address key (verified by reading it back
+ * before the legacy secret is removed), so existing users keep
+ * their wallet untouched.
+ *
+ * Unlock: an app password (salted SHA-256 verifier, the password
+ * itself is never stored) and/or device biometrics — one app-level
+ * gate for all wallets, checked when the app opens and again before
+ * every signature, like the user's other wallet.
  */
 
 const SECRET_KEY = 'caw.wallet.secret.v1';
 const PUBLIC_KEY = 'caw.wallet.public.v1';
+const LIST_KEY = 'caw.wallets.list.v2';
+const ACTIVE_KEY = 'caw.wallets.active.v2';
+const secretKeyFor = (address: string) =>
+  'caw.wallet.secret.' + address.toLowerCase();
 const UNLOCK_METHOD_KEY = 'caw.wallet.unlockMethod.v1';
 const PW_VERIFIER_KEY = 'caw.wallet.pwVerifier.v1';
 const STORE_OPTIONS = {
@@ -128,15 +138,103 @@ export async function verifyPassword(password: string): Promise<boolean> {
   }
 }
 
-/* ---------- wallet records ---------- */
-export async function getWalletPublicInfo(): Promise<WalletPublicInfo | null> {
+/* ---------- wallet records (multi-wallet registry) ---------- */
+
+async function readList(): Promise<WalletPublicInfo[] | null> {
   try {
-    const raw = await SecureStore.getItemAsync(PUBLIC_KEY, STORE_OPTIONS);
+    const raw = await SecureStore.getItemAsync(LIST_KEY, STORE_OPTIONS);
     if (!raw) return null;
-    return JSON.parse(raw) as WalletPublicInfo;
+    const list = JSON.parse(raw) as WalletPublicInfo[];
+    return Array.isArray(list) ? list : null;
   } catch {
     return null;
   }
+}
+
+async function writeList(list: WalletPublicInfo[]): Promise<void> {
+  await SecureStore.setItemAsync(
+    LIST_KEY,
+    JSON.stringify(list),
+    STORE_OPTIONS,
+  );
+}
+
+/**
+ * Adopt the v0.1.x single wallet into the registry, once. The
+ * secret copy is read back and compared before the legacy secret
+ * is deleted; on any doubt the legacy records are left in place
+ * and reads keep falling back to them.
+ */
+let migrated = false;
+async function ensureMigrated(): Promise<void> {
+  if (migrated) return;
+  migrated = true;
+  try {
+    if ((await readList()) !== null) return;
+    const raw = await SecureStore.getItemAsync(PUBLIC_KEY, STORE_OPTIONS);
+    if (!raw) return;
+    const info = JSON.parse(raw) as WalletPublicInfo;
+    await writeList([info]);
+    await SecureStore.setItemAsync(ACTIVE_KEY, info.address, STORE_OPTIONS);
+    const legacySecret = await SecureStore.getItemAsync(
+      SECRET_KEY,
+      STORE_OPTIONS,
+    );
+    if (legacySecret) {
+      await SecureStore.setItemAsync(
+        secretKeyFor(info.address),
+        legacySecret,
+        STORE_OPTIONS,
+      );
+      const check = await SecureStore.getItemAsync(
+        secretKeyFor(info.address),
+        STORE_OPTIONS,
+      );
+      if (check === legacySecret) {
+        await SecureStore.deleteItemAsync(SECRET_KEY, STORE_OPTIONS);
+      }
+    }
+  } catch {
+    /* legacy reads still work as a fallback */
+  }
+}
+
+export async function listWallets(): Promise<WalletPublicInfo[]> {
+  await ensureMigrated();
+  const list = await readList();
+  if (list) return list;
+  // Registry unreadable/absent: fall back to the legacy record.
+  try {
+    const raw = await SecureStore.getItemAsync(PUBLIC_KEY, STORE_OPTIONS);
+    if (!raw) return [];
+    return [JSON.parse(raw) as WalletPublicInfo];
+  } catch {
+    return [];
+  }
+}
+
+export async function getActiveWalletInfo(): Promise<WalletPublicInfo | null> {
+  const list = await listWallets();
+  if (list.length === 0) return null;
+  try {
+    const active = await SecureStore.getItemAsync(ACTIVE_KEY, STORE_OPTIONS);
+    const found = active
+      ? list.find((w) => w.address.toLowerCase() === active.toLowerCase())
+      : undefined;
+    return found ?? list[0];
+  } catch {
+    return list[0];
+  }
+}
+
+/** The ACTIVE wallet's public info (kept name from the single-wallet era). */
+export async function getWalletPublicInfo(): Promise<WalletPublicInfo | null> {
+  return getActiveWalletInfo();
+}
+
+export async function setActiveWallet(address: string): Promise<void> {
+  await ensureMigrated();
+  await SecureStore.setItemAsync(ACTIVE_KEY, address, STORE_OPTIONS);
 }
 
 export async function saveWallet(
@@ -144,12 +242,22 @@ export async function saveWallet(
   secret: string,
   info: WalletPublicInfo,
 ): Promise<void> {
+  await ensureMigrated();
   const secretRecord: WalletSecret = { kind, secret };
   await SecureStore.setItemAsync(
-    SECRET_KEY,
+    secretKeyFor(info.address),
     JSON.stringify(secretRecord),
     STORE_OPTIONS,
   );
+  const list = await listWallets();
+  const next = list.filter(
+    (w) => w.address.toLowerCase() !== info.address.toLowerCase(),
+  );
+  next.push(info);
+  await writeList(next);
+  await SecureStore.setItemAsync(ACTIVE_KEY, info.address, STORE_OPTIONS);
+  // Keep the legacy public record pointing at the active wallet so
+  // any older code path still sees a consistent address.
   await SecureStore.setItemAsync(
     PUBLIC_KEY,
     JSON.stringify(info),
@@ -157,7 +265,24 @@ export async function saveWallet(
   );
 }
 
-export async function loadWalletSecret(): Promise<WalletSecret | null> {
+/** Secret of the given wallet, or of the active one when omitted. */
+export async function loadWalletSecret(
+  address?: string,
+): Promise<WalletSecret | null> {
+  await ensureMigrated();
+  const target =
+    address ?? (await getActiveWalletInfo())?.address ?? null;
+  if (target) {
+    try {
+      const raw = await SecureStore.getItemAsync(
+        secretKeyFor(target),
+        STORE_OPTIONS,
+      );
+      if (raw) return JSON.parse(raw) as WalletSecret;
+    } catch {
+      /* fall through to the legacy slot */
+    }
+  }
   try {
     const raw = await SecureStore.getItemAsync(SECRET_KEY, STORE_OPTIONS);
     if (!raw) return null;
@@ -167,9 +292,45 @@ export async function loadWalletSecret(): Promise<WalletSecret | null> {
   }
 }
 
+/** Remove one wallet (secret + registry entry); fixes the active pointer. */
+export async function deleteWalletByAddress(address: string): Promise<void> {
+  await ensureMigrated();
+  await SecureStore.deleteItemAsync(secretKeyFor(address), STORE_OPTIONS);
+  const list = (await listWallets()).filter(
+    (w) => w.address.toLowerCase() !== address.toLowerCase(),
+  );
+  await writeList(list);
+  const active = await getActiveWalletInfo();
+  if (!active || active.address.toLowerCase() === address.toLowerCase()) {
+    if (list.length > 0) {
+      await SecureStore.setItemAsync(
+        ACTIVE_KEY,
+        list[0].address,
+        STORE_OPTIONS,
+      );
+      await SecureStore.setItemAsync(
+        PUBLIC_KEY,
+        JSON.stringify(list[0]),
+        STORE_OPTIONS,
+      );
+    } else {
+      await SecureStore.deleteItemAsync(ACTIVE_KEY, STORE_OPTIONS);
+      await SecureStore.deleteItemAsync(PUBLIC_KEY, STORE_OPTIONS);
+    }
+  }
+}
+
+/** Remove ALL wallets and the app unlock setup (the Settings danger zone). */
 export async function deleteWallet(): Promise<void> {
+  await ensureMigrated();
+  const list = await listWallets();
+  for (const w of list) {
+    await SecureStore.deleteItemAsync(secretKeyFor(w.address), STORE_OPTIONS);
+  }
   await SecureStore.deleteItemAsync(SECRET_KEY, STORE_OPTIONS);
   await SecureStore.deleteItemAsync(PUBLIC_KEY, STORE_OPTIONS);
+  await SecureStore.deleteItemAsync(LIST_KEY, STORE_OPTIONS);
+  await SecureStore.deleteItemAsync(ACTIVE_KEY, STORE_OPTIONS);
   await SecureStore.deleteItemAsync(UNLOCK_METHOD_KEY, STORE_OPTIONS);
   await SecureStore.deleteItemAsync(PW_VERIFIER_KEY, STORE_OPTIONS);
 }

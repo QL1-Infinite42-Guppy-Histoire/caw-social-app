@@ -17,6 +17,7 @@ import {
   type TimelineItem,
 } from '../lib/cawApi';
 import type { NameToken } from '../lib/cawCore';
+import { initDrafts } from '../lib/drafts';
 import { initFollowIndex } from '../lib/followIndex';
 import { initNameDirectory } from '../lib/nameDirectory';
 import type { MyActionKind } from '../lib/myActions';
@@ -27,9 +28,12 @@ import {
   authenticate,
   getUnlockMethod,
   getWalletPublicInfo,
+  listWallets,
   loadWalletSecret,
+  setActiveWallet,
   verifyPassword,
   type WalletKind,
+  type WalletPublicInfo,
 } from '../lib/walletStore';
 
 export type Tab = 'home' | 'get' | 'mine' | 'settings';
@@ -85,12 +89,21 @@ export interface AppContextValue {
     patch: Partial<ProfileCustom>,
   ) => Promise<ProfileCustom>;
   clearCustom: (id: bigint) => Promise<ProfileCustom | undefined>;
+  /* wallets (v0.2.0: several can be kept on this phone) */
+  wallets: WalletPublicInfo[];
+  /** Switch the active wallet (asks for authentication first). */
+  switchWallet: (address: string) => Promise<boolean>;
+  /** Re-read the wallet registry after an add/delete in Settings. */
+  refreshWalletState: () => Promise<void>;
   /* navigation */
   tab: Tab;
   setTab: (t: Tab) => void;
   profileName: string | null;
   openProfile: (username: string) => void;
   closeProfile: () => void;
+  postDetail: TimelineItem | null;
+  openPost: (item: TimelineItem) => void;
+  closePost: () => void;
   composeOpen: boolean;
   setComposeOpen: (open: boolean) => void;
   /* password prompt plumbing (rendered by App) */
@@ -123,6 +136,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [myTokens, setMyTokens] = useState<NameToken[]>([]);
   const [tab, setTab] = useState<Tab>('home');
   const [profileName, setProfileName] = useState<string | null>(null);
+  const [postDetail, setPostDetail] = useState<TimelineItem | null>(null);
+  const [wallets, setWallets] = useState<WalletPublicInfo[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
   const [pwPrompt, setPwPrompt] = useState<PwPromptState | null>(null);
   const [, setStoreTick] = useState(0);
@@ -138,6 +153,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     profileCustomStore.init(storeKV).catch(() => {});
     initNameDirectory(storeKV);
     initFollowIndex(storeKV);
+    initDrafts(storeKV);
     return () => {
       off1();
       off2();
@@ -164,6 +180,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setAddress(info.address);
           addressRef.current = info.address;
           setUnlockMethod(await getUnlockMethod());
+          setWallets(await listWallets());
         } else {
           setLocked(false); // nothing to unlock — onboarding shows
         }
@@ -284,12 +301,59 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setAddress(info.address);
       addressRef.current = info.address;
       setUnlockMethod(await getUnlockMethod());
+      setWallets(await listWallets());
     }
     await loadSecretIntoMemory();
     setLocked(false);
     refreshBalances();
     refreshMyTokens();
   }, [loadSecretIntoMemory, refreshBalances, refreshMyTokens]);
+
+  /**
+   * Sync all wallet-derived state with the registry's active
+   * wallet (after a switch / add / delete). The secret of the newly
+   * active wallet replaces the in-memory one; per-address stores
+   * (my actions, acting name) re-init through the address effect.
+   */
+  const applyActiveWallet = useCallback(async () => {
+    const info = await getWalletPublicInfo();
+    setWallets(await listWallets());
+    if (!info) return;
+    setHasWallet(true);
+    setAddress(info.address);
+    addressRef.current = info.address;
+    const s = await loadWalletSecret(info.address);
+    secretRef.current = s ? { kind: s.kind, secret: s.secret } : null;
+    setMyTokens([]);
+    setActingId(null);
+    setProfileName(null);
+    setPostDetail(null);
+    setComposeOpen(false);
+    refreshBalances();
+    refreshMyTokens();
+  }, [refreshBalances, refreshMyTokens]);
+
+  const switchWallet = useCallback(
+    async (target: string): Promise<boolean> => {
+      if (
+        addressRef.current &&
+        target.toLowerCase() === addressRef.current.toLowerCase()
+      ) {
+        return true;
+      }
+      const ok = await runAuth();
+      if (!ok) return false;
+      await setActiveWallet(target);
+      await applyActiveWallet();
+      setTab('home');
+      return true;
+    },
+    [runAuth, applyActiveWallet],
+  );
+
+  const refreshWalletState = useCallback(async () => {
+    await applyActiveWallet();
+  }, [applyActiveWallet]);
 
   const actingNow = useCallback((): bigint | null => {
     return actingId ?? (myTokens.length ? myTokens[0].id : null);
@@ -342,6 +406,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     myActionStore.reset();
     setHasWallet(false);
     setAddress(null);
+    setWallets([]);
     setQom(null);
     setQcaw(null);
     setMyTokens([]);
@@ -349,6 +414,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLocked(false);
     setTab('home');
     setProfileName(null);
+    setPostDetail(null);
     setComposeOpen(false);
   }, []);
 
@@ -356,6 +422,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setProfileName(username);
   }, []);
   const closeProfile = useCallback(() => setProfileName(null), []);
+  const openPost = useCallback((item: TimelineItem) => {
+    setPostDetail(item);
+  }, []);
+  const closePost = useCallback(() => setPostDetail(null), []);
 
   const value: AppContextValue = {
     lang,
@@ -384,11 +454,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     customFor,
     saveCustom,
     clearCustom,
+    wallets,
+    switchWallet,
+    refreshWalletState,
     tab,
     setTab,
     profileName,
     openProfile,
     closeProfile,
+    postDetail,
+    openPost,
+    closePost,
     composeOpen,
     setComposeOpen,
     pwPrompt,

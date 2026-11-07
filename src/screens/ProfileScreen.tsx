@@ -545,6 +545,7 @@ export default function ProfileScreen({
             lang={lang}
             onOpenProfile={(name) => app.openProfile(name)}
             onAction={handleAction}
+            onOpenPost={(it) => app.openPost(it)}
             actionStatus={statusByHash[item.hash]}
             busy={!!busyByHash[item.hash]}
             liked={app.hasMyAction(1, item)}

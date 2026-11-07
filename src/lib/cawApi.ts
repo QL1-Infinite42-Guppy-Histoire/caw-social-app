@@ -562,6 +562,56 @@ export async function findPostByCawId(
 }
 
 /**
+ * Who liked / shared one post (v0.2.0 post detail). A reaction can
+ * only exist after its post does, so the walk starts at the newest
+ * feed item and stops once a whole page is older than the post —
+ * every reaction to it sits inside that window. Sender ids are
+ * de-duplicated (a name's repeated identical action adds nothing
+ * to a "who" list). `complete` is false when the page cap stopped
+ * the walk first — possible only for extremely reacted-to old
+ * posts.
+ */
+export async function fetchPostReactions(
+  post: TimelineItem,
+  maxPages = 80,
+): Promise<{ likes: bigint[]; shares: bigint[]; complete: boolean }> {
+  const likes: bigint[] = [];
+  const shares: bigint[] = [];
+  const seenLikes = new Set<string>();
+  const seenShares = new Set<string>();
+  let cursor: Record<string, unknown> | null = null;
+  let complete = false;
+  for (let page = 0; page < maxPages; page++) {
+    const { items, next } = await fetchActionPage(cursor);
+    if (items.length === 0) {
+      complete = true;
+      break;
+    }
+    for (const it of items) {
+      if (it.cawId !== post.cawId) continue;
+      if (it.type === 1 && !seenLikes.has(it.senderId.toString())) {
+        seenLikes.add(it.senderId.toString());
+        likes.push(it.senderId);
+      } else if (it.type === 2 && !seenShares.has(it.senderId.toString())) {
+        seenShares.add(it.senderId.toString());
+        shares.push(it.senderId);
+      }
+    }
+    const lastBlock = items[items.length - 1].block ?? 0;
+    if ((post.block ?? 0) > 0 && lastBlock < (post.block ?? 0)) {
+      complete = true;
+      break;
+    }
+    if (!next) {
+      complete = true;
+      break;
+    }
+    cursor = next;
+  }
+  return { likes, shares, complete };
+}
+
+/**
  * Up to 10 actions by one name. Almost every action on QL1 is
  * submitted by a relay address, so a profile cannot be read from the
  * owner's own transaction list — the contract feed itself has to be

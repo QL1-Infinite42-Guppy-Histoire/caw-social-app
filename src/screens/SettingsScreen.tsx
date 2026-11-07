@@ -1,6 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import React, { useState } from 'react';
 import {
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,13 +14,52 @@ import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { LANGS, tr } from '../i18n';
 import { APP_VERSION } from '../lib/appVersion';
-import { deleteWallet } from '../lib/walletStore';
+import {
+  deleteWallet,
+  deleteWalletByAddress,
+  type WalletPublicInfo,
+} from '../lib/walletStore';
+import AddWalletModal from './AddWalletModal';
 
 export default function SettingsScreen() {
   const app = useApp();
   const [copied, setCopied] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [deleteOne, setDeleteOne] = useState<WalletPublicInfo | null>(null);
+  const [deletingOne, setDeletingOne] = useState(false);
+  const [switching, setSwitching] = useState(false);
+
+  const doDeleteOne = async () => {
+    if (!deleteOne) return;
+    setDeletingOne(true);
+    try {
+      const wasLast = app.wallets.length <= 1;
+      await deleteWalletByAddress(deleteOne.address);
+      if (wasLast) {
+        // Removing the final wallet also clears the unlock setup,
+        // exactly like the full reset below.
+        await deleteWallet();
+        app.onWalletDeleted();
+      } else {
+        await app.refreshWalletState();
+      }
+    } finally {
+      setDeletingOne(false);
+      setDeleteOne(null);
+    }
+  };
+
+  const doSwitch = async (w: WalletPublicInfo) => {
+    if (switching) return;
+    setSwitching(true);
+    try {
+      await app.switchWallet(w.address);
+    } finally {
+      setSwitching(false);
+    }
+  };
 
   const doCopy = async () => {
     if (!app.address) return;
@@ -72,6 +112,50 @@ export default function SettingsScreen() {
         {copied ? <Text style={S.ok}>{tr('settings.copied')}</Text> : null}
       </View>
 
+      {/* wallets (v0.2.0: several can live on this phone) */}
+      <Text style={[S.h2, { marginTop: 24 }]}>{tr('wallets.title')}</Text>
+      {app.wallets.map((w) => {
+        const active =
+          app.address &&
+          w.address.toLowerCase() === app.address.toLowerCase();
+        return (
+          <View key={w.address} style={styles.walletRow}>
+            <Pressable
+              style={{ flex: 1 }}
+              onPress={() => {
+                if (!active) doSwitch(w);
+              }}
+            >
+              <Text style={[S.body, active && { fontWeight: '700' }]}>
+                {w.address.slice(0, 10)}…{w.address.slice(-6)}
+                {active ? '  ✓' : ''}
+              </Text>
+              <Text style={S.tiny}>
+                {w.kind === 'mnemonic'
+                  ? tr('wallets.kindWords')
+                  : tr('wallets.kindKey')}
+                {active ? ' · ' + tr('wallets.inUse') : ''}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setDeleteOne(w)}
+              hitSlop={8}
+              style={styles.walletDel}
+            >
+              <Text style={styles.walletDelText}>
+                {tr('wallets.deleteOne')}
+              </Text>
+            </Pressable>
+          </View>
+        );
+      })}
+      <Pressable
+        style={[S.ghostBtn, { marginTop: 12, alignSelf: 'flex-start' }]}
+        onPress={() => setAddOpen(true)}
+      >
+        <Text style={S.ghostBtnText}>{tr('wallets.add')}</Text>
+      </Pressable>
+
       {/* lock */}
       <Pressable
         style={[S.darkBtn, { marginTop: 26, alignSelf: 'flex-start' }]}
@@ -111,6 +195,34 @@ export default function SettingsScreen() {
         }}
         busy={deleting}
       />
+      <ConfirmSheet
+        visible={!!deleteOne}
+        title={tr('wallets.deleteOne')}
+        body={
+          deleteOne
+            ? tr('wallets.deleteOneWarn', {
+                addr:
+                  deleteOne.address.slice(0, 10) +
+                  '…' +
+                  deleteOne.address.slice(-6),
+              })
+            : undefined
+        }
+        confirmLabel={tr('settings.deleteConfirm')}
+        cancelLabel={tr('settings.cancel')}
+        onConfirm={doDeleteOne}
+        onCancel={() => {
+          if (!deletingOne) setDeleteOne(null);
+        }}
+        busy={deletingOne}
+      />
+      <Modal
+        visible={addOpen}
+        animationType="slide"
+        onRequestClose={() => setAddOpen(false)}
+      >
+        <AddWalletModal onClose={() => setAddOpen(false)} />
+      </Modal>
     </ScrollView>
   );
 }
@@ -142,4 +254,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   deleteBtnText: { color: '#c62828', fontSize: 15, fontWeight: '700' },
+  walletRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#cfd9de',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginTop: 10,
+    gap: 10,
+  },
+  walletDel: { paddingVertical: 6, paddingHorizontal: 4 },
+  walletDelText: { color: '#c62828', fontSize: 13.5, fontWeight: '600' },
 });

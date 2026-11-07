@@ -26,6 +26,7 @@ import MyNamesScreen from './src/screens/MyNamesScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ComposeScreen from './src/screens/ComposeScreen';
+import PostDetailScreen from './src/screens/PostDetailScreen';
 
 function LangToggle() {
   const { lang, changeLang } = useApp();
@@ -65,13 +66,25 @@ const TAB_BAR_HEIGHT = 42;
 function Main() {
   const app = useApp();
   const insets = useSafeAreaInsets();
-  const { tab, setTab, profileName, closeProfile, composeOpen, setComposeOpen } =
-    app;
+  const {
+    tab,
+    setTab,
+    profileName,
+    closeProfile,
+    composeOpen,
+    setComposeOpen,
+    postDetail,
+    closePost,
+  } = app;
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (composeOpen) {
         setComposeOpen(false);
+        return true;
+      }
+      if (postDetail) {
+        closePost();
         return true;
       }
       if (profileName) {
@@ -81,7 +94,7 @@ function Main() {
       return false;
     });
     return () => sub.remove();
-  }, [composeOpen, profileName, setComposeOpen, closeProfile]);
+  }, [composeOpen, profileName, postDetail, setComposeOpen, closeProfile, closePost]);
 
   const tabs: { key: typeof tab; label: string }[] = [
     { key: 'home', label: tr('nav.home') },
@@ -142,6 +155,15 @@ function Main() {
       >
         {profileName ? (
           <ProfileScreen username={profileName} onBack={closeProfile} />
+        ) : null}
+      </Modal>
+      <Modal
+        visible={!!postDetail}
+        animationType="slide"
+        onRequestClose={closePost}
+      >
+        {postDetail ? (
+          <PostDetailScreen post={postDetail} onBack={closePost} />
         ) : null}
       </Modal>
       <Modal

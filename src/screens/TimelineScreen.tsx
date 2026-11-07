@@ -23,6 +23,11 @@ import { tr } from '../i18n';
 import { fetchTimelinePage, type TimelineItem } from '../lib/cawApi';
 import { performAction } from '../lib/actionFlow';
 import { fmtAmount } from '../lib/cawCore';
+import {
+  buildFollowIndex,
+  refinedFollowListsOf,
+} from '../lib/followIndex';
+import InboxScreen from './InboxScreen';
 import SearchScreen from './SearchScreen';
 
 type PendingAction = { kind: 1 | 2; item: TimelineItem };
@@ -50,6 +55,16 @@ export default function TimelineScreen() {
   );
   const [loading, setLoading] = useState(!feedCache);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
+  /* "Following" feed (v0.2.0): posts + shares by the names my
+   * acting name follows, filtered from the same public feed. */
+  const [mode, setMode] = useState<'latest' | 'following'>('latest');
+  const [followSet, setFollowSet] = useState<Set<string> | null>(null);
+  const [fItems, setFItems] = useState<TimelineItem[]>([]);
+  const [fLoading, setFLoading] = useState(false);
+  const [fDone, setFDone] = useState(false);
+  const fCursorRef = React.useRef<Record<string, unknown> | null>(null);
+  const fBusyRef = React.useRef(false);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -91,6 +106,85 @@ export default function TimelineScreen() {
     (username: string) => app.openProfile(username),
     [app],
   );
+  const openPostCb = useCallback(
+    (item: TimelineItem) => app.openPost(item),
+    [app],
+  );
+
+  /* ---------- "Following" feed ---------- */
+  // Resolve who the acting name follows (follow index, v0.1.5)
+  // whenever the Following tab is opened or the acting name changes.
+  useEffect(() => {
+    if (mode !== 'following' || !acting) return;
+    let live = true;
+    setFollowSet(null);
+    setFItems([]);
+    setFDone(false);
+    fCursorRef.current = null;
+    buildFollowIndex()
+      .then(() => refinedFollowListsOf(acting.id))
+      .then((lists) => {
+        if (live) {
+          setFollowSet(new Set(lists.following.map((x) => x.toString())));
+        }
+      })
+      .catch(() => {
+        if (live) setFollowSet(new Set());
+      });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, acting?.id]);
+
+  const loadFollowing = useCallback(
+    async (reset: boolean) => {
+      if (!followSet || fBusyRef.current) return;
+      if (!reset && fDone) return;
+      fBusyRef.current = true;
+      setFLoading(true);
+      try {
+        let cursor = reset ? null : fCursorRef.current;
+        const found: TimelineItem[] = [];
+        let done = false;
+        // Followed names may post rarely: walk several pages per
+        // chunk until enough matches turn up or the feed ends.
+        for (let p = 0; p < 25; p++) {
+          const page = await fetchTimelinePage(cursor);
+          for (const it of page.items) {
+            if (
+              (it.type === 0 || it.type === 2) &&
+              followSet.has(it.senderId.toString())
+            ) {
+              found.push(it);
+            }
+          }
+          cursor = page.next;
+          if (!cursor) {
+            done = true;
+            break;
+          }
+          if (found.length >= 8) break;
+        }
+        fCursorRef.current = cursor;
+        setFDone(done);
+        setFItems((prev) => (reset ? found : [...prev, ...found]));
+      } catch {
+        // Keep what we have; pulling again retries.
+      } finally {
+        fBusyRef.current = false;
+        setFLoading(false);
+      }
+    },
+    [followSet, fDone],
+  );
+
+  useEffect(() => {
+    if (mode === 'following' && followSet && fItems.length === 0 && !fDone) {
+      loadFollowing(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, followSet]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -159,15 +253,29 @@ export default function TimelineScreen() {
 
   const header = (
     <View>
-      <Pressable
-        style={({ pressed }) => [
-          styles.searchPill,
-          pressed && { backgroundColor: '#e3e8ea' },
-        ]}
-        onPress={() => setSearchOpen(true)}
-      >
-        <Text style={styles.searchPillText}>🔍 {tr('search.ph')}</Text>
-      </Pressable>
+      <View style={styles.topRow}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.searchPill,
+            { flex: 1 },
+            pressed && { backgroundColor: '#e3e8ea' },
+          ]}
+          onPress={() => setSearchOpen(true)}
+        >
+          <Text style={styles.searchPillText}>🔍 {tr('search.ph')}</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setInboxOpen(true)}
+          hitSlop={10}
+          style={({ pressed }) => [
+            styles.bellBtn,
+            pressed && { backgroundColor: '#e3e8ea' },
+          ]}
+          accessibilityLabel={tr('inbox.title')}
+        >
+          <Text style={{ fontSize: 19 }}>🔔</Text>
+        </Pressable>
+      </View>
       <View style={styles.walletCard}>
         <Text style={styles.walletAddr}>{shortAddress}</Text>
       <View style={[S.row, { marginTop: 8, flexWrap: 'wrap', gap: 16 }]}>
@@ -194,10 +302,35 @@ export default function TimelineScreen() {
           </Text>
         </View>
       </View>
+      <View style={styles.segRow}>
+        <Pressable
+          style={[styles.segBtn, mode === 'latest' && styles.segBtnOn]}
+          onPress={() => setMode('latest')}
+        >
+          <Text
+            style={[styles.segText, mode === 'latest' && styles.segTextOn]}
+          >
+            {tr('tl.tabLatest')}
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.segBtn, mode === 'following' && styles.segBtnOn]}
+          onPress={() => setMode('following')}
+        >
+          <Text
+            style={[
+              styles.segText,
+              mode === 'following' && styles.segTextOn,
+            ]}
+          >
+            {tr('tl.tabFollowing')}
+          </Text>
+        </Pressable>
+      </View>
     </View>
   );
 
-  if (loading && items.length === 0) {
+  if (mode === 'latest' && loading && items.length === 0) {
     return (
       <View style={S.screen}>
         {header}
@@ -209,7 +342,7 @@ export default function TimelineScreen() {
     );
   }
 
-  if (loadFailed && items.length === 0) {
+  if (mode === 'latest' && loadFailed && items.length === 0) {
     return (
       <View style={S.screen}>
         {header}
@@ -229,14 +362,29 @@ export default function TimelineScreen() {
     );
   }
 
+  const shownItems = mode === 'latest' ? items : fItems;
+  const onRefreshList = () => {
+    if (mode === 'following') {
+      setFItems([]);
+      setFDone(false);
+      fCursorRef.current = null;
+      loadFollowing(true);
+    } else {
+      onRefresh();
+    }
+  };
+
   return (
     <View style={S.screen}>
       <FlatList
-        data={items}
+        data={shownItems}
         keyExtractor={(item, idx) => item.hash + ':' + idx}
         ListHeaderComponent={header}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl
+            refreshing={mode === 'latest' ? refreshing : fLoading}
+            onRefresh={onRefreshList}
+          />
         }
         renderItem={({ item }) => (
           <PostCard
@@ -244,6 +392,7 @@ export default function TimelineScreen() {
             lang={lang}
             onOpenProfile={openProfileCb}
             onAction={handleAction}
+            onOpenPost={openPostCb}
             actionStatus={statusByHash[item.hash]}
             busy={!!busyByHash[item.hash]}
             liked={app.hasMyAction(1, item)}
@@ -256,14 +405,37 @@ export default function TimelineScreen() {
         removeClippedSubviews
         ListEmptyComponent={
           <View style={styles.center}>
-            <Text style={S.small}>{tr('tl.empty')}</Text>
+            {mode === 'following' && (fLoading || !followSet) ? (
+              <>
+                <ActivityIndicator color={ACCENT} />
+                <Text style={[S.small, { marginTop: 10 }]}>
+                  {tr('tl.loading')}
+                </Text>
+              </>
+            ) : (
+              <Text style={S.small}>
+                {mode === 'following'
+                  ? acting
+                    ? tr('tl.followingEmpty')
+                    : tr('compose.needName')
+                  : tr('tl.empty')}
+              </Text>
+            )}
           </View>
         }
         ListFooterComponent={
-          next ? (
+          mode === 'latest' ? (
+            next ? (
+              <LoadMoreFooter
+                loading={loadingMore}
+                onPress={loadMore}
+                label={tr('tl.more')}
+              />
+            ) : undefined
+          ) : !fDone && fItems.length > 0 ? (
             <LoadMoreFooter
-              loading={loadingMore}
-              onPress={loadMore}
+              loading={fLoading}
+              onPress={() => loadFollowing(false)}
               label={tr('tl.more')}
             />
           ) : undefined
@@ -297,13 +469,51 @@ export default function TimelineScreen() {
       >
         <SearchScreen onClose={() => setSearchOpen(false)} />
       </Modal>
+      <Modal
+        visible={inboxOpen}
+        animationType="slide"
+        onRequestClose={() => setInboxOpen(false)}
+      >
+        <InboxScreen onClose={() => setInboxOpen(false)} />
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingRight: 12,
+  },
+  bellBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+    marginLeft: 6,
+  },
+  segRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eff3f4',
+    backgroundColor: '#fff',
+  },
+  segBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  segBtnOn: { borderBottomColor: ACCENT },
+  segText: { fontSize: 14.5, color: '#536471', fontWeight: '600' },
+  segTextOn: { color: '#0f1419', fontWeight: '800' },
   searchPill: {
-    marginHorizontal: 16,
+    marginLeft: 16,
+    marginRight: 4,
     marginTop: 12,
     backgroundColor: '#eff3f4',
     borderRadius: 999,
