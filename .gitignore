@@ -50,6 +50,7 @@ scripts/.build-fixes/
 scripts/.build-identity/
 scripts/.build-display/
 scripts/.build-follow/
+scripts/.build-feed/
 scripts/.build-i18n/
 scripts/.build-reactions/
 

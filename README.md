@@ -14,9 +14,28 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.3.11** — released 2026-11-08.
+- **現在版 / Current: v0.3.12** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.11/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.12/caw-social.apk
+  v0.3.12 fixes the "my post does not appear in the timeline"
+  bug (user report 2026-11-08). Root cause: the session page
+  cache in cawApi cached the feed's HEAD page from its first
+  fetch for the whole session, so mounts, pull-to-refresh and
+  the Following walk were all served the same stale first page —
+  a post could be confirmed on-chain yet never show up until
+  the app process restarted. The head page is now shared only
+  while a fetch is in flight and always refetched once settled
+  (deeper cursor pages keep their session cache). On top of
+  that, the post path now records the confirmed post in
+  src/lib/feedSync.ts the moment the send returns its hash:
+  the timeline inserts it at the head immediately and each head
+  refetch reconciles — once the scanned copy of the same tx
+  arrives it takes over, de-duplicated by hash, so no cache
+  clearing is ever needed. The Following feed restarts its
+  walk from the fresh head on the same signal (the persisted
+  follow index is untouched). Verified by
+  scripts/verify-feed.mjs (stubbed explorer; the head-refetch
+  check fails on the pre-fix code, 9/9 after). versionCode 21.
   v0.3.11 changes no app behavior — it is Google Play
   submission prep. The Actions workflow now also builds a
   signed Android App Bundle (caw-social.aab, attached to the

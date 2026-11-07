@@ -26,6 +26,11 @@ import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
 import { fetchTimelinePage, type TimelineItem } from '../lib/cawApi';
+import {
+  insertOwnPost,
+  reconcileOwnPosts,
+  subscribeOwnPosts,
+} from '../lib/feedSync';
 import { performAction } from '../lib/actionFlow';
 import { fmtAmount } from '../lib/cawCore';
 import {
@@ -70,6 +75,13 @@ export default function TimelineScreen() {
   const [fDone, setFDone] = useState(false);
   const fCursorRef = React.useRef<Record<string, unknown> | null>(null);
   const fBusyRef = React.useRef(false);
+  /* Own-post sync plumbing (v0.3.12): mirrors/refs so the
+   * module-level own-post subscription can act on the freshest
+   * closures without re-subscribing. */
+  const followSetRef = React.useRef<Set<string> | null>(null);
+  const loadFollowingRef = React.useRef<((reset: boolean) => Promise<void>) | null>(null);
+  const fTouchedRef = React.useRef(false);
+  const fRefreshWantedRef = React.useRef(false);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -85,7 +97,11 @@ export default function TimelineScreen() {
     setLoadFailed(false);
     try {
       const page = await fetchTimelinePage(null);
-      setItems(page.items);
+      // The head page is always a fresh fetch (cawApi never serves
+      // it settled from the session cache); reconcile keeps a
+      // just-posted own post pinned at the head until the scanned
+      // copy of the same tx shows up in a fetched page.
+      setItems(reconcileOwnPosts(page.items));
       setNext(page.next);
     } catch {
       setLoadFailed(true);
@@ -147,6 +163,7 @@ export default function TimelineScreen() {
       if (!followSet || fBusyRef.current) return;
       if (!reset && fDone) return;
       fBusyRef.current = true;
+      fTouchedRef.current = true;
       setFLoading(true);
       try {
         let cursor = reset ? null : fCursorRef.current;
@@ -179,10 +196,52 @@ export default function TimelineScreen() {
       } finally {
         fBusyRef.current = false;
         setFLoading(false);
+        // A post landed while this walk was in flight (its pages
+        // predate the post): restart the walk once from the head.
+        if (fRefreshWantedRef.current) {
+          fRefreshWantedRef.current = false;
+          fCursorRef.current = null;
+          setFDone(false);
+          setTimeout(() => {
+            loadFollowingRef.current?.(true);
+          }, 0);
+        }
       }
     },
     [followSet, fDone],
   );
+
+  useEffect(() => {
+    loadFollowingRef.current = loadFollowing;
+  }, [loadFollowing]);
+  useEffect(() => {
+    followSetRef.current = followSet;
+  }, [followSet]);
+
+  /* Restart the Following walk from the (always fresh) head so a
+   * new post is picked up promptly. Only when the feed has been
+   * used this mount; if a walk is busy, its finally block retries. */
+  const refreshFollowing = useCallback(() => {
+    if (!followSetRef.current || !fTouchedRef.current) return;
+    if (fBusyRef.current) {
+      fRefreshWantedRef.current = true;
+      return;
+    }
+    fCursorRef.current = null;
+    setFDone(false);
+    loadFollowingRef.current?.(true);
+  }, []);
+
+  /* A post just confirmed (ComposeScreen recorded it in feedSync):
+   * show it at the head of Latest immediately, reconcile with a
+   * fresh head fetch, and refresh the Following walk the same way. */
+  useEffect(() => {
+    return subscribeOwnPosts((item) => {
+      setItems((prev) => insertOwnPost(prev, item));
+      loadFirst();
+      refreshFollowing();
+    });
+  }, [loadFirst, refreshFollowing]);
 
   useEffect(() => {
     if (mode === 'following' && followSet && fItems.length === 0 && !fDone) {

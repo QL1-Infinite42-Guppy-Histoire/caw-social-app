@@ -17,8 +17,10 @@ import { Avatar, ConfirmSheet, S } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
+import { invalidateFeedHead } from '../lib/cawApi';
 import { textBytes, type CawAction } from '../lib/cawCore';
 import { clearDraft, loadDraft, saveDraft } from '../lib/drafts';
+import { noteOwnPost } from '../lib/feedSync';
 import { nowSec, randomCawId, submitAction } from '../lib/wallet';
 
 export default function ComposeScreen({ onClose }: { onClose: () => void }) {
@@ -128,8 +130,20 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
         cawId,
         text: trimmed,
       };
-      await submitAction(secret.kind, secret.secret, action);
+      const hash = await submitAction(secret.kind, secret.secret, action);
       postedRef.current = true;
+      // The tx is confirmed (submitAction waits for the receipt).
+      // Record the post so the timeline shows it at the head the
+      // moment this modal closes — the explorer may still be a few
+      // seconds behind the receipt, so the feed reconciles this
+      // local copy against scanned pages until the scanned copy of
+      // the same hash takes over (see lib/feedSync.ts).
+      invalidateFeedHead();
+      noteOwnPost({
+        ...action,
+        hash,
+        blockTs: new Date().toISOString(),
+      });
       if (app.address) await clearDraft(app.address);
       setConfirmOpen(false);
       setStatusOk(true);

@@ -479,9 +479,31 @@ export function setActionObserver(fn: ((a: CawAction) => void) | null): void {
  * each fetched page (by its cursor) for the session means a profile
  * visit reuses what the timeline already downloaded instead of
  * re-fetching the same 50-transaction pages again and again.
+ *
+ * The HEAD page (cursor null) is the one exception — and the
+ * v0.3.12 bug: caching it settled for the whole session meant
+ * every later "refresh" (timeline mount, pull-to-refresh, the
+ * Following walk) was served the first page exactly as it looked
+ * at the session's first fetch, so a post confirmed on-chain
+ * never appeared until the app process restarted. The head is
+ * therefore only shared while its fetch is IN FLIGHT (concurrent
+ * walks still dedupe to one request) and is never served once
+ * settled: any caller asking for the head gets a fresh read.
  */
 const pageCache = new Map<string, Promise<Page<TimelineItem>>>();
 const PAGE_CACHE_MAX = 160;
+const HEAD_KEY = '__first__';
+
+/**
+ * Drop any in-flight head-page fetch from the cache, so the next
+ * head read starts a new request. The post path calls this when a
+ * send confirms; with the head never served settled it is a
+ * belt-and-braces no-op in most timings, kept so the invalidation
+ * intent is explicit at the call site.
+ */
+export function invalidateFeedHead(): void {
+  pageCache.delete(HEAD_KEY);
+}
 
 async function fetchActionPageUncached(
   next: Record<string, unknown> | null,
@@ -521,13 +543,25 @@ async function fetchActionPageUncached(
 function fetchActionPage(
   next: Record<string, unknown> | null,
 ): Promise<Page<TimelineItem>> {
-  const key = next ? JSON.stringify(next) : '__first__';
+  const key = next ? JSON.stringify(next) : HEAD_KEY;
   const hit = pageCache.get(key);
   if (hit) return hit;
   const p = fetchActionPageUncached(next).catch((e) => {
     pageCache.delete(key); // a failed page must not stick
     throw e;
   });
+  if (next === null) {
+    // Head page: share the in-flight promise only. The moment it
+    // settles it leaves the cache, so the next head read is a
+    // genuine refetch — the feed's head can never go stale for
+    // the rest of the session again.
+    pageCache.set(key, p);
+    const evict = () => {
+      if (pageCache.get(key) === p) pageCache.delete(key);
+    };
+    p.then(evict, evict);
+    return p;
+  }
   if (pageCache.size >= PAGE_CACHE_MAX) {
     const oldest = pageCache.keys().next().value;
     if (oldest) pageCache.delete(oldest);
