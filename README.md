@@ -27,7 +27,12 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
   privacy policy page for the store listing
   (docs/privacy.html / docs/privacy-ja.html, live on the
   download site) and listing drafts + a declaration checklist
-  (docs/play-listing.md).
+  (docs/play-listing.md). It also pins the Android versionCode
+  in app.json (20) with eas.json appVersionSource set to
+  "local": EAS --local builds had silently defaulted
+  versionCode to 1 regardless of the old "remote" setting, so
+  from now on the repo value is authoritative for BOTH the APK
+  and the AAB — bump android.versionCode on every release.
   v0.3.10 is a small UX fix on top of v0.3.9: the restart
   notice shown when switching language across the RTL
   boundary fired on EVERY later switch in a Persian-booted

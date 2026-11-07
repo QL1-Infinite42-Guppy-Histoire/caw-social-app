@@ -165,6 +165,12 @@ from the app's actual behavior and the privacy policy
       additionally require a **closed test with 12+ testers for 14
       days** before Production access is granted — check what
       Play Console shows for the account at submission time.
+- [ ] **Version codes** — `android.versionCode` in app.json is the
+      single source for both the APK and the AAB (eas.json uses
+      appVersionSource "local"). It is 20 in v0.3.11. **Bump it on
+      every release** — Play rejects any upload whose versionCode
+      is not higher than all previous ones, and Android refuses to
+      install a lower-versionCode APK over a higher one.
 - [ ] **Signing** — Upload the `caw-social.aab` from the GitHub
       Release (built by the repo's Actions workflow, production EAS
       profile). It is signed with the same key the GitHub APKs use.
