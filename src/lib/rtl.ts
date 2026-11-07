@@ -20,12 +20,18 @@
  *  - When the user switches language across the RTL boundary,
  *    applyLayoutDirection still sets the I18nManager flags (so
  *    the next start comes up mirrored) but returns true, and the
- *    caller shows a one-time notice in the NEW language asking
- *    for a restart. There is no programmatic reload in this
- *    stack — expo-updates is not installed, and DevSettings.
- *    reload() is a no-op in release builds — so a manual restart
- *    it is. Switching WITHIN the same direction (en<->ja, or
- *    back to the boot language) needs no restart and no notice.
+ *    caller shows a notice in the NEW language asking for a
+ *    restart. There is no programmatic reload in this stack —
+ *    expo-updates is not installed, and DevSettings.reload() is
+ *    a no-op in release builds — so a manual restart it is.
+ *  - The notice fires ONCE PER PENDING-DIRECTION CHANGE
+ *    (v0.3.10): it is owed only when the target direction differs
+ *    both from this session's layout AND from the direction
+ *    already queued for the next launch. In an RTL-booted
+ *    session, fa->en asks for one restart; en->ja right after
+ *    asks for nothing — the restart is already owed and the
+ *    pending direction (LTR) did not move. Switching back to the
+ *    session's own direction clears the pending change silently.
  */
 import { I18nManager } from 'react-native';
 
@@ -37,30 +43,50 @@ import { Lang, langIsRtl } from '../i18n';
  *  is called at switch time — before the layout follows). */
 let sessionRtl: boolean | null = null;
 
+/** Direction queued for the NEXT launch (what forceRTL was last
+ *  set to). Boot sets it equal to the session direction; a
+ *  boundary-crossing switch moves it. */
+let pendingRtl: boolean | null = null;
+
+/**
+ * Is a restart notice owed for switching to direction `want`?
+ * Only when the switch changes the pending direction AND leaves
+ * it different from the direction this session lays out in —
+ * i.e. exactly once per actual pending-direction change.
+ * Pure decision logic, exercised by scripts/verify-rtl.mjs.
+ */
+export function wantsRestartNotice(
+  want: boolean,
+  session: boolean,
+  pending: boolean,
+): boolean {
+  return want !== session && want !== pending;
+}
+
 /**
  * Point I18nManager at the direction `lang` needs.
- * Returns true when the layout direction would change — i.e.
- * the flags are set for the next launch and the user should
- * restart the app once to see the mirror.
+ * Returns true when the caller should show the one-time restart
+ * notice (see wantsRestartNotice for the exact rule).
  */
 export function applyLayoutDirection(lang: Lang): boolean {
   const want = langIsRtl(lang);
   I18nManager.allowRTL(true);
   if (sessionRtl === null) {
     // Boot: nothing real has mounted yet, so setting the flag
-    // now is the session's direction.
+    // now is the session's direction — and the pending one.
     I18nManager.forceRTL(want);
     sessionRtl = want;
+    pendingRtl = want;
     return false;
   }
-  if (want === sessionRtl) {
-    // Same direction as this session already lays out in; still
-    // re-assert the flag in case an earlier switch moved it.
-    I18nManager.forceRTL(want);
-    return false;
-  }
+  const notice = wantsRestartNotice(
+    want,
+    sessionRtl,
+    pendingRtl ?? sessionRtl,
+  );
   I18nManager.forceRTL(want);
-  return true;
+  pendingRtl = want;
+  return notice;
 }
 
 /** True when THIS session is laid out right-to-left. */
