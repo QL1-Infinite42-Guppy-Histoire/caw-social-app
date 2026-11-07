@@ -21,7 +21,7 @@
 import { getBytes, keccak256, toUtf8Bytes, toUtf8String } from 'ethers';
 
 export interface CawAction {
-  /** 0 = post, 1 = like, 2 = share (reCaw), 3 = follow */
+  /** 0 = post, 1 = like, 2 = share (reCaw), 3 = follow, 4 = unfollow */
   type: number;
   senderId: bigint;
   receiverId: bigint;
@@ -270,7 +270,11 @@ export function decodeActions(raw: string): CawAction[] {
       const f = (i: number): string => wAt(tOff + i);
       const fi = (i: number): bigint => BigInt('0x' + f(i));
       const type = Number(fi(0));
-      if (type > 3) continue;
+      // Types 0..4 are real (4 = unfollow, text "UNFOLLOW" — 25 such
+      // actions exist on QL1 and the follow index needs them; earlier
+      // versions silently dropped them, which also hid those batches
+      // from the timeline). Anything above 4 is not a known action.
+      if (type > 4) continue;
       // field 8 is the offset of the text tail, relative to the action
       const textWord = tOff + Number(fi(8)) / 32;
       const textLen = wi(textWord);

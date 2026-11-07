@@ -14,9 +14,47 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.1.4** — released 2026-11-07.
+- **現在版 / Current: v0.1.5** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.1.4/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.1.5/caw-social.apk
+  v0.1.5 fixes the two safe-area problems reported from real-device
+  use — the orange compose button sat half-hidden under the bottom
+  tab bar, and the compose screen's title and close button slid
+  under the status bar — by offsetting the button (tab bar height +
+  safe-area inset + margin) and giving the compose screen (and,
+  following the same audit, the profile screens, their edit modal,
+  the new follow-list modal and the confirm/password sheets) proper
+  top/bottom insets. On top of that:
+  - **Follow lists.** A profile now shows Following / Followers
+    counts and tappable lists, from a whole-feed follow index the
+    app builds on the phone: the latest action per (sender,
+    receiver) pair decides, unfollows (action type 4 — newly
+    decoded; earlier versions dropped them) close a pair, and
+    follows from names with a zero name balance (which never
+    registered on-chain) are excluded. The Followers number itself
+    is the exact on-chain `followerCount`. Verified live
+    (`node scripts/verify-follow.mjs`, 16/16): name #10's refined
+    follower list is 8 names, exactly the chain count; #27 is
+    153 = 153.
+  - **Name search.** X-style search on Home: exact names resolve
+    instantly via `idByUsername`; partial matches come from a full
+    on-device directory of every minted name (3,916 at release,
+    built in ~12 s from the corrected `usernames(id − 1)` slot,
+    cached on the phone and topped up as new names are minted).
+  - **Five languages.** English / 日本語 / 简体中文 / 한국어 /
+    Español for every string (164 × 5), switchable in Settings and
+    from the globe button in the header. A string-length audit
+    (`node scripts/audit-i18n.mjs`, 20/20) keeps tab names, buttons
+    and chips inside their layout budgets in all five languages.
+  - **More X-like, and faster.** Pressed-state pills on like/share,
+    the profile header rebuilt to the X layout (banner, overlapping
+    avatar, follow-button states, tappable counts), the composer
+    shows the acting name's avatar, unfollows get a context line,
+    and under the hood: a session page cache shared by the
+    timeline, profiles and the follow-index build, parallel name
+    enumeration, memoized post rows with tuned list windowing, and
+    Home restoring the last feed instantly when you come back.
+  Previous release: v0.1.4 (2026-11-07) —
   v0.1.4 fixes three things reported from real-device use the same
   evening: (1) the Settings "about" line still showed a hardcoded
   "v0.1.0" — the version is now read from app.json at runtime via
@@ -109,7 +147,7 @@ longer works. This app keeps the key on your phone (Android
 Keystore-backed secure storage) and signs in-app, exactly like the
 original signers did.
 
-## Features (v0.1.4)
+## Features (v0.1.5)
 
 - Wallet: create new (secret words) or import (secret words / private
   key). QL1 only. Unlock by password or biometrics — asked when the
@@ -118,11 +156,16 @@ original signers did.
   like / share / follow context lines.
 - Post, like, share, follow — confirmed on a sheet, signed in-app,
   sent as a `processAction` batch.
-- Profile pages: header band, avatar, follower count, that name's
-  posts, follow button.
-- Get a name: availability + price check, qCAW approve → mint.
+- Profile pages: banner + avatar in the X layout, Following /
+  Followers counts with tappable lists, that name's posts, follow
+  button.
+- Name search on Home: exact and partial matches, tap to open the
+  profile.
+- Get a name: availability + price check, qCAW approve → mint; a
+  taken name links straight to its profile.
 - My names: per-name qCAW balance inside the name, deposit / withdraw.
-- English by default, 日本語 switchable in Settings.
+- Five languages — English (default), 日本語， 简体中文， 한국어，
+  Español — switchable in Settings.
 
 ## Verification
 

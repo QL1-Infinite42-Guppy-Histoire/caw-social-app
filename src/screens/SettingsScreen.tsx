@@ -11,7 +11,7 @@ import {
 import { ConfirmSheet, S } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
-import { tr } from '../i18n';
+import { LANGS, tr } from '../i18n';
 import { APP_VERSION } from '../lib/appVersion';
 import { deleteWallet } from '../lib/walletStore';
 
@@ -45,20 +45,18 @@ export default function SettingsScreen() {
 
       {/* language */}
       <Text style={[S.h2, { marginTop: 22 }]}>{tr('settings.language')}</Text>
-      <Pressable
-        style={[styles.langRow, app.lang === 'en' && styles.langRowOn]}
-        onPress={() => app.changeLang('en')}
-      >
-        <Text style={[S.body, app.lang === 'en' && styles.langOn]}>English</Text>
-        {app.lang === 'en' ? <Text style={styles.check}>✓</Text> : null}
-      </Pressable>
-      <Pressable
-        style={[styles.langRow, app.lang === 'ja' && styles.langRowOn]}
-        onPress={() => app.changeLang('ja')}
-      >
-        <Text style={[S.body, app.lang === 'ja' && styles.langOn]}>日本語</Text>
-        {app.lang === 'ja' ? <Text style={styles.check}>✓</Text> : null}
-      </Pressable>
+      {LANGS.map((l) => (
+        <Pressable
+          key={l.code}
+          style={[styles.langRow, app.lang === l.code && styles.langRowOn]}
+          onPress={() => app.changeLang(l.code)}
+        >
+          <Text style={[S.body, app.lang === l.code && styles.langOn]}>
+            {l.label}
+          </Text>
+          {app.lang === l.code ? <Text style={styles.check}>✓</Text> : null}
+        </Pressable>
+      ))}
 
       {/* address */}
       <Text style={[S.h2, { marginTop: 24 }]}>{tr('settings.address')}</Text>

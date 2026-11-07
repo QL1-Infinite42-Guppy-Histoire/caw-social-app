@@ -111,6 +111,15 @@ export class MyActionStore {
       key = myActionKey(a.type, a.senderId, a.cawId);
     } else if (a.type === 3) {
       key = myActionKey(3, a.senderId, a.receiverId.toString());
+    } else if (a.type === 4) {
+      // An unfollow by one of my names (e.g. sent from another
+      // client) clears the remembered follow.
+      const k = myActionKey(3, a.senderId, a.receiverId.toString());
+      if (this.entries.delete(k)) {
+        void this.persist();
+        this.emit();
+      }
+      return;
     }
     if (!key || this.entries.has(key)) return;
     this.entries.add(key);

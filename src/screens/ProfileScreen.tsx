@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   Avatar,
@@ -18,19 +19,27 @@ import {
   LoadMoreFooter,
   PostCard,
   S,
+  useNameLabel,
 } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
-import { tr } from '../i18n';
+import { LOCALES, tr } from '../i18n';
 import {
   fetchProfilePosts,
   followerCount,
   mintDateOf,
   nameBalance,
   nameOwner,
+  resolveName,
   resolveNameId,
   type TimelineItem,
 } from '../lib/cawApi';
+import {
+  buildFollowIndex,
+  followIndexReady,
+  refinedFollowListsOf,
+  type FollowLists,
+} from '../lib/followIndex';
 import { performAction } from '../lib/actionFlow';
 import { fmtAmount } from '../lib/cawCore';
 import {
@@ -49,6 +58,13 @@ export default function ProfileScreen({
   onBack: () => void;
 }) {
   const app = useApp();
+  const insets = useSafeAreaInsets();
+  // v0.1.5 fix: the profile (and its edit dialog) run inside Modals,
+  // outside the main SafeAreaView, so the back row at the very top
+  // used to sit under the status bar — same overlap the compose
+  // header had. Reserve the top inset on every root view here,
+  // matching the bottom-inset pattern LoadMoreFooter already uses.
+  const rootStyle = [S.screen, { paddingTop: insets.top }];
   const { lang, address, myTokens, actingId } = app;
 
   const [loadState, setLoadState] = useState<LoadState>('loading');
@@ -72,6 +88,16 @@ export default function ProfileScreen({
   const [followConfirmOpen, setFollowConfirmOpen] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
   const [followStatus, setFollowStatus] = useState('');
+
+  // Following / followers, rebuilt from the public follow records
+  // (see followIndex.ts). The followers NUMBER shown is always the
+  // chain's own followerCount; these lists are the reconstruction.
+  const [followLists, setFollowLists] = useState<FollowLists | null>(null);
+  const [listOpen, setListOpen] = useState<'following' | 'followers' | null>(
+    null,
+  );
+  const [listLoading, setListLoading] = useState(false);
+  const [listFail, setListFail] = useState(false);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState('');
@@ -149,12 +175,37 @@ export default function ProfileScreen({
     }
   }, [app, profileId]);
 
+  /** Build (or refresh) the follow index and refine this name's
+   *  lists. Runs in the background: the header counts appear when
+   *  it is done; opening a list awaits the same promise. */
+  const loadFollowLists = useCallback(async (id: bigint) => {
+    await buildFollowIndex();
+    const lists = await refinedFollowListsOf(id);
+    setFollowLists(lists);
+    return lists;
+  }, []);
+
+  const openFollowList = useCallback(
+    (which: 'following' | 'followers') => {
+      setListOpen(which);
+      if (followLists || profileId === null) return;
+      setListLoading(true);
+      setListFail(false);
+      loadFollowLists(profileId)
+        .catch(() => setListFail(true))
+        .finally(() => setListLoading(false));
+    },
+    [followLists, profileId, loadFollowLists],
+  );
+
   const loadProfile = useCallback(async () => {
     setLoadState('loading');
     setFollowers(null);
     setBalance(null);
     setMintDate(null);
     setOwner(null);
+    setFollowLists(null);
+    setListOpen(null);
     setPosts([]);
     setNext(null);
     setDone(true);
@@ -171,6 +222,9 @@ export default function ProfileScreen({
       followerCount(res.id)
         .then((v) => setFollowers(v))
         .catch(() => setFollowers(null));
+      // Background: follow lists (first build walks the whole feed,
+      // later builds are incremental). Never blocks the profile.
+      loadFollowLists(res.id).catch(() => {});
       nameBalance(res.id)
         .then((v) => setBalance(v))
         .catch(() => setBalance(null));
@@ -196,7 +250,7 @@ export default function ProfileScreen({
     } catch {
       setLoadState('fail');
     }
-  }, [username]);
+  }, [username, loadFollowLists]);
 
   useEffect(() => {
     loadProfile();
@@ -292,7 +346,7 @@ export default function ProfileScreen({
 
   if (loadState === 'loading') {
     return (
-      <View style={S.screen}>
+      <View style={rootStyle}>
         {backRow}
         <View style={styles.center}>
           <ActivityIndicator color={ACCENT} />
@@ -306,7 +360,7 @@ export default function ProfileScreen({
 
   if (loadState === 'fail') {
     return (
-      <View style={S.screen}>
+      <View style={rootStyle}>
         {backRow}
         <View style={styles.center}>
           <Text style={S.err}>{tr('profile.loadFail')}</Text>
@@ -323,7 +377,7 @@ export default function ProfileScreen({
 
   if (loadState === 'notfound') {
     return (
-      <View style={S.screen}>
+      <View style={rootStyle}>
         {backRow}
         <View style={styles.center}>
           <Text style={S.body}>{tr('profile.notFound')}</Text>
@@ -335,9 +389,7 @@ export default function ProfileScreen({
   let mintLabel: string | null = null;
   if (mintDate) {
     try {
-      mintLabel = new Date(mintDate).toLocaleDateString(
-        lang === 'ja' ? 'ja-JP' : 'en-US',
-      );
+      mintLabel = new Date(mintDate).toLocaleDateString(LOCALES[lang]);
     } catch {
       mintLabel = mintDate;
     }
@@ -360,16 +412,49 @@ export default function ProfileScreen({
           style={styles.banner}
         />
       )}
-      <View style={styles.avatarWrap}>
-        {profileId !== null ? (
-          <View style={styles.avatarRing}>
-            <Avatar
-              nameId={profileId}
-              size={96}
-              customUri={custom ? custom.avatarPath : undefined}
-            />
-          </View>
-        ) : null}
+      {/* X-style header row: avatar overlapping the banner on the
+          left, the page's main action (edit / follow) on the right. */}
+      <View style={styles.avatarRow}>
+        <View style={styles.avatarWrap}>
+          {profileId !== null ? (
+            <View style={styles.avatarRing}>
+              <Avatar
+                nameId={profileId}
+                size={96}
+                customUri={custom ? custom.avatarPath : undefined}
+              />
+            </View>
+          ) : null}
+        </View>
+        <View style={styles.headerAction}>
+          {isOwn ? (
+            <Pressable
+              style={({ pressed }) => [
+                S.ghostBtn,
+                pressed && { backgroundColor: '#f7f9f9' },
+              ]}
+              onPress={openEditor}
+            >
+              <Text style={S.ghostBtnText}>{tr('custom.edit')}</Text>
+            </Pressable>
+          ) : followedByMe ? (
+            <View style={styles.followingPill}>
+              <Text style={styles.followingPillText}>
+                ✓ {tr('act.following')}
+              </Text>
+            </View>
+          ) : acting ? (
+            <Pressable
+              style={({ pressed }) => [
+                S.darkBtn,
+                pressed && { opacity: 0.85 },
+              ]}
+              onPress={() => setFollowConfirmOpen(true)}
+            >
+              <Text style={S.darkBtnText}>{tr('act.follow')}</Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
       <View style={{ paddingHorizontal: 16 }}>
         {custom && custom.displayName ? (
@@ -381,17 +466,17 @@ export default function ProfileScreen({
           <Text style={styles.username}>@{resolvedName}</Text>
         )}
 
+        {isOwn ? (
+          <Text style={[S.ok, { marginTop: 6 }]}>{tr('profile.yourName')}</Text>
+        ) : null}
+        {followStatus ? (
+          <Text style={[S.small, { marginTop: 6 }]}>{followStatus}</Text>
+        ) : null}
+
         <View style={styles.chipRow}>
           {profileId !== null ? (
             <View style={S.chip}>
               <Text style={S.chipText}>#{profileId.toString()}</Text>
-            </View>
-          ) : null}
-          {followers !== null ? (
-            <View style={S.chip}>
-              <Text style={S.chipText}>
-                {followers.toString()} {tr('profile.followers')}
-              </Text>
             </View>
           ) : null}
           {balance !== null ? (
@@ -410,40 +495,36 @@ export default function ProfileScreen({
           ) : null}
         </View>
 
-        {isOwn ? (
-          <View style={{ marginTop: 10 }}>
-            <Text style={S.ok}>{tr('profile.yourName')}</Text>
-            <Pressable
-              style={[S.ghostBtn, { marginTop: 10, alignSelf: 'flex-start' }]}
-              onPress={openEditor}
-            >
-              <Text style={S.ghostBtnText}>{tr('custom.edit')}</Text>
-            </Pressable>
-          </View>
-        ) : followedByMe ? (
-          <View style={{ marginTop: 12, alignItems: 'flex-start' }}>
-            <View style={S.chip}>
-              <Text style={S.chipText}>✓ {tr('act.following')}</Text>
-            </View>
-            {followStatus ? (
-              <Text style={[S.small, { marginTop: 8 }]}>{followStatus}</Text>
-            ) : null}
-          </View>
-        ) : acting ? (
-          <View style={{ marginTop: 12, alignItems: 'flex-start' }}>
-            <Pressable
-              style={S.darkBtn}
-              onPress={() => setFollowConfirmOpen(true)}
-            >
-              <Text style={S.darkBtnText}>{tr('act.follow')}</Text>
-            </Pressable>
-            {followStatus ? (
-              <Text style={[S.small, { marginTop: 8 }]}>{followStatus}</Text>
-            ) : null}
-          </View>
-        ) : followStatus ? (
-          <Text style={[S.small, { marginTop: 10 }]}>{followStatus}</Text>
-        ) : null}
+        {/* Following / followers counts — tappable, X-style. The
+            followers number is the chain's own count; the lists
+            behind both numbers are rebuilt from the public follow
+            records (followIndex.ts). */}
+        <View style={styles.countsRow}>
+          <Pressable
+            onPress={() => openFollowList('following')}
+            hitSlop={6}
+            style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+          >
+            <Text style={S.small}>
+              <Text style={styles.countNum}>
+                {followLists ? followLists.following.length : '—'}
+              </Text>{' '}
+              {tr('followlist.following')}
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => openFollowList('followers')}
+            hitSlop={6}
+            style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+          >
+            <Text style={S.small}>
+              <Text style={styles.countNum}>
+                {followers !== null ? followers.toString() : '—'}
+              </Text>{' '}
+              {tr('followlist.followers')}
+            </Text>
+          </Pressable>
+        </View>
 
         <Text style={[S.h2, { marginTop: 18, marginBottom: 4 }]}>
           {tr('profile.posts')}
@@ -453,7 +534,7 @@ export default function ProfileScreen({
   );
 
   return (
-    <View style={S.screen}>
+    <View style={rootStyle}>
       <FlatList
         data={posts}
         keyExtractor={(item, idx) => item.hash + ':' + idx}
@@ -494,6 +575,9 @@ export default function ProfileScreen({
             />
           ) : undefined
         }
+        windowSize={7}
+        maxToRenderPerBatch={12}
+        removeClippedSubviews
       />
 
       <ConfirmSheet
@@ -530,12 +614,114 @@ export default function ProfileScreen({
         busy={followBusy}
       />
 
+      {/* Following / followers list */}
+      <Modal
+        visible={listOpen !== null}
+        animationType="slide"
+        onRequestClose={() => setListOpen(null)}
+      >
+        <View style={rootStyle}>
+          <View style={styles.backRow}>
+            <Pressable onPress={() => setListOpen(null)} hitSlop={8}>
+              <Text style={styles.backText}>← {tr('common.back')}</Text>
+            </Pressable>
+            <Text style={styles.listTitle}>@{resolvedName}</Text>
+          </View>
+          <View style={styles.tabRow}>
+            {(['following', 'followers'] as const).map((t) => (
+              <Pressable
+                key={t}
+                style={styles.tabItem}
+                onPress={() => setListOpen(t)}
+              >
+                <Text
+                  style={[
+                    styles.tabLabel,
+                    listOpen === t && styles.tabLabelOn,
+                  ]}
+                >
+                  {t === 'following'
+                    ? tr('followlist.following')
+                    : tr('followlist.followers')}
+                  {'  '}
+                  {t === 'following'
+                    ? followLists
+                      ? followLists.following.length
+                      : ''
+                    : followers !== null
+                      ? followers.toString()
+                      : ''}
+                </Text>
+                {listOpen === t ? <View style={styles.tabBar} /> : null}
+              </Pressable>
+            ))}
+          </View>
+          {listLoading || (followLists === null && !listFail) ? (
+            <View style={styles.center}>
+              <ActivityIndicator color={ACCENT} />
+              <Text style={[S.small, { marginTop: 10 }]}>
+                {tr('followlist.loading')}
+              </Text>
+            </View>
+          ) : listFail ? (
+            <View style={styles.center}>
+              <Text style={S.err}>{tr('followlist.loadFail')}</Text>
+              <Pressable
+                style={[S.ghostBtn, { marginTop: 14 }]}
+                onPress={() => {
+                  if (profileId === null) return;
+                  setListFail(false);
+                  setListLoading(true);
+                  loadFollowLists(profileId)
+                    .catch(() => setListFail(true))
+                    .finally(() => setListLoading(false));
+                }}
+              >
+                <Text style={S.ghostBtnText}>{tr('profile.retry')}</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <FlatList
+              data={
+                followLists
+                  ? listOpen === 'following'
+                    ? followLists.following
+                    : followLists.followers
+                  : []
+              }
+              keyExtractor={(id) => id.toString()}
+              renderItem={({ item }) => (
+                <FollowRow
+                  id={item}
+                  customUri={
+                    app.customFor(item)
+                      ? app.customFor(item)!.avatarPath
+                      : undefined
+                  }
+                  onOpen={(name) => {
+                    setListOpen(null);
+                    app.openProfile(name);
+                  }}
+                />
+              )}
+              ListEmptyComponent={
+                <View style={{ padding: 24, alignItems: 'center' }}>
+                  <Text style={S.small}>{tr('followlist.empty')}</Text>
+                </View>
+              }
+              windowSize={7}
+              maxToRenderPerBatch={16}
+            />
+          )}
+        </View>
+      </Modal>
+
       <Modal
         visible={editOpen}
         animationType="slide"
         onRequestClose={() => setEditOpen(false)}
       >
-        <View style={S.screen}>
+        <View style={rootStyle}>
           <View style={styles.backRow}>
             <Pressable onPress={() => setEditOpen(false)} hitSlop={8}>
               <Text style={styles.backText}>← {tr('common.back')}</Text>
@@ -603,6 +789,42 @@ export default function ProfileScreen({
   );
 }
 
+/** One row in the following / followers list. */
+function FollowRow({
+  id,
+  customUri,
+  onOpen,
+}: {
+  id: bigint;
+  customUri?: string | null;
+  onOpen: (name: string) => void;
+}) {
+  const label = useNameLabel(id);
+  const [name, setName] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    resolveName(id).then((n) => live && setName(n));
+    return () => {
+      live = false;
+    };
+  }, [id]);
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        styles.followRow,
+        pressed && { backgroundColor: '#f7f9f9' },
+      ]}
+      onPress={name ? () => onOpen(name) : undefined}
+    >
+      <Avatar nameId={id} size={44} customUri={customUri} />
+      <View style={{ marginLeft: 10, flex: 1 }}>
+        <Text style={styles.followName}>{label}</Text>
+        <Text style={S.tiny}>#{id.toString()}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   backRow: {
     paddingHorizontal: 16,
@@ -613,7 +835,14 @@ const styles = StyleSheet.create({
   },
   backText: { fontSize: 15, color: ACCENT, fontWeight: '600' },
   banner: { height: 110 },
-  avatarWrap: { paddingHorizontal: 16, marginTop: -48 },
+  avatarRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingHorizontal: 16,
+  },
+  avatarWrap: { marginTop: -48 },
+  headerAction: { paddingTop: 10 },
   avatarRing: {
     width: 104,
     height: 104,
@@ -622,7 +851,49 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  followingPill: {
+    borderWidth: 1,
+    borderColor: '#cfd9de',
+    borderRadius: 999,
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+    backgroundColor: '#fff',
+  },
+  followingPillText: { fontSize: 14, fontWeight: '700', color: '#0f1419' },
   username: { fontSize: 20, fontWeight: '800', color: '#0f1419', marginTop: 8 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  countsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 20,
+    marginTop: 12,
+  },
+  countNum: { fontSize: 14, fontWeight: '800', color: '#0f1419' },
+  listTitle: { fontSize: 16, fontWeight: '800', color: '#0f1419', marginTop: 6 },
+  tabRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eff3f4',
+  },
+  tabItem: { flex: 1, alignItems: 'center', paddingTop: 12, paddingBottom: 0 },
+  tabLabel: { fontSize: 14.5, fontWeight: '600', color: '#536471', paddingBottom: 10 },
+  tabLabelOn: { color: '#0f1419', fontWeight: '800' },
+  tabBar: {
+    height: 3,
+    width: '70%',
+    borderRadius: 2,
+    backgroundColor: ACCENT,
+    marginBottom: -1,
+  },
+  followRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eff3f4',
+    backgroundColor: '#fff',
+  },
+  followName: { fontSize: 15, fontWeight: '700', color: '#0f1419' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
 });

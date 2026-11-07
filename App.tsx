@@ -8,11 +8,15 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 
 import { ACCENT } from './src/config';
 import { AppProvider, useApp } from './src/context/AppContext';
-import { tr } from './src/i18n';
+import { LANGS, tr } from './src/i18n';
 import { PasswordPrompt, S } from './src/components/ui';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import UnlockScreen from './src/screens/UnlockScreen';
@@ -25,15 +29,20 @@ import ComposeScreen from './src/screens/ComposeScreen';
 
 function LangToggle() {
   const { lang, changeLang } = useApp();
+  // Five languages no longer fit as a row of buttons in the header.
+  // One compact button showing the current language; tapping cycles
+  // to the next. The full list lives in Settings.
+  const idx = LANGS.findIndex((l) => l.code === lang);
+  const cur = LANGS[idx >= 0 ? idx : 0];
+  const next = LANGS[(idx + 1) % LANGS.length];
   return (
-    <View style={S.row}>
-      <Pressable onPress={() => changeLang('en')}>
-        <Text style={[styles.langBtn, lang === 'en' && styles.langOn]}>English</Text>
-      </Pressable>
-      <Pressable onPress={() => changeLang('ja')}>
-        <Text style={[styles.langBtn, lang === 'ja' && styles.langOn]}>日本語</Text>
-      </Pressable>
-    </View>
+    <Pressable
+      onPress={() => changeLang(next.code)}
+      hitSlop={8}
+      style={({ pressed }) => [styles.langCycle, pressed && { opacity: 0.6 }]}
+    >
+      <Text style={styles.langCycleText}>🌐 {cur.label} ▾</Text>
+    </Pressable>
   );
 }
 
@@ -49,8 +58,13 @@ function Header() {
   );
 }
 
+// Height of the bottom tab bar below: navItem paddingVertical 12+12
+// plus the ~17px label line, plus the 1px top border.
+const TAB_BAR_HEIGHT = 42;
+
 function Main() {
   const app = useApp();
+  const insets = useSafeAreaInsets();
   const { tab, setTab, profileName, closeProfile, composeOpen, setComposeOpen } =
     app;
 
@@ -86,7 +100,19 @@ function Main() {
         {tab === 'settings' && <SettingsScreen />}
       </View>
       {tab === 'home' && !profileName && (
-        <Pressable style={styles.fab} onPress={() => setComposeOpen(true)}>
+        <Pressable
+          // v0.1.5 fix: the fixed bottom:76 left the compose button
+          // straddling the bottom tab bar — its lower half sat under
+          // the (later-painted, opaque) bar and was hard to tap.
+          // Float it fully above the bar instead: tab-bar height +
+          // the device bottom safe-area inset + a clear margin, the
+          // same inset pattern as LoadMoreFooter.
+          style={[
+            styles.fab,
+            { bottom: TAB_BAR_HEIGHT + insets.bottom + 14 },
+          ]}
+          onPress={() => setComposeOpen(true)}
+        >
           <Text style={styles.fabText}>✎</Text>
         </Pressable>
       )}
@@ -184,8 +210,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   brand: { fontSize: 19, fontWeight: '800', color: '#0f1419' },
-  langBtn: { fontSize: 13.5, color: '#536471', marginLeft: 12, paddingVertical: 4 },
-  langOn: { color: '#0f1419', fontWeight: '700', textDecorationLine: 'underline' },
+  langCycle: { paddingVertical: 6, paddingHorizontal: 8, marginLeft: 8 },
+  langCycleText: { fontSize: 13.5, color: '#536471', fontWeight: '600' },
   bottomNav: {
     flexDirection: 'row',
     borderTopWidth: 1,
@@ -198,7 +224,7 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: 18,
-    bottom: 76,
+    // bottom is set inline (tab bar + safe-area inset + margin).
     width: 56,
     height: 56,
     borderRadius: 28,

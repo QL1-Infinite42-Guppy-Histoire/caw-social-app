@@ -9,7 +9,7 @@ import React, {
   useState,
 } from 'react';
 
-import { Lang, getLang, setLang, tr } from '../i18n';
+import { Lang, getLang, isLang, setLang, tr } from '../i18n';
 import {
   setActionObserver,
   tokensOf,
@@ -17,6 +17,8 @@ import {
   type TimelineItem,
 } from '../lib/cawApi';
 import type { NameToken } from '../lib/cawCore';
+import { initFollowIndex } from '../lib/followIndex';
+import { initNameDirectory } from '../lib/nameDirectory';
 import type { MyActionKind } from '../lib/myActions';
 import type { ProfileCustom } from '../lib/profileCustom';
 import { myActionStore, profileCustomStore, storeKV } from '../lib/stores';
@@ -134,6 +136,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const off2 = profileCustomStore.subscribe(bump);
     setActionObserver((a) => myActionStore.observe(a));
     profileCustomStore.init(storeKV).catch(() => {});
+    initNameDirectory(storeKV);
+    initFollowIndex(storeKV);
     return () => {
       off1();
       off2();
@@ -150,7 +154,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (async () => {
       try {
         const savedLang = await AsyncStorage.getItem(LANG_KEY);
-        if (savedLang === 'ja' || savedLang === 'en') {
+        if (isLang(savedLang)) {
           setLang(savedLang);
           setLangState(savedLang);
         }

@@ -10,7 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useApp } from '../context/AppContext';
-import { tr } from '../i18n';
+import { LANGS, tr } from '../i18n';
 import {
   addressFromPhrase,
   addressFromPrivateKey,
@@ -125,14 +125,17 @@ export default function OnboardingScreen() {
       <ScrollView contentContainerStyle={S.scrollPad}>
         <View style={[S.row, { justifyContent: 'space-between' }]}>
           <Text style={{ fontSize: 34 }}>🐦</Text>
-          <View style={S.row}>
-            <Pressable onPress={() => app.changeLang('en')}>
-              <Text style={[styles.langBtn, app.lang === 'en' && styles.langOn]}>English</Text>
-            </Pressable>
-            <Pressable onPress={() => app.changeLang('ja')}>
-              <Text style={[styles.langBtn, app.lang === 'ja' && styles.langOn]}>日本語</Text>
-            </Pressable>
-          </View>
+          <Pressable
+            onPress={() => {
+              const idx = LANGS.findIndex((l) => l.code === app.lang);
+              app.changeLang(LANGS[(idx + 1) % LANGS.length].code);
+            }}
+            hitSlop={8}
+          >
+            <Text style={styles.langBtn}>
+              🌐 {LANGS.find((l) => l.code === app.lang)?.label} ▾
+            </Text>
+          </Pressable>
         </View>
         <Text style={[S.h1, { marginTop: 6 }]}>{tr('app.name')}</Text>
         <Text style={S.small}>{tr('app.notOfficial')}</Text>

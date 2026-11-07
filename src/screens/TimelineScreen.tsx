@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -22,16 +23,33 @@ import { tr } from '../i18n';
 import { fetchTimelinePage, type TimelineItem } from '../lib/cawApi';
 import { performAction } from '../lib/actionFlow';
 import { fmtAmount } from '../lib/cawCore';
+import SearchScreen from './SearchScreen';
 
 type PendingAction = { kind: 1 | 2; item: TimelineItem };
+
+/**
+ * Last feed shown, kept at module level: switching tabs unmounts
+ * this screen, and re-walking the explorer pages from scratch made
+ * coming back to Home feel slow. The cached feed renders instantly
+ * and a background refresh replaces it.
+ */
+let feedCache: {
+  items: TimelineItem[];
+  next: Record<string, unknown> | null;
+} | null = null;
 
 export default function TimelineScreen() {
   const app = useApp();
   const { lang, address, qom, qcaw, myTokens, actingId } = app;
 
-  const [items, setItems] = useState<TimelineItem[]>([]);
-  const [next, setNext] = useState<Record<string, unknown> | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [items, setItems] = useState<TimelineItem[]>(
+    () => feedCache?.items ?? [],
+  );
+  const [next, setNext] = useState<Record<string, unknown> | null>(
+    () => feedCache?.next ?? null,
+  );
+  const [loading, setLoading] = useState(!feedCache);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -63,6 +81,16 @@ export default function TimelineScreen() {
     loadFirst();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadFirst]);
+
+  // Keep the module-level feed cache in step with what is on screen.
+  useEffect(() => {
+    if (items.length > 0) feedCache = { items, next };
+  }, [items, next]);
+
+  const openProfileCb = useCallback(
+    (username: string) => app.openProfile(username),
+    [app],
+  );
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -130,8 +158,18 @@ export default function TimelineScreen() {
     : '—';
 
   const header = (
-    <View style={styles.walletCard}>
-      <Text style={styles.walletAddr}>{shortAddress}</Text>
+    <View>
+      <Pressable
+        style={({ pressed }) => [
+          styles.searchPill,
+          pressed && { backgroundColor: '#e3e8ea' },
+        ]}
+        onPress={() => setSearchOpen(true)}
+      >
+        <Text style={styles.searchPillText}>🔍 {tr('search.ph')}</Text>
+      </Pressable>
+      <View style={styles.walletCard}>
+        <Text style={styles.walletAddr}>{shortAddress}</Text>
       <View style={[S.row, { marginTop: 8, flexWrap: 'wrap', gap: 16 }]}>
         <Text style={S.body}>
           {qom !== null ? fmtAmount(qom) : '—'} QOM
@@ -144,16 +182,17 @@ export default function TimelineScreen() {
         </Text>
         <Text style={S.small}>{tr('home.qcaw')}</Text>
       </View>
-      <View style={[S.row, { marginTop: 8, flexWrap: 'wrap', gap: 8 }]}>
-        <Text style={S.small}>{tr('home.postAs')}</Text>
-        <Text style={[S.body, { fontWeight: '700' }]}>
-          {acting
-            ? app.customFor(acting.id) &&
-              app.customFor(acting.id)!.displayName
-              ? app.customFor(acting.id)!.displayName
-              : '@' + acting.username
-            : '—'}
-        </Text>
+        <View style={[S.row, { marginTop: 8, flexWrap: 'wrap', gap: 8 }]}>
+          <Text style={S.small}>{tr('home.postAs')}</Text>
+          <Text style={[S.body, { fontWeight: '700' }]}>
+            {acting
+              ? app.customFor(acting.id) &&
+                app.customFor(acting.id)!.displayName
+                ? app.customFor(acting.id)!.displayName
+                : '@' + acting.username
+              : '—'}
+          </Text>
+        </View>
       </View>
     </View>
   );
@@ -203,7 +242,7 @@ export default function TimelineScreen() {
           <PostCard
             item={item}
             lang={lang}
-            onOpenProfile={(username) => app.openProfile(username)}
+            onOpenProfile={openProfileCb}
             onAction={handleAction}
             actionStatus={statusByHash[item.hash]}
             busy={!!busyByHash[item.hash]}
@@ -212,6 +251,9 @@ export default function TimelineScreen() {
             custom={app.customFor(item.senderId)}
           />
         )}
+        windowSize={7}
+        maxToRenderPerBatch={12}
+        removeClippedSubviews
         ListEmptyComponent={
           <View style={styles.center}>
             <Text style={S.small}>{tr('tl.empty')}</Text>
@@ -248,11 +290,27 @@ export default function TimelineScreen() {
         onCancel={() => setPending(null)}
         busy={pending ? !!busyByHash[pending.item.hash] : false}
       />
+      <Modal
+        visible={searchOpen}
+        animationType="slide"
+        onRequestClose={() => setSearchOpen(false)}
+      >
+        <SearchScreen onClose={() => setSearchOpen(false)} />
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  searchPill: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    backgroundColor: '#eff3f4',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  searchPillText: { fontSize: 14.5, color: '#536471' },
   walletCard: {
     paddingHorizontal: 16,
     paddingVertical: 14,

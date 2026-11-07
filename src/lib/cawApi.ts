@@ -22,6 +22,10 @@ import {
 export interface TimelineItem extends CawAction {
   hash: string;
   blockTs?: string;
+  /** Block number + transaction index inside the block — the exact
+   *  on-chain order of the action (the follow index sorts by these). */
+  block?: number;
+  txIndex?: number;
 }
 
 export interface Page<T> {
@@ -44,6 +48,49 @@ export async function rpc(method: string, params: unknown[]): Promise<any> {
 
 export const ethCall = (to: string, data: string): Promise<string> =>
   rpc('eth_call', [{ to, data }, 'latest']);
+
+/**
+ * Many eth_calls in ONE HTTP request (JSON-RPC batch). Public RPCs
+ * accept batches; if this one refuses, fall back to sequential calls
+ * so a search/index build still works, just slower.
+ */
+export async function ethCallBatch(
+  calls: { to: string; data: string }[],
+): Promise<(string | null)[]> {
+  if (calls.length === 0) return [];
+  try {
+    const payload = calls.map((c, i) => ({
+      jsonrpc: '2.0',
+      id: i + 1,
+      method: 'eth_call',
+      params: [{ to: c.to, data: c.data }, 'latest'],
+    }));
+    const res = await fetch(RPC, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const j = await res.json();
+    if (!Array.isArray(j)) throw new Error('batch not supported');
+    const out: (string | null)[] = new Array(calls.length).fill(null);
+    for (const r of j) {
+      if (r && typeof r.id === 'number' && r.result) {
+        out[r.id - 1] = r.result;
+      }
+    }
+    return out;
+  } catch {
+    const out: (string | null)[] = [];
+    for (const c of calls) {
+      try {
+        out.push(await ethCall(c.to, c.data));
+      } catch {
+        out.push(null);
+      }
+    }
+    return out;
+  }
+}
 export const readUint = async (to: string, data: string): Promise<bigint> =>
   decUintRet(await ethCall(to, data));
 export const readAddr = async (to: string, data: string): Promise<string> =>
@@ -151,7 +198,11 @@ async function enumerateOwnedTokens(owner: string): Promise<NameToken[]> {
   const out: NameToken[] = [];
   const seen = new Set<string>();
   const limit = Math.min(count, 1000);
-  for (let i = 0; i < limit; i++) {
+  // One token's full check (index → ownerOf proof → card name →
+  // balance). The checks for different tokens are independent, so
+  // they run in parallel chunks — a wallet with dozens of names used
+  // to need 4 sequential round trips per name.
+  const oneToken = async (i: number): Promise<NameToken | null> => {
     let id: bigint;
     try {
       id = await withRetry(
@@ -164,11 +215,8 @@ async function enumerateOwnedTokens(owner: string): Promise<NameToken[]> {
         400,
       );
     } catch {
-      continue; // a hole in the list must not kill the whole list
+      return null; // a hole in the list must not kill the whole list
     }
-    const k = id.toString();
-    if (seen.has(k)) continue;
-    seen.add(k);
     let realOwner: string;
     try {
       realOwner = await withRetry(
@@ -177,9 +225,9 @@ async function enumerateOwnedTokens(owner: string): Promise<NameToken[]> {
         400,
       );
     } catch {
-      continue; // cannot prove ownership — leave it out
+      return null; // cannot prove ownership — leave it out
     }
-    if (realOwner.toLowerCase() !== owner.toLowerCase()) continue;
+    if (realOwner.toLowerCase() !== owner.toLowerCase()) return null;
     let username = '';
     try {
       username = (await readCardName(id)) || '';
@@ -192,8 +240,22 @@ async function enumerateOwnedTokens(owner: string): Promise<NameToken[]> {
     } catch {
       balance = 0n; // a balance hiccup must not drop the name itself
     }
-    out.push({ id, balance, username });
+    return { id, balance, username };
+  };
+  for (let base = 0; base < limit; base += 6) {
+    const chunk: Promise<NameToken | null>[] = [];
+    for (let i = base; i < Math.min(base + 6, limit); i++) {
+      chunk.push(oneToken(i));
+    }
+    for (const t of await Promise.all(chunk)) {
+      if (!t) continue;
+      const k = t.id.toString();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(t);
+    }
   }
+  out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return out;
 }
 
@@ -352,6 +414,9 @@ export const followerCount = (id: bigint): Promise<bigint> =>
 export const nameBalance = (id: bigint): Promise<bigint> =>
   readUint(CAW_NAME, SEL.cawBalanceOf + word(id));
 
+export const totalSupply = (): Promise<bigint> =>
+  readUint(CAW_NAME, SEL.totalSupply);
+
 export const likesCount = (a: CawAction): Promise<bigint> =>
   readUint(CAW_ACTIONS, SEL.likes + word(a.senderId) + strip(a.cawId));
 
@@ -408,7 +473,17 @@ export function setActionObserver(fn: ((a: CawAction) => void) | null): void {
   actionObserver = fn;
 }
 
-async function fetchActionPage(
+/**
+ * Session page cache: the timeline, profile scans and the follow
+ * index all walk the same newest-first transaction pages. Caching
+ * each fetched page (by its cursor) for the session means a profile
+ * visit reuses what the timeline already downloaded instead of
+ * re-fetching the same 50-transaction pages again and again.
+ */
+const pageCache = new Map<string, Promise<Page<TimelineItem>>>();
+const PAGE_CACHE_MAX = 160;
+
+async function fetchActionPageUncached(
   next: Record<string, unknown> | null,
 ): Promise<Page<TimelineItem>> {
   let url = API + '/addresses/' + CAW_ACTIONS + '/transactions';
@@ -422,7 +497,13 @@ async function fetchActionPage(
     // A batch can carry several actions — render every one of them,
     // not just the first.
     for (const a of decodeActions(it.raw_input)) {
-      const item: TimelineItem = { ...a, hash: it.hash, blockTs: it.timestamp };
+      const item: TimelineItem = {
+        ...a,
+        hash: it.hash,
+        blockTs: it.timestamp,
+        block: typeof it.block_number === 'number' ? it.block_number : undefined,
+        txIndex: typeof it.index === 'number' ? it.index : undefined,
+      };
       items.push(item);
       if (a.type === 0) postIndex.set(a.cawId.toLowerCase(), item);
       if (actionObserver) {
@@ -435,6 +516,24 @@ async function fetchActionPage(
     }
   }
   return { items, next: j.next_page_params || null };
+}
+
+function fetchActionPage(
+  next: Record<string, unknown> | null,
+): Promise<Page<TimelineItem>> {
+  const key = next ? JSON.stringify(next) : '__first__';
+  const hit = pageCache.get(key);
+  if (hit) return hit;
+  const p = fetchActionPageUncached(next).catch((e) => {
+    pageCache.delete(key); // a failed page must not stick
+    throw e;
+  });
+  if (pageCache.size >= PAGE_CACHE_MAX) {
+    const oldest = pageCache.keys().next().value;
+    if (oldest) pageCache.delete(oldest);
+  }
+  pageCache.set(key, p);
+  return p;
 }
 
 export const fetchTimelinePage = fetchActionPage;

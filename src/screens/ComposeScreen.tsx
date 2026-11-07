@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar, ConfirmSheet, S } from '../components/ui';
 import { ACCENT } from '../config';
@@ -21,6 +22,7 @@ import { nowSec, randomCawId, submitAction } from '../lib/wallet';
 
 export default function ComposeScreen({ onClose }: { onClose: () => void }) {
   const app = useApp();
+  const insets = useSafeAreaInsets();
   const { myTokens, actingId, chooseActing } = app;
 
   const [text, setText] = useState('');
@@ -104,8 +106,14 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
   };
 
   return (
+    // v0.1.5 fix: this screen runs inside a Modal, outside the main
+    // SafeAreaView, so the header used to start at the very top edge
+    // of the screen — the title overlapped the status-bar clock and
+    // the Close label sat under the battery icons. Reserve the top
+    // safe-area inset here (same pattern as LoadMoreFooter uses for
+    // the bottom) so the header is fully visible and tappable.
     <KeyboardAvoidingView
-      style={S.screen}
+      style={[S.screen, { paddingTop: insets.top }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
     >
       <View style={styles.headerRow}>
@@ -115,7 +123,15 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
         </Pressable>
       </View>
 
-      <ScrollView ref={scrollRef} contentContainerStyle={S.scrollPad}>
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={[
+          S.scrollPad,
+          // Modal again: keep the Post button clear of the gesture
+          // area at the bottom edge, same inset pattern as the top.
+          { paddingBottom: 32 + insets.bottom },
+        ]}
+      >
         {!acting ? (
           <Text style={S.body}>{tr('compose.needName')}</Text>
         ) : (
@@ -174,16 +190,29 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
               </View>
             )}
 
-            <TextInput
-              style={[S.input, styles.input, { marginTop: 14 }]}
-              multiline
-              autoFocus
-              value={text}
-              onChangeText={setText}
-              onFocus={scrollComposerIntoView}
-              placeholder={tr('compose.ph')}
-              placeholderTextColor="#536471"
-            />
+            {/* X-style composer: the posting name's avatar sits at
+                the left of the text field. */}
+            <View style={{ flexDirection: 'row', marginTop: 14, gap: 10 }}>
+              <Avatar
+                nameId={acting.id}
+                size={40}
+                customUri={
+                  app.customFor(acting.id)
+                    ? app.customFor(acting.id)!.avatarPath
+                    : undefined
+                }
+              />
+              <TextInput
+                style={[S.input, styles.input, { flex: 1 }]}
+                multiline
+                autoFocus
+                value={text}
+                onChangeText={setText}
+                onFocus={scrollComposerIntoView}
+                placeholder={tr('compose.ph')}
+                placeholderTextColor="#536471"
+              />
+            </View>
             <View
               style={[
                 S.row,

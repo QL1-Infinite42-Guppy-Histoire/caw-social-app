@@ -211,9 +211,15 @@ export default function GetNameScreen() {
         <Text style={[S.err, { marginTop: 14 }]}>{tr('get.invalid')}</Text>
       ) : null}
       {check?.kind === 'taken' ? (
-        <Text style={[S.body, { marginTop: 14, color: '#a15c00' }]}>
-          {tr('get.taken')}
-        </Text>
+        <View style={{ marginTop: 14 }}>
+          <Text style={[S.body, { color: '#a15c00' }]}>{tr('get.taken')}</Text>
+          <Pressable
+            style={[S.ghostBtn, { marginTop: 10, alignSelf: 'flex-start' }]}
+            onPress={() => app.openProfile(checkedName)}
+          >
+            <Text style={S.ghostBtnText}>{tr('get.viewProfile')}</Text>
+          </Pressable>
+        </View>
       ) : null}
 
       {check?.kind === 'available' && cost !== null ? (

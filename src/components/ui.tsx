@@ -15,7 +15,7 @@ import { SvgXml } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ACCENT } from '../config';
-import { tr } from '../i18n';
+import { LOCALES, isLang, tr } from '../i18n';
 import {
   avatarFor,
   findPostByCawId,
@@ -131,7 +131,7 @@ export function RepeatIcon({ size = 18, color = '#536471' }: { size?: number; co
  * avatarSpec. A user's own off-chain custom picture (profileCustom)
  * wins over both.
  */
-export function Avatar({
+function AvatarBase({
   nameId,
   size = 44,
   onPress,
@@ -212,6 +212,10 @@ export function Avatar({
   return content;
 }
 
+/** Memoized: timeline rows re-render often; an avatar's inputs
+ *  (name id, size, custom picture) rarely change. */
+export const Avatar = React.memo(AvatarBase);
+
 /** Resolved display name for a token id ("@name" or "name #id"). */
 export function useNameLabel(id: bigint): string {
   const [name, setName] = useState<string | null>(null);
@@ -227,12 +231,15 @@ export function useNameLabel(id: bigint): string {
 
 export function formatTime(tsSec: number, lang: string): string {
   try {
-    return new Date(tsSec * 1000).toLocaleString(lang === 'ja' ? 'ja-JP' : 'en-US', {
-      month: 'numeric',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    return new Date(tsSec * 1000).toLocaleString(
+      isLang(lang) ? LOCALES[lang] : 'en-US',
+      {
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      },
+    );
   } catch {
     return new Date(tsSec * 1000).toISOString();
   }
@@ -342,7 +349,7 @@ function TargetPostQuote({
 }
 
 /* ---------- one timeline entry ---------- */
-export function PostCard({
+function PostCardBase({
   item,
   lang,
   onOpenProfile,
@@ -408,7 +415,9 @@ export function PostCard({
         ? tr('tl.ctxRecaw')
         : item.type === 3
           ? tr('tl.ctxFollow')
-          : null;
+          : item.type === 4
+            ? tr('tl.ctxUnfollow')
+            : null;
   const targetLabel = targetName
     ? '@' + targetName
     : tr('tl.unknownName') + item.receiverId.toString();
@@ -456,7 +465,12 @@ export function PostCard({
               <Pressable
                 disabled={busy}
                 onPress={() => onAction(1, item)}
-                style={[S.row, busy && S.disabled]}
+                style={({ pressed }) => [
+                  S.row,
+                  postStyles.actionBtn,
+                  busy && S.disabled,
+                  pressed && postStyles.actionBtnOn,
+                ]}
               >
                 <HeartIcon size={16} color={liked ? LIKE_ON : '#536471'} filled={!!liked} />
                 <Text
@@ -472,7 +486,12 @@ export function PostCard({
               <Pressable
                 disabled={busy}
                 onPress={() => onAction(2, item)}
-                style={[S.row, busy && S.disabled]}
+                style={({ pressed }) => [
+                  S.row,
+                  postStyles.actionBtn,
+                  busy && S.disabled,
+                  pressed && postStyles.actionBtnOn,
+                ]}
               >
                 <RepeatIcon size={16} color={recawed ? RECAW_ON : '#536471'} />
                 <Text
@@ -501,6 +520,10 @@ export function PostCard({
   );
 }
 
+/** Memoized row: with stable callbacks from the lists, a row only
+ *  re-renders when its own item or its like/share state changes. */
+export const PostCard = React.memo(PostCardBase);
+
 const postStyles = StyleSheet.create({
   post: {
     flexDirection: 'row',
@@ -521,6 +544,14 @@ const postStyles = StyleSheet.create({
   },
   quoteName: { fontSize: 13.5, fontWeight: '700', color: '#0f1419' },
   quoteText: { fontSize: 14, color: '#0f1419', lineHeight: 19, marginTop: 4 },
+  // X-style action buttons: a soft pill highlight while pressed.
+  actionBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginLeft: -8,
+    borderRadius: 999,
+  },
+  actionBtnOn: { backgroundColor: '#f7f9f9' },
 });
 
 /* ---------- bottom-sheet style confirm dialog ---------- */
@@ -543,10 +574,14 @@ export function ConfirmSheet({
   onCancel: () => void;
   busy?: boolean;
 }) {
+  const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={sheetStyles.backdrop}>
-        <View style={sheetStyles.sheet}>
+        {/* v0.1.5: sheets render in a Modal, outside the main
+            SafeAreaView — add the device bottom inset under the
+            buttons, same pattern as LoadMoreFooter. */}
+        <View style={[sheetStyles.sheet, { paddingBottom: 30 + insets.bottom }]}>
           <Text style={S.h2}>{title}</Text>
           {body ? <Text style={[S.body, { marginTop: 8 }]}>{body}</Text> : null}
           <View style={{ height: 16 }} />
@@ -594,6 +629,7 @@ export function PasswordPrompt({
   visible: boolean;
   onAnswer: (password: string | null) => void;
 }) {
+  const insets = useSafeAreaInsets();
   const [pw, setPw] = useState('');
   useEffect(() => {
     if (visible) setPw('');
@@ -601,7 +637,7 @@ export function PasswordPrompt({
   return (
     <Modal visible={visible} transparent animationType="fade">
       <View style={sheetStyles.backdrop}>
-        <View style={sheetStyles.sheet}>
+        <View style={[sheetStyles.sheet, { paddingBottom: 30 + insets.bottom }]}>
           <Text style={S.h2}>{tr('auth.signReason')}</Text>
           <TextInput
             style={[S.input, { marginTop: 12 }]}
