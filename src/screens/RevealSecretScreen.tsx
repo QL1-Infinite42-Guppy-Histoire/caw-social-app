@@ -24,11 +24,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { S } from '../components/ui';
+import { LTR_TEXT, S } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
 
+import { nextChevron } from '../lib/rtl';
 import {
   REVEAL_AUTO_HIDE_MS,
   gatedReveal,
@@ -260,7 +261,7 @@ export default function RevealSecretScreen({ onClose }: { onClose: () => void })
                     {w.kind === 'mnemonic' ? tr('reveal.phrase') : tr('reveal.key')}
                   </Text>
                 </View>
-                <Text style={{ fontSize: 17, color: '#536471' }}>›</Text>
+                <Text style={{ fontSize: 17, color: '#536471' }}>{nextChevron()}</Text>
               </Pressable>
             ))}
           </>
@@ -411,7 +412,11 @@ export default function RevealSecretScreen({ onClose }: { onClose: () => void })
               style={{ marginTop: 14, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: '#e5e5e5' }}
             >
               {mode === 'phrase' ? (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', padding: 10 }}>
+                // direction:'ltr' on purpose (v0.3.9): the words'
+                // ORDER is the secret — the numbered grid must
+                // read 1,2,3… left-to-right even when the rest of
+                // the app mirrors for Persian.
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', padding: 10, direction: 'ltr' }}>
                   {(revealed ? realWords : decoyWords).map((w, i) => (
                     <View key={i} style={{ width: '50%', padding: 6 }}>
                       <Text style={[S.body, !revealed && { color: '#9aa0a6' }]}>
@@ -422,7 +427,7 @@ export default function RevealSecretScreen({ onClose }: { onClose: () => void })
                 </View>
               ) : (
                 <View style={{ padding: 14 }}>
-                  <Text style={[S.body, { fontSize: 13 }, !revealed && { color: '#9aa0a6' }]} selectable={revealed}>
+                  <Text style={[S.body, { fontSize: 13 }, LTR_TEXT, !revealed && { color: '#9aa0a6' }]} selectable={revealed}>
                     {revealed ? secretText : decoyKey}
                   </Text>
                 </View>

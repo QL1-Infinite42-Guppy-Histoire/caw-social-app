@@ -221,7 +221,7 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
                       : undefined
                   }
                 />
-                <Text style={[S.small, { marginLeft: 8 }]}>
+                <Text style={[S.small, { marginStart: 8 }]}>
                   {tr('compose.postAs')}:{' '}
                   {app.customFor(acting.id) &&
                   app.customFor(acting.id)!.displayName

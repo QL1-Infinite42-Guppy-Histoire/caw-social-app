@@ -34,6 +34,7 @@ import {
   resolveNameId,
   type TimelineItem,
 } from '../lib/cawApi';
+import { backArrow } from '../lib/rtl';
 import {
   buildFollowIndex,
   followIndexProgress,
@@ -375,7 +376,7 @@ export default function ProfileScreen({
   const backRow = (
     <View style={styles.backRow}>
       <Pressable onPress={onBack} hitSlop={8}>
-        <Text style={styles.backText}>← {tr('common.back')}</Text>
+        <Text style={styles.backText}>{backArrow()} {tr('common.back')}</Text>
       </Pressable>
     </View>
   );
@@ -659,7 +660,7 @@ export default function ProfileScreen({
         <View style={rootStyle}>
           <View style={styles.backRow}>
             <Pressable onPress={() => setListOpen(null)} hitSlop={8}>
-              <Text style={styles.backText}>← {tr('common.back')}</Text>
+              <Text style={styles.backText}>{backArrow()} {tr('common.back')}</Text>
             </Pressable>
             <Text style={styles.listTitle}>@{resolvedName}</Text>
           </View>
@@ -772,7 +773,7 @@ export default function ProfileScreen({
         <View style={rootStyle}>
           <View style={styles.backRow}>
             <Pressable onPress={() => setEditOpen(false)} hitSlop={8}>
-              <Text style={styles.backText}>← {tr('common.back')}</Text>
+              <Text style={styles.backText}>{backArrow()} {tr('common.back')}</Text>
             </Pressable>
           </View>
           <View style={S.scrollPad}>
@@ -865,7 +866,7 @@ function FollowRow({
       onPress={name ? () => onOpen(name) : undefined}
     >
       <Avatar nameId={id} size={44} customUri={customUri} />
-      <View style={{ marginLeft: 10, flex: 1 }}>
+      <View style={{ marginStart: 10, flex: 1 }}>
         <Text style={styles.followName}>{label}</Text>
         <Text style={S.tiny}>#{id.toString()}</Text>
       </View>

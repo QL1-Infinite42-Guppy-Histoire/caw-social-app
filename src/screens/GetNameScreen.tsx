@@ -11,6 +11,7 @@ import {
 import { SvgXml } from 'react-native-svg';
 
 import { ConfirmSheet, S } from '../components/ui';
+import { forwardArrow } from '../lib/rtl';
 import { ACCENT, MINTER, QCAW, SEL } from '../config';
 import { nameNftSvg } from '../lib/nameNftPreview';
 import { useApp } from '../context/AppContext';
@@ -283,7 +284,7 @@ export default function GetNameScreen() {
                     textDecorationLine: 'underline',
                   }}
                 >
-                  {tr('hs.buy')} →
+                  {tr('hs.buy')} {forwardArrow()}
                 </Text>
               </Pressable>
             </View>

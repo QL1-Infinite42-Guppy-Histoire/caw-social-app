@@ -1,4 +1,4 @@
-/* String-length audit for the 5-language UI. Run: node scripts/audit-i18n.mjs
+/* String-length audit for the 7-language UI. Run: node scripts/audit-i18n.mjs
  *
  * The UI must not break when a language's words run long (Spanish
  * and Korean are the usual risks): tab labels, buttons and chips
@@ -53,6 +53,15 @@ const check = (name, ok, extra = '') => {
 
 const langs = i18n.LANGS.map((l) => l.code);
 console.log(`keys: ${keys.length}, languages: ${langs.join(', ')}`);
+
+// RTL mapping (v0.3.9): Persian is the one right-to-left language —
+// src/lib/rtl.ts drives I18nManager.forceRTL from langIsRtl(), so
+// fa must need RTL and every other language must not.
+check(
+  'fa is the only RTL language',
+  i18n.langIsRtl('fa') && langs.every((l) => l === 'fa' || !i18n.langIsRtl(l)),
+  'rtl: ' + langs.filter((l) => i18n.langIsRtl(l)).join(', '),
+);
 
 // Every language must define every key: sample tr() per language and
 // compare against the raw per-language tables via re-reading the

@@ -282,7 +282,7 @@ function DepositAddressRow({ address }: { address: string }) {
       <Text style={[S.small, { marginTop: 2 }]}>{tr('hs.depositSame')}</Text>
       <Text
         selectable
-        style={{ fontFamily: MONO, fontSize: 13, color: '#0f1419', marginTop: 8 }}
+        style={{ fontFamily: MONO, fontSize: 13, color: '#0f1419', marginTop: 8, writingDirection: 'ltr', textAlign: 'left' }}
       >
         {address}
       </Text>

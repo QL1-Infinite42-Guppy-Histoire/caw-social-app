@@ -29,7 +29,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { formatUnits, parseUnits } from 'ethers';
 
-import { ConfirmSheet, MONO, S } from '../components/ui';
+import { ConfirmSheet, LTR_TEXT, MONO, S } from '../components/ui';
+import { backArrow, forwardArrow } from '../lib/rtl';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
@@ -349,7 +350,7 @@ export default function SendScreen({ onClose }: { onClose: () => void }) {
           <>
             <Pressable onPress={() => setPhase('pick')}>
               <Text style={[S.small, { color: ACCENT, fontWeight: '700' }]}>
-                ← {asset.symbol} ({asset.chainLabel})
+                {backArrow()} {asset.symbol} ({asset.chainLabel})
               </Text>
             </Pressable>
 
@@ -358,7 +359,7 @@ export default function SendScreen({ onClose }: { onClose: () => void }) {
               {tr('send.sameAddress')}
             </Text>
             <TextInput
-              style={[S.input, { marginTop: 10, fontFamily: MONO, fontSize: 13.5 }]}
+              style={[S.input, { marginTop: 10, fontFamily: MONO, fontSize: 13.5 }, LTR_TEXT, { textAlign: 'left' }]}
               value={recipient}
               onChangeText={setRecipient}
               placeholder="0x…"
@@ -474,7 +475,7 @@ export default function SendScreen({ onClose }: { onClose: () => void }) {
           <>
             <Pressable onPress={() => setPhase('form')}>
               <Text style={[S.small, { color: ACCENT, fontWeight: '700' }]}>
-                ← {tr('common.back')}
+                {backArrow()} {tr('common.back')}
               </Text>
             </Pressable>
             <Text style={[S.h2, { marginTop: 14 }]}>{tr('send.book')}</Text>
@@ -603,6 +604,8 @@ export default function SendScreen({ onClose }: { onClose: () => void }) {
                     fontSize: 13,
                     color: '#0f1419',
                     marginTop: 4,
+                    writingDirection: 'ltr',
+                    textAlign: 'left',
                   }}
                 >
                   {recipientNorm}
@@ -649,7 +652,7 @@ export default function SendScreen({ onClose }: { onClose: () => void }) {
             <Text style={[S.h1, { color: '#1b7a43' }]}>{tr('send.sent')}</Text>
             {asset && amountRaw !== null ? (
               <Text style={[S.body, { marginTop: 10 }]}>
-                {fmtBal(amountRaw, asset.decimals)} {asset.symbol} →{' '}
+                {fmtBal(amountRaw, asset.decimals)} {asset.symbol} {forwardArrow()}{' '}
                 {recipientNorm ? shortAddr(recipientNorm) : ''}
               </Text>
             ) : null}
@@ -663,6 +666,8 @@ export default function SendScreen({ onClose }: { onClose: () => void }) {
                     fontSize: 12,
                     color: '#0f1419',
                     marginTop: 4,
+                    writingDirection: 'ltr',
+                    textAlign: 'left',
                   }}
                 >
                   {txHash}

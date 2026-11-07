@@ -15,6 +15,7 @@ import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
 import { resolveNameId } from '../lib/cawApi';
+import { backArrow } from '../lib/rtl';
 import {
   directoryStatus,
   ensureDirectory,
@@ -97,7 +98,7 @@ export default function SearchScreen({ onClose }: { onClose: () => void }) {
     <View style={[S.screen, { paddingTop: insets.top }]}>
       <View style={styles.topRow}>
         <Pressable onPress={onClose} hitSlop={8}>
-          <Text style={styles.backText}>← {tr('common.back')}</Text>
+          <Text style={styles.backText}>{backArrow()} {tr('common.back')}</Text>
         </Pressable>
         <View style={styles.inputWrap}>
           <Text style={styles.mag}>🔍</Text>
@@ -167,7 +168,7 @@ export default function SearchScreen({ onClose }: { onClose: () => void }) {
               }}
             >
               <Avatar nameId={item.id} size={44} />
-              <View style={{ marginLeft: 10, flex: 1 }}>
+              <View style={{ marginStart: 10, flex: 1 }}>
                 <Text style={styles.name}>@{item.name}</Text>
                 <Text style={S.tiny}>#{item.id.toString()}</Text>
               </View>
@@ -177,7 +178,7 @@ export default function SearchScreen({ onClose }: { onClose: () => void }) {
             loading ? (
               <View style={styles.loadingRow}>
                 <ActivityIndicator color={ACCENT} size="small" />
-                <Text style={[S.tiny, { marginLeft: 8 }]}>
+                <Text style={[S.tiny, { marginStart: 8 }]}>
                   {tr('search.loading', {
                     done: String(progress.done),
                     total: String(progress.total),
@@ -221,7 +222,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     minHeight: 42,
   },
-  mag: { fontSize: 14, marginRight: 6 },
+  mag: { fontSize: 14, marginEnd: 6 },
   input: { flex: 1, fontSize: 15, color: '#0f1419', paddingVertical: 8 },
   clear: { fontSize: 14, color: '#536471', paddingHorizontal: 4 },
   row: {

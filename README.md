@@ -14,9 +14,26 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.3.8** — released 2026-11-08.
+- **現在版 / Current: v0.3.9** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.8/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.9/caw-social.apk
+  v0.3.9 adds real right-to-left layout support for Persian
+  (fa), removing the limitation noted in v0.3.8: when Persian
+  is the app language, the whole UI mirrors right-to-left
+  (I18nManager forceRTL, driven from the saved language at
+  boot by src/lib/rtl.ts); the other six languages are
+  unchanged. Physical left/right styles were audited across
+  every screen and converted to logical start/end properties,
+  directional glyphs (back/forward arrows, next/expand
+  chevrons) flip with the layout, and inherently LTR content
+  stays LTR inside its own element — 0x addresses, tx hashes,
+  and above all the secret-word grids (onboarding + reveal),
+  whose numbered order is pinned left-to-right in every
+  language. Switching across the RTL boundary applies from
+  the next app start, so the switch shows a one-time notice
+  in the newly picked language asking for a restart (there is
+  no programmatic reload in this stack — expo-updates is not
+  installed); switching within one direction needs no restart.
   v0.3.8 adds three things on top of v0.3.7. (1) A REAL NFT
   preview on the Mint screen: the CAW name NFT image is a
   data-URI SVG whose only variable part is the name itself
@@ -28,8 +45,8 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
   languages — Turkish (Türkçe) and Persian (فارسی) — bringing
   the total to seven; every one of the 341 keys is translated
   for both (audit-i18n now checks 7 languages, 35/35). Persian
-  ships with the current left-to-right layout; full RTL
-  mirroring is not applied yet. (3) A design polish pass in
+  initially shipped with the left-to-right layout; full RTL
+  mirroring arrived in v0.3.9 (above). (3) A design polish pass in
   the v0.3.7 card language (shared S.cardBox / S.cardFlush /
   S.rowDivider / S.emptyCard primitives): Settings sections
   became cards with divider rows, the backup/reveal text

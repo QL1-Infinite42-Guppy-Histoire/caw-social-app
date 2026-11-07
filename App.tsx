@@ -365,7 +365,9 @@ const styles = StyleSheet.create({
   badge: {
     position: 'absolute',
     top: -5,
-    right: -5,
+    // Logical end (v0.3.9 RTL): the badge hugs the bell's outer
+    // top corner — right in LTR, left when mirrored for Persian.
+    end: -5,
     minWidth: 19,
     height: 19,
     borderRadius: 10,
@@ -377,7 +379,7 @@ const styles = StyleSheet.create({
     borderColor: '#fff',
   },
   badgeText: { fontSize: 10.5, fontWeight: '800', color: '#fff' },
-  langCycle: { paddingVertical: 6, paddingHorizontal: 8, marginLeft: 8 },
+  langCycle: { paddingVertical: 6, paddingHorizontal: 8, marginStart: 8 },
   langCycleText: { fontSize: 13.5, color: '#536471', fontWeight: '600' },
   bottomNav: {
     flexDirection: 'row',
@@ -420,6 +422,9 @@ const styles = StyleSheet.create({
     // bar, never reaching the system navigation underneath.
     position: 'absolute',
     top: -22,
+    // Physical left/marginLeft on purpose: the math (50% - half
+    // the width) centers the circle in BOTH layout directions,
+    // so the center tab button stays exactly centered under RTL.
     left: '50%',
     marginLeft: -28,
     width: 56,
@@ -439,7 +444,9 @@ const styles = StyleSheet.create({
   tradeBtnText: { color: '#fff', fontSize: 25, lineHeight: 28, fontWeight: '800' },
   fab: {
     position: 'absolute',
-    right: 18,
+    // Logical end (v0.3.9 RTL): bottom-right in LTR, bottom-left
+    // when the layout mirrors for Persian.
+    end: 18,
     // bottom is set inline (tab bar + safe-area inset + margin).
     width: 56,
     height: 56,

@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 
-import { ConfirmSheet, MONO, S } from '../components/ui';
+import { ConfirmSheet, LTR_TEXT, MONO, S } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { LANGS, tr } from '../i18n';
@@ -110,7 +110,7 @@ export default function SettingsScreen() {
       <Text style={[S.h2, { marginTop: 24 }]}>{tr('settings.address')}</Text>
       <View style={S.cardBox}>
         {app.address ? (
-          <Text style={[S.small, { fontSize: 12.5, fontFamily: MONO }]}>
+          <Text style={[S.small, { fontSize: 12.5, fontFamily: MONO }, LTR_TEXT, { textAlign: 'left' }]}>
             {app.address}
           </Text>
         ) : null}

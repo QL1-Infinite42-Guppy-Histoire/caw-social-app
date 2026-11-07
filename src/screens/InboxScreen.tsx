@@ -225,7 +225,7 @@ function ReactionRow({
           <Text style={styles.kindBadgeText}>{icon}</Text>
         </View>
       </View>
-      <View style={{ flex: 1, marginLeft: 10 }}>
+      <View style={{ flex: 1, marginStart: 10 }}>
         <Text style={S.body}>
           <Text style={{ fontWeight: '700' }}>{who}</Text>
           {'  '}
@@ -265,7 +265,9 @@ const styles = StyleSheet.create({
   postText: { marginTop: 3 },
   kindBadge: {
     position: 'absolute',
-    right: -5,
+    // Logical end (v0.3.9 RTL): badge sits on the avatar's outer
+    // bottom corner in both directions.
+    end: -5,
     bottom: -5,
     width: 20,
     height: 20,

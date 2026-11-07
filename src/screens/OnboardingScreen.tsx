@@ -259,9 +259,12 @@ export default function OnboardingScreen() {
 }
 
 const styles = StyleSheet.create({
-  langBtn: { fontSize: 13.5, color: '#536471', marginLeft: 12, paddingVertical: 4 },
+  langBtn: { fontSize: 13.5, color: '#536471', marginStart: 12, paddingVertical: 4 },
   langOn: { color: '#0f1419', fontWeight: '700', textDecorationLine: 'underline' },
-  wordGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  // direction:'ltr' on purpose (v0.3.9): secret-word order is the
+  // secret — the numbered grid reads left-to-right in every
+  // language, Persian included.
+  wordGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12, direction: 'ltr' },
   wordCell: {
     width: '31%',
     borderWidth: 1,
@@ -272,7 +275,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#f7f9f9',
   },
   word: { fontSize: 15, fontWeight: '600', color: '#0f1419' },
-  importBox: { minHeight: 110, textAlignVertical: 'top' },
+  // Pasted secret words / keys are Latin text; keep the box LTR
+  // even in a mirrored layout (v0.3.9).
+  importBox: { minHeight: 110, textAlignVertical: 'top', writingDirection: 'ltr', textAlign: 'left' },
   methodRow: {
     borderWidth: 1,
     borderColor: '#cfd9de',

@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Alert } from 'react-native';
 import React, {
   ReactNode,
   createContext,
@@ -22,6 +23,7 @@ import { initFollowIndex } from '../lib/followIndex';
 import { initNameDirectory } from '../lib/nameDirectory';
 import type { MyActionKind } from '../lib/myActions';
 import type { ProfileCustom } from '../lib/profileCustom';
+import { applyLayoutDirection } from '../lib/rtl';
 import { myActionStore, profileCustomStore, storeKV } from '../lib/stores';
 import {
   UnlockMethod,
@@ -173,6 +175,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (isLang(savedLang)) {
           setLang(savedLang);
           setLangState(savedLang);
+          // RTL (v0.3.9): set the layout direction from the saved
+          // language NOW, before `ready` lets any real screen
+          // mount — forceRTL only takes effect on a fresh start.
+          applyLayoutDirection(savedLang);
+        } else {
+          // No saved language: pin the default (LTR) direction so
+          // a device whose own locale is RTL does not mirror an
+          // English UI.
+          applyLayoutDirection(getLang());
         }
         const info = await getWalletPublicInfo();
         if (info) {
@@ -194,6 +205,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLang(l);
     setLangState(l);
     AsyncStorage.setItem(LANG_KEY, l).catch(() => {});
+    // Crossing the RTL boundary (to/from Persian) only mirrors
+    // after a restart — the flags are set for the next launch;
+    // tell the user once, in the language they just picked.
+    if (applyLayoutDirection(l)) {
+      Alert.alert(tr('app.name'), tr('lang.restartNote'));
+    }
   }, []);
 
   const refreshBalances = useCallback(async () => {

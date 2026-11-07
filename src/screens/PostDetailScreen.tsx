@@ -17,6 +17,7 @@ import {
   fetchPostReactions,
   type TimelineItem,
 } from '../lib/cawApi';
+import { backArrow } from '../lib/rtl';
 
 /**
  * Post detail (v0.2.0): the post itself, then who liked it and who
@@ -67,7 +68,7 @@ export default function PostDetailScreen({
     <View style={[S.screen, { paddingTop: insets.top }]}>
       <View style={styles.headerRow}>
         <Pressable onPress={onBack} hitSlop={8}>
-          <Text style={styles.backText}>← {tr('common.back')}</Text>
+          <Text style={styles.backText}>{backArrow()} {tr('common.back')}</Text>
         </Pressable>
         <Text style={S.h2}>{tr('detail.title')}</Text>
         <View style={{ width: 60 }} />

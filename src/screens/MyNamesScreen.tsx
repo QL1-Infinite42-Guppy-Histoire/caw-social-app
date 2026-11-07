@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 
 import { Avatar, ConfirmSheet, S } from '../components/ui';
+import { expandChevron } from '../lib/rtl';
 import { CAW_NAME, QCAW, SEL } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
@@ -183,7 +184,7 @@ function NameCard({
             token.username ? () => app.openProfile(token.username) : undefined
           }
         />
-        <View style={{ marginLeft: 10, flex: 1 }}>
+        <View style={{ marginStart: 10, flex: 1 }}>
           <Text style={styles.name} numberOfLines={1}>
             {custom && custom.displayName
               ? custom.displayName
@@ -201,7 +202,7 @@ function NameCard({
               : ''}
           </Text>
         </View>
-        <View style={{ alignItems: 'flex-end', marginLeft: 8 }}>
+        <View style={{ alignItems: 'flex-end', marginStart: 8 }}>
           <Text
             style={styles.rowAmount}
             numberOfLines={1}
@@ -213,7 +214,7 @@ function NameCard({
           </Text>
           <Text style={S.tiny}>{tr('mine.inName')}</Text>
         </View>
-        <Text style={styles.chevron}>{expanded ? '▾' : '▸'}</Text>
+        <Text style={styles.chevron}>{expandChevron(expanded)}</Text>
       </Pressable>
 
       {expanded ? (
@@ -405,5 +406,5 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   rowUnit: { fontSize: 11, fontWeight: '600', color: '#536471' },
-  chevron: { fontSize: 15, color: '#536471', marginLeft: 8, width: 16, textAlign: 'center' },
+  chevron: { fontSize: 15, color: '#536471', marginStart: 8, width: 16, textAlign: 'center' },
 });

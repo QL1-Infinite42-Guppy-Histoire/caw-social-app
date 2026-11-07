@@ -3,6 +3,11 @@
  * Simplified Chinese, Korean, Spanish, Turkish, Persian. Plain everyday words only;
  * no jargon on screen, in every language.
  *
+ * Persian (fa) is a right-to-left language: when it is the active
+ * language the whole layout mirrors (see src/lib/rtl.ts, which
+ * drives I18nManager from langIsRtl below). All other languages
+ * are left-to-right.
+ *
  * The current language lives in a module-level variable (set by
  * AppContext) so plain library code can translate too, mirroring
  * the GuppyWallet pattern.
@@ -21,6 +26,11 @@ export const LANGS: { code: Lang; label: string }[] = [
 
 export function isLang(v: unknown): v is Lang {
   return v === 'en' || v === 'ja' || v === 'zh' || v === 'ko' || v === 'es' || v === 'tr' || v === 'fa';
+}
+
+/** True for languages written right-to-left (only Persian). */
+export function langIsRtl(l: Lang): boolean {
+  return l === 'fa';
 }
 
 /** BCP-47 locale per language, for date formatting. */
@@ -221,6 +231,8 @@ const EN = {
 
   'settings.title': 'Settings',
   'settings.language': 'Language',
+  'lang.restartNote':
+    'The screen direction changes with this language. Please close and reopen the app once to finish the switch.',
   'settings.address': 'Your wallet address',
   'settings.copy': 'Copy',
   'settings.copied': 'Copied!',
@@ -592,6 +604,8 @@ const JA: Dict = {
 
   'settings.title': '設定',
   'settings.language': '言語 / Language',
+  'lang.restartNote':
+    'この言語では画面の向きが変わります。切り替えを仕上げるため、アプリをいちど閉じて開き直してください。',
   'settings.address': 'あなたのウォレットのアドレス',
   'settings.copy': 'コピー',
   'settings.copied': 'コピーしました！',
@@ -960,6 +974,7 @@ const ZH: Dict = {
 
   'settings.title': '设置',
   'settings.language': '语言 / Language',
+  'lang.restartNote': '切换到这种语言时，屏幕方向也会改变。请关闭并重新打开一次应用，以完成切换。',
   'settings.address': '你的钱包地址',
   'settings.copy': '复制',
   'settings.copied': '已复制！',
@@ -1326,6 +1341,8 @@ const KO: Dict = {
 
   'settings.title': '설정',
   'settings.language': '언어 / Language',
+  'lang.restartNote':
+    '이 언어로 바꾸면 화면 방향도 바뀝니다. 전환을 마치려면 앱을 한 번 닫았다가 다시 열어 주세요.',
   'settings.address': '당신의 지갑 주소',
   'settings.copy': '복사',
   'settings.copied': '복사했어요!',
@@ -1697,6 +1714,8 @@ const ES: Dict = {
 
   'settings.title': 'Ajustes',
   'settings.language': 'Idioma / Language',
+  'lang.restartNote':
+    'Con este idioma cambia la dirección de la pantalla. Cierra y vuelve a abrir la aplicación una vez para terminar el cambio.',
   'settings.address': 'La dirección de tu billetera',
   'settings.copy': 'Copiar',
   'settings.copied': '¡Copiado!',
@@ -2047,6 +2066,8 @@ const TR = {
   'mine.loadFail': 'İsimlerin yüklenemedi. Lütfen tekrar dene.',
   'settings.title': 'Ayarlar',
   'settings.language': 'Dil',
+  'lang.restartNote':
+    'Bu dilde ekran yönü de değişir. Geçişi tamamlamak için uygulamayı bir kez kapatıp yeniden açın.',
   'settings.address': 'Cüzdan adresin',
   'settings.copy': 'Kopyala',
   'settings.copied': 'Kopyalandı!',
@@ -2391,6 +2412,8 @@ const FA = {
   'mine.loadFail': 'نام‌هایت بارگیری نشد. لطفاً دوباره تلاش کن.',
   'settings.title': 'تنظیمات',
   'settings.language': 'زبان',
+  'lang.restartNote':
+    'با این زبان، جهت صفحه هم عوض می‌شود. برای کامل شدن تغییر، برنامه را یک بار ببند و دوباره باز کن.',
   'settings.address': 'آدرس کیف پول تو',
   'settings.copy': 'رونوشت',
   'settings.copied': 'رونوشت شد!',

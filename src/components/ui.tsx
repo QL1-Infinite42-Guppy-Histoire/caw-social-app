@@ -43,6 +43,16 @@ export const MONO: string = Platform.select({
 }) as string;
 
 /**
+ * Guard for content that must stay left-to-right even when the
+ * layout mirrors for Persian (v0.3.9): 0x addresses, tx hashes,
+ * secret words/keys — their character order is the data. Apply
+ * to the Text (or TextInput) that renders them.
+ */
+export const LTR_TEXT: { writingDirection: 'ltr' } = {
+  writingDirection: 'ltr',
+};
+
+/**
  * The app logo (v0.3.4): the user's emblem artwork, the same image
  * as the launcher icon (assets/icon.png — yellow emblem on navy).
  * Replaces the 🐦 emoji that used to stand in for the app mark in
@@ -405,7 +415,7 @@ function TargetPostQuote({
     >
       <View style={S.row}>
         <Avatar nameId={post.senderId} size={20} />
-        <Text style={[postStyles.quoteName, { marginLeft: 6 }]}>
+        <Text style={[postStyles.quoteName, { marginStart: 6 }]}>
           {authorLabel}
         </Text>
         <Text style={S.tiny}>
@@ -506,7 +516,7 @@ function PostCardBase({
         customUri={custom ? custom.avatarPath : undefined}
         onPress={name ? () => onOpenProfile(name) : undefined}
       />
-      <View style={{ flex: 1, marginLeft: 10 }}>
+      <View style={{ flex: 1, marginStart: 10 }}>
         {ctxTpl && item.receiverId > 0n ? (
           <Text style={S.tiny}>{ctxTpl.replace('{name}', targetLabel)}</Text>
         ) : null}
@@ -536,7 +546,7 @@ function PostCardBase({
           {showLikes ? (
             <View style={S.row}>
               <HeartIcon size={15} color={liked ? LIKE_ON : '#536471'} filled={!!liked} />
-              <Text style={[S.tiny, { marginLeft: 4 }]}>
+              <Text style={[S.tiny, { marginStart: 4 }]}>
                 {(likes !== null ? likes : liked ? 1n : 0n).toString()}
               </Text>
             </View>
@@ -557,7 +567,7 @@ function PostCardBase({
                 <Text
                   style={[
                     S.tiny,
-                    { marginLeft: 4 },
+                    { marginStart: 4 },
                     liked && { color: LIKE_ON, fontWeight: '700' },
                   ]}
                 >
@@ -578,7 +588,7 @@ function PostCardBase({
                 <Text
                   style={[
                     S.tiny,
-                    { marginLeft: 4 },
+                    { marginStart: 4 },
                     recawed && { color: RECAW_ON, fontWeight: '700' },
                   ]}
                 >
@@ -639,7 +649,7 @@ export function NameRow({
       onPress={label ? () => onOpenProfile(label) : undefined}
     >
       <Avatar nameId={nameId} size={40} />
-      <View style={{ flex: 1, marginLeft: 10 }}>
+      <View style={{ flex: 1, marginStart: 10 }}>
         <Text style={postStyles.name}>
           {label ? '@' + label : tr('tl.unknownName') + nameId.toString()}
         </Text>
@@ -683,7 +693,7 @@ const postStyles = StyleSheet.create({
   actionBtn: {
     paddingHorizontal: 8,
     paddingVertical: 5,
-    marginLeft: -8,
+    marginStart: -8,
     borderRadius: 999,
   },
   actionBtnOn: { backgroundColor: '#f7f9f9' },
