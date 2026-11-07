@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#ffffff">
 <link rel="icon" type="image/png" href="icon.png">
 <link rel="apple-touch-icon" href="icon.png">
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css?v=3">
 <script src="app.js?v=1" defer></script>
 </head>
 <body>
@@ -42,7 +42,11 @@
   </div>
 
   <div class="download">
-    <a class="dl-btn" href="https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/latest/download/caw-social.apk">⬇ Android アプリをダウンロード</a>
+    <div class="paused-note" role="status">
+      <p class="paused-title">⏸ ダウンロードは一時停止中です</p>
+      <p>アプリの修正のため、ダウンロードを一時停止しています。近日中に再開します。</p>
+    </div>
+    <span class="dl-btn is-paused" aria-disabled="true">⏸ ダウンロード一時停止中</span>
     <p class="dl-meta" id="dlMeta">バージョン v0.1.0 · Android</p>
   </div>
 
