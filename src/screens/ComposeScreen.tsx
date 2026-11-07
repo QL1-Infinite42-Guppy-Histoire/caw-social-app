@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 
-import { ConfirmSheet, S } from '../components/ui';
+import { Avatar, ConfirmSheet, S } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
@@ -100,6 +100,7 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
               <View style={styles.chipRow}>
                 {myTokens.map((t) => {
                   const selected = acting.id === t.id;
+                  const c = app.customFor(t.id);
                   return (
                     <Pressable
                       key={t.id.toString()}
@@ -112,16 +113,31 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
                           selected && styles.chipTextOn,
                         ]}
                       >
-                        @{t.username}
+                        {c && c.displayName ? c.displayName : '@' + t.username}
                       </Text>
                     </Pressable>
                   );
                 })}
               </View>
             ) : (
-              <Text style={S.small}>
-                {tr('compose.postAs')}: @{acting.username}
-              </Text>
+              <View style={S.row}>
+                <Avatar
+                  nameId={acting.id}
+                  size={28}
+                  customUri={
+                    app.customFor(acting.id)
+                      ? app.customFor(acting.id)!.avatarPath
+                      : undefined
+                  }
+                />
+                <Text style={[S.small, { marginLeft: 8 }]}>
+                  {tr('compose.postAs')}:{' '}
+                  {app.customFor(acting.id) &&
+                  app.customFor(acting.id)!.displayName
+                    ? app.customFor(acting.id)!.displayName
+                    : '@' + acting.username}
+                </Text>
+              </View>
             )}
 
             <TextInput

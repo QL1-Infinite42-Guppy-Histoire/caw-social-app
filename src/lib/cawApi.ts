@@ -9,7 +9,7 @@ import { API, CAW_ACTIONS, CAW_NAME, EXPLORER, MINTER, QCAW, RPC, SEL } from '..
 import {
   CawAction,
   NameToken,
-  decodeAction,
+  decodeActions,
   decAddrRet,
   decStringRet,
   decTokensRet,
@@ -71,16 +71,47 @@ export async function withRetry<T>(
 }
 
 /* ---------- names ---------- */
+/**
+ * IMPORTANT — the QL1 CawName.tokens(owner) rows pair each token id
+ * with the WRONG username: the name of the token one id lower (proven
+ * from the raw return data: the owner of id 189 gets username
+ * "dreamin", which belongs to id 188; usernames(189) is "neptune").
+ * Only the ids and balances in those rows can be trusted, so every
+ * username is re-read from the usernames(id) mapping — the same source
+ * resolveNameId verifies against. A failed read leaves the username
+ * empty (the UI shows "#id") rather than somebody else's name.
+ */
 const ownerTokensCache = new Map<string, Promise<NameToken[]>>();
 export function tokensOf(owner: string): Promise<NameToken[]> {
   const key = owner.toLowerCase();
   if (!ownerTokensCache.has(key)) {
-    ownerTokensCache.set(
-      key,
-      ethCall(CAW_NAME, SEL.tokens + encAddr(owner))
-        .then((h) => decTokensRet(h))
-        .catch(() => []),
-    );
+    const p = (async (): Promise<NameToken[]> => {
+      try {
+        const h = await ethCall(CAW_NAME, SEL.tokens + encAddr(owner));
+        const toks = decTokensRet(h);
+        await Promise.all(
+          toks.map(async (t) => {
+            try {
+              const un = await withRetry(
+                () => readStr(CAW_NAME, SEL.usernames + word(t.id)),
+                2,
+                400,
+              );
+              t.username = un || '';
+            } catch {
+              t.username = '';
+            }
+          }),
+        );
+        return toks;
+      } catch {
+        // Do not let one transient RPC failure poison the whole
+        // session: drop the cache entry so the next call retries.
+        ownerTokensCache.delete(key);
+        return [];
+      }
+    })();
+    ownerTokensCache.set(key, p);
   }
   return ownerTokensCache.get(key)!;
 }
@@ -94,26 +125,36 @@ const nameCache = new Map<bigint, Promise<string | null>>();
 export function resolveName(idIn: bigint): Promise<string | null> {
   const id = BigInt(idIn);
   if (!nameCache.has(id)) {
-    nameCache.set(
-      id,
-      (async () => {
+    const p = (async (): Promise<string | null> => {
+      let result: string | null = null;
+      // The usernames(id) mapping is the authoritative name source
+      // (tokens() pairs ids with shifted names — see tokensOf above).
+      try {
+        const n = await withRetry(
+          () => readStr(CAW_NAME, SEL.usernames + word(id)),
+          2,
+          400,
+        );
+        if (n) result = n;
+      } catch {
+        /* fall through to the token list */
+      }
+      if (!result) {
         try {
           const owner = await readAddr(CAW_NAME, SEL.ownerOf + word(id));
           const toks = await tokensOf(owner);
           const hit = toks.find((t) => t.id === id);
-          if (hit && hit.username) return hit.username;
+          if (hit && hit.username) result = hit.username;
         } catch {
           /* fall through */
         }
-        try {
-          const n = await readStr(CAW_NAME, SEL.usernames + word(id));
-          if (n) return n;
-        } catch {
-          /* fall through */
-        }
-        return null;
-      })(),
-    );
+      }
+      // A miss caused by a transient read failure must not stick for
+      // the whole session — evict so the next render retries.
+      if (!result) nameCache.delete(id);
+      return result;
+    })();
+    nameCache.set(id, p);
   }
   return nameCache.get(id)!;
 }
@@ -161,29 +202,34 @@ const avatarCache = new Map<bigint, Promise<string | null>>();
 export function avatarFor(idIn: bigint): Promise<string | null> {
   const id = BigInt(idIn);
   if (!avatarCache.has(id)) {
-    avatarCache.set(
-      id,
-      (async () => {
-        try {
-          const uri = await readStr(CAW_NAME, SEL.tokenURI + word(id));
-          if (uri.startsWith('data:application/json;base64,')) {
-            const meta = JSON.parse(
-              toUtf8String(decodeBase64(uri.split(',')[1])),
-            );
-            if (meta.image) {
-              return meta.image.startsWith('ipfs://')
-                ? 'https://ipfs.io/ipfs/' + meta.image.slice(7)
-                : meta.image;
-            }
-          } else if (uri.startsWith('http')) {
-            return uri;
+    const p = (async (): Promise<string | null> => {
+      let result: string | null = null;
+      try {
+        const uri = await withRetry(
+          () => readStr(CAW_NAME, SEL.tokenURI + word(id)),
+          2,
+          400,
+        );
+        if (uri.startsWith('data:application/json;base64,')) {
+          const meta = JSON.parse(
+            toUtf8String(decodeBase64(uri.split(',')[1])),
+          );
+          if (meta.image) {
+            result = meta.image.startsWith('ipfs://')
+              ? 'https://ipfs.io/ipfs/' + meta.image.slice(7)
+              : meta.image;
           }
-        } catch {
-          /* no picture */
+        } else if (uri.startsWith('http')) {
+          result = uri;
         }
-        return null;
-      })(),
-    );
+      } catch {
+        /* no picture, or a transient failure */
+      }
+      // Same rule as names: a failure-driven null must not stick.
+      if (!result) avatarCache.delete(id);
+      return result;
+    })();
+    avatarCache.set(id, p);
   }
   return avatarCache.get(id)!;
 }
@@ -249,6 +295,20 @@ function qs(params: Record<string, unknown>): string {
   return s ? '?' + s : '';
 }
 
+/**
+ * In-memory index of posts (type 0) seen while reading the feed, by
+ * cawId. Like/share entries carry the target post's cawId, so this is
+ * how their content gets found for display.
+ */
+const postIndex = new Map<string, TimelineItem>();
+
+/** Optional hook: notified for every decoded action (used to seed the
+ *  on-device "my actions" memory without a circular import). */
+let actionObserver: ((a: CawAction) => void) | null = null;
+export function setActionObserver(fn: ((a: CawAction) => void) | null): void {
+  actionObserver = fn;
+}
+
 async function fetchActionPage(
   next: Record<string, unknown> | null,
 ): Promise<Page<TimelineItem>> {
@@ -260,15 +320,58 @@ async function fetchActionPage(
   const items: TimelineItem[] = [];
   for (const it of j.items || []) {
     if (!it.raw_input || (it.status && it.status !== 'ok')) continue;
-    const a = decodeAction(it.raw_input);
-    if (a) items.push({ ...a, hash: it.hash, blockTs: it.timestamp });
+    // A batch can carry several actions — render every one of them,
+    // not just the first.
+    for (const a of decodeActions(it.raw_input)) {
+      const item: TimelineItem = { ...a, hash: it.hash, blockTs: it.timestamp };
+      items.push(item);
+      if (a.type === 0) postIndex.set(a.cawId.toLowerCase(), item);
+      if (actionObserver) {
+        try {
+          actionObserver(a);
+        } catch {
+          /* the observer must never break the feed */
+        }
+      }
+    }
   }
   return { items, next: j.next_page_params || null };
 }
 
 export const fetchTimelinePage = fetchActionPage;
 
-/** Up to 10 posts by one name, scanning up to 4 pages (same as web). */
+/**
+ * Find the original post for a cawId (the target of a like / share).
+ * Checks everything the feed reads have already indexed, then scans
+ * up to 12 fresh pages. Returns null when it cannot be found nearby —
+ * the entry then simply shows without the quoted post.
+ */
+export async function findPostByCawId(
+  cawId: string,
+): Promise<TimelineItem | null> {
+  const key = (cawId || '').toLowerCase();
+  const hit = postIndex.get(key);
+  if (hit) return hit;
+  let cursor: Record<string, unknown> | null = null;
+  for (let p = 0; p < 12; p++) {
+    const page = await fetchActionPage(cursor);
+    const h2 = postIndex.get(key);
+    if (h2) return h2;
+    cursor = page.next;
+    if (!cursor) break;
+  }
+  return null;
+}
+
+/**
+ * Up to 10 actions by one name. Almost every action on QL1 is
+ * submitted by a relay address, so a profile cannot be read from the
+ * owner's own transaction list — the contract feed itself has to be
+ * scanned. The old budget of 4 pages (200 txs) found NOTHING for
+ * less-active names (measured: name #189's first action sits on page
+ * 21), so profiles looked empty. One call now scans up to 30 pages,
+ * and "see more" continues from the returned cursor.
+ */
 export async function fetchProfilePosts(
   nameId: bigint,
   next: Record<string, unknown> | null,
@@ -277,7 +380,7 @@ export async function fetchProfilePosts(
   let cursor = next;
   let pages = 0;
   let done = false;
-  while (found.length < 10 && pages < 4 && !done) {
+  while (found.length < 10 && pages < 30 && !done) {
     const page = await fetchActionPage(cursor);
     cursor = page.next;
     if (!cursor) done = true;

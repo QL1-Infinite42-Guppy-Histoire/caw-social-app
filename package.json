@@ -1,1 +1,33 @@
-{"dependencies":{"@react-native-async-storage/async-storage":"2.2.0","ethers":"^6.13.0","expo":"~58.0.21","expo-clipboard":"~58.0.4","expo-crypto":"~58.0.7","expo-linear-gradient":"~58.0.3","expo-local-authentication":"~58.0.2","expo-secure-store":"~58.0.2","expo-status-bar":"~58.0.4","react":"19.3.0","react-native":"0.88.1","react-native-safe-area-context":"~5.10.1","react-native-svg":"15.16.0"},"devDependencies":{"@types/react":"^19.3.0","typescript":"~6.0.3"},"main":"index.ts","name":"caw-social-app","private":true,"scripts":{"android":"expo run:android","start":"expo start","typecheck":"tsc --noEmit","verify":"node scripts/verify-core.mjs"},"version":"0.1.0"}
+{
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "ethers": "^6.13.0",
+    "expo": "~58.0.21",
+    "expo-clipboard": "~58.0.4",
+    "expo-crypto": "~58.0.7",
+    "expo-file-system": "~58.0.13",
+    "expo-image-picker": "~58.0.10",
+    "expo-linear-gradient": "~58.0.3",
+    "expo-local-authentication": "~58.0.2",
+    "expo-secure-store": "~58.0.2",
+    "expo-status-bar": "~58.0.4",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-safe-area-context": "~5.10.1",
+    "react-native-svg": "15.16.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "typescript": "~6.0.3"
+  },
+  "main": "index.ts",
+  "name": "caw-social-app",
+  "private": true,
+  "scripts": {
+    "android": "expo run:android",
+    "start": "expo start",
+    "typecheck": "tsc --noEmit",
+    "verify": "node scripts/verify-core.mjs"
+  },
+  "version": "0.1.1"
+}

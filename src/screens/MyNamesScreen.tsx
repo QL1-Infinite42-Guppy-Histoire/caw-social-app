@@ -146,20 +146,29 @@ function NameCard({ token }: { token: NameToken }) {
     }
   };
 
+  const custom = app.customFor(token.id);
   return (
     <View style={styles.card}>
       <View style={S.row}>
         <Avatar
           nameId={token.id}
           size={48}
+          customUri={custom ? custom.avatarPath : undefined}
           onPress={
             token.username ? () => app.openProfile(token.username) : undefined
           }
         />
         <View style={{ marginLeft: 12, flex: 1 }}>
           <Text style={styles.name}>
-            {token.username ? '@' + token.username : '#' + token.id.toString()}
+            {custom && custom.displayName
+              ? custom.displayName
+              : token.username
+                ? '@' + token.username
+                : '#' + token.id.toString()}
           </Text>
+          {custom && custom.displayName && token.username ? (
+            <Text style={S.small}>@{token.username}</Text>
+          ) : null}
           <Text style={S.small}>
             #{token.id.toString()}
             {followers !== null

@@ -189,40 +189,81 @@ export function encodeBatch(actions: CawAction[], sigs: CawSignature[]): string 
 }
 
 /**
- * Decode one action out of processAction calldata (the first action of a
- * batch — the timeline only ever renders single-action batches, exactly
- * like the web version). Returns null when the calldata is not a
- * decodable action.
+ * Decode ALL actions out of processAction calldata by walking the batch
+ * structure (array offsets first, then each action's own field offsets —
+ * the text is found through the action's text-offset field, so actions
+ * with non-empty tip lists decode correctly too).
+ *
+ * On QL1 every real batch seen so far carries a single action, but the
+ * decoder must not silently drop or misread a batch if that ever
+ * changes. Returns [] when the calldata is not a decodable batch (the
+ * deployer's no-op calls with zero actions land here too).
+ */
+export function decodeActions(raw: string): CawAction[] {
+  if (!raw || !raw.startsWith('0x84e33f2f')) return [];
+  const hex = strip(raw);
+  const body = hex.slice(8); // after the 4-byte selector
+  const wAt = (i: number): string => body.slice(i * 64, i * 64 + 64);
+  const wi = (i: number): number => {
+    const w = wAt(i);
+    if (w.length < 64) throw new Error('short calldata');
+    return Number(BigInt('0x' + w));
+  };
+  try {
+    // word 0: a constant (1 in every real batch), word 1: offset of the
+    // head (four array offsets: actions, v, r, s).
+    const headAt = wi(1) / 32;
+    const actsAt = headAt + wi(headAt) / 32;
+    const n = wi(actsAt);
+    if (n < 0 || n > 64) return [];
+    const out: CawAction[] = [];
+    for (let k = 0; k < n; k++) {
+      const tOff = actsAt + 1 + wi(actsAt + 1 + k) / 32;
+      const f = (i: number): string => wAt(tOff + i);
+      const fi = (i: number): bigint => BigInt('0x' + f(i));
+      const type = Number(fi(0));
+      if (type > 3) continue;
+      // field 8 is the offset of the text tail, relative to the action
+      const textWord = tOff + Number(fi(8)) / 32;
+      const textLen = wi(textWord);
+      if (textLen < 0 || textLen > 4096) continue;
+      const textHex = body.slice(
+        (textWord + 1) * 64,
+        (textWord + 1) * 64 + textLen * 2,
+      );
+      let text = '';
+      try {
+        text = toUtf8String(
+          new Uint8Array(
+            (textHex.match(/../g) || []).map((h) => parseInt(h, 16)),
+          ),
+        );
+      } catch {
+        text = '';
+      }
+      out.push({
+        type,
+        senderId: fi(1),
+        receiverId: fi(2),
+        ts: Number(fi(4)),
+        sender: '0x' + f(5).slice(24),
+        cawId: '0x' + f(7),
+        text,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Decode one action out of processAction calldata (the first action of
+ * a batch). Returns null when the calldata carries no decodable action.
  */
 export function decodeAction(raw: string): CawAction | null {
-  const hex = strip(raw || '');
-  if (!raw || !raw.startsWith('0x84e33f2f') || hex.length < 800 * 2) return null;
-  const type = Number(uAt(hex, 4 + 8 * 32));
-  if (type > 3) return null;
-  const textLen = Number(uAt(hex, 4 + 19 * 32));
-  const textHex = hex.slice(
-    (4 + 20 * 32) * 2,
-    (4 + 20 * 32) * 2 + textLen * 2,
-  );
-  let text = '';
-  try {
-    text = toUtf8String(
-      new Uint8Array(
-        (textHex.match(/../g) || []).map((h) => parseInt(h, 16)),
-      ),
-    );
-  } catch {
-    text = '';
-  }
-  return {
-    type,
-    senderId: uAt(hex, 4 + 9 * 32),
-    receiverId: uAt(hex, 4 + 10 * 32),
-    ts: Number(uAt(hex, 4 + 12 * 32)),
-    sender: addrAt(hex, 4 + 13 * 32),
-    cawId: '0x' + hex.slice((4 + 15 * 32) * 2, (4 + 15 * 32) * 2 + 64),
-    text,
-  };
+  const all = decodeActions(raw);
+  return all.length ? all[0] : null;
 }
 
 /** UTF-8 byte length — the 420 limit counts bytes (a Japanese letter = 3). */

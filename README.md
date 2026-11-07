@@ -14,10 +14,37 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.1.0** — released 2026-11-07.
+- **現在版 / Current: v0.1.1** — released 2026-11-07.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.1.0/caw-social.apk
-  First end-to-end check still open: one real post from a real phone.
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.1.1/caw-social.apk
+  v0.1.0 was confirmed on a real phone the same day (name mint, post,
+  like and share all work). v0.1.1 fixes the three problems reported
+  from that check and adds on-device profile customization:
+
+  - **Likes / shares now light up and stay lit.** The app remembers
+    your own like / share / follow actions on the device (per wallet
+    and per name), lights the button the moment you confirm, keeps it
+    across restarts, and also notices your past actions when they
+    scroll by in the feed.
+  - **Missing content fixed.** Like / share entries now show the
+    original post they point at (quoted box). Profile pages scan much
+    deeper for a name's posts — the old 4-page scan found none at all
+    for quieter names.
+  - **Wrong / unreachable profiles fixed.** The chain's
+    `CawName.tokens()` rows pair each token id with the *previous*
+    token's username (measured on-chain: id 189 came back as
+    "dreamin" instead of "neptune"), so names now come from the
+    `usernames(id)` mapping everywhere; and a name/avatar read that
+    fails once no longer stays broken for the whole session.
+  - **Profile customization (off-chain).** On your own profile you
+    can set a display name, a profile picture and a header picture
+    (picked from your photos, copied into the app's own storage).
+    This is a look for this phone only — chain data and your username
+    never change — and it can be reset to the default look anytime.
+
+  Verified with `npm run verify` (9/9) and
+  `node scripts/verify-fixes.mjs` (26/26, including live checks of
+  the exact cases above).
 - Android package: `one.guppyguide.cawsocial`
 - APK: from the GitHub Releases page (asset `caw-social.apk`), or the
   `caw-social-apk` artifact of the latest Actions run.
@@ -32,7 +59,7 @@ longer works. This app keeps the key on your phone (Android
 Keystore-backed secure storage) and signs in-app, exactly like the
 original signers did.
 
-## Features (v0.1.0)
+## Features (v0.1.1)
 
 - Wallet: create new (secret words) or import (secret words / private
   key). QL1 only. Unlock by password or biometrics — asked when the

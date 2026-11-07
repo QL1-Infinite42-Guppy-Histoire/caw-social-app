@@ -97,6 +97,8 @@ export default function TimelineScreen() {
     if (!pending) return;
     const { kind, item } = pending;
     setBusyByHash((prev) => ({ ...prev, [item.hash]: true }));
+    // Light the button up right away; undo if the send fails.
+    app.markMyAction(kind, item, true).catch(() => {});
     try {
       await performAction(app, {
         kind,
@@ -105,6 +107,7 @@ export default function TimelineScreen() {
       });
       setStatusByHash((prev) => ({ ...prev, [item.hash]: tr('act.done') }));
     } catch (e) {
+      app.markMyAction(kind, item, false).catch(() => {});
       const msg =
         e instanceof Error && e.message === 'need-name'
           ? tr('compose.needName')
@@ -138,7 +141,12 @@ export default function TimelineScreen() {
       <View style={[S.row, { marginTop: 8, flexWrap: 'wrap', gap: 8 }]}>
         <Text style={S.small}>{tr('home.postAs')}</Text>
         <Text style={[S.body, { fontWeight: '700' }]}>
-          {acting ? '@' + acting.username : '—'}
+          {acting
+            ? app.customFor(acting.id) &&
+              app.customFor(acting.id)!.displayName
+              ? app.customFor(acting.id)!.displayName
+              : '@' + acting.username
+            : '—'}
         </Text>
       </View>
     </View>
@@ -193,6 +201,9 @@ export default function TimelineScreen() {
             onAction={handleAction}
             actionStatus={statusByHash[item.hash]}
             busy={!!busyByHash[item.hash]}
+            liked={app.hasMyAction(1, item)}
+            recawed={app.hasMyAction(2, item)}
+            custom={app.customFor(item.senderId)}
           />
         )}
         ListEmptyComponent={

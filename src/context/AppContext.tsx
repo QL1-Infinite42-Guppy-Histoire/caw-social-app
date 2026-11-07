@@ -10,8 +10,16 @@ import React, {
 } from 'react';
 
 import { Lang, getLang, setLang, tr } from '../i18n';
-import { tokensOf, walletBalances } from '../lib/cawApi';
+import {
+  setActionObserver,
+  tokensOf,
+  walletBalances,
+  type TimelineItem,
+} from '../lib/cawApi';
 import type { NameToken } from '../lib/cawCore';
+import type { MyActionKind } from '../lib/myActions';
+import type { ProfileCustom } from '../lib/profileCustom';
+import { myActionStore, profileCustomStore, storeKV } from '../lib/stores';
 import {
   UnlockMethod,
   authenticate,
@@ -59,6 +67,22 @@ export interface AppContextValue {
   myTokens: NameToken[];
   refreshMyTokens: () => Promise<NameToken[]>;
   chooseActing: (id: bigint) => void;
+  /* my like / share / follow state, remembered on this device */
+  hasMyAction: (kind: MyActionKind, item: TimelineItem) => boolean;
+  hasFollowed: (nameId: bigint) => boolean;
+  markMyAction: (
+    kind: MyActionKind,
+    item: TimelineItem,
+    on: boolean,
+  ) => Promise<void>;
+  markFollowed: (nameId: bigint, on: boolean) => Promise<void>;
+  /* off-chain profile customization for my own names */
+  customFor: (id: bigint) => ProfileCustom | undefined;
+  saveCustom: (
+    id: bigint,
+    patch: Partial<ProfileCustom>,
+  ) => Promise<ProfileCustom>;
+  clearCustom: (id: bigint) => Promise<ProfileCustom | undefined>;
   /* navigation */
   tab: Tab;
   setTab: (t: Tab) => void;
@@ -99,8 +123,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [profileName, setProfileName] = useState<string | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [pwPrompt, setPwPrompt] = useState<PwPromptState | null>(null);
+  const [, setStoreTick] = useState(0);
   const secretRef = useRef<WalletSecretLoaded | null>(null);
   const addressRef = useRef<string | null>(null);
+
+  /* ---------- on-device stores (my actions + profile looks) ---------- */
+  useEffect(() => {
+    const bump = () => setStoreTick((t) => t + 1);
+    const off1 = myActionStore.subscribe(bump);
+    const off2 = profileCustomStore.subscribe(bump);
+    setActionObserver((a) => myActionStore.observe(a));
+    profileCustomStore.init(storeKV).catch(() => {});
+    return () => {
+      off1();
+      off2();
+      setActionObserver(null);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (address) myActionStore.init(storeKV, address).catch(() => {});
+  }, [address]);
 
   /* ---------- boot ---------- */
   useEffect(() => {
@@ -145,6 +188,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!addr) return [];
     const toks = await tokensOf(addr);
     setMyTokens(toks);
+    myActionStore.registerOwnIds(toks.map((t) => t.id));
     // restore the remembered acting name when still owned (web behaviour)
     try {
       const saved = await AsyncStorage.getItem(actingKey(addr));
@@ -243,9 +287,55 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshMyTokens();
   }, [loadSecretIntoMemory, refreshBalances, refreshMyTokens]);
 
+  const actingNow = useCallback((): bigint | null => {
+    return actingId ?? (myTokens.length ? myTokens[0].id : null);
+  }, [actingId, myTokens]);
+
+  const hasMyAction = useCallback(
+    (kind: MyActionKind, item: TimelineItem): boolean =>
+      myActionStore.has(kind, actingNow(), item.cawId),
+    [actingNow],
+  );
+  const hasFollowed = useCallback(
+    (nameId: bigint): boolean =>
+      myActionStore.has(3, actingNow(), nameId.toString()),
+    [actingNow],
+  );
+  const markMyAction = useCallback(
+    async (kind: MyActionKind, item: TimelineItem, on: boolean) => {
+      const id = actingNow();
+      if (id === null) return;
+      await myActionStore.set(kind, id, item.cawId, on);
+    },
+    [actingNow],
+  );
+  const markFollowed = useCallback(
+    async (nameId: bigint, on: boolean) => {
+      const id = actingNow();
+      if (id === null) return;
+      await myActionStore.set(3, id, nameId.toString(), on);
+    },
+    [actingNow],
+  );
+
+  const customFor = useCallback(
+    (id: bigint): ProfileCustom | undefined => profileCustomStore.get(id),
+    [],
+  );
+  const saveCustom = useCallback(
+    (id: bigint, patch: Partial<ProfileCustom>) =>
+      profileCustomStore.set(id, patch),
+    [],
+  );
+  const clearCustom = useCallback(
+    (id: bigint) => profileCustomStore.clear(id),
+    [],
+  );
+
   const onWalletDeleted = useCallback(() => {
     secretRef.current = null;
     addressRef.current = null;
+    myActionStore.reset();
     setHasWallet(false);
     setAddress(null);
     setQom(null);
@@ -283,6 +373,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     myTokens,
     refreshMyTokens,
     chooseActing,
+    hasMyAction,
+    hasFollowed,
+    markMyAction,
+    markFollowed,
+    customFor,
+    saveCustom,
+    clearCustom,
     tab,
     setTab,
     profileName,

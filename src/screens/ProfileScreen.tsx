@@ -2,9 +2,12 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Image,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,6 +27,10 @@ import {
 } from '../lib/cawApi';
 import { performAction } from '../lib/actionFlow';
 import { fmtAmount } from '../lib/cawCore';
+import {
+  deleteProfileImage,
+  pickAndStoreProfileImage,
+} from '../lib/profileImage';
 
 type PendingAction = { kind: 1 | 2; item: TimelineItem };
 type LoadState = 'loading' | 'ok' | 'fail' | 'notfound';
@@ -60,6 +67,10 @@ export default function ProfileScreen({
   const [followBusy, setFollowBusy] = useState(false);
   const [followStatus, setFollowStatus] = useState('');
 
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editBusy, setEditBusy] = useState(false);
+
   const acting =
     myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
   const actingLabel = acting ? '@' + acting.username : '';
@@ -68,6 +79,69 @@ export default function ProfileScreen({
     !!address &&
     !!owner &&
     address.toLowerCase() === owner.toLowerCase();
+
+  // On-device custom look (off-chain) — only ever set for my own names.
+  const custom = profileId !== null ? app.customFor(profileId) : undefined;
+  const followedByMe =
+    profileId !== null ? app.hasFollowed(profileId) : false;
+
+  const openEditor = useCallback(() => {
+    setEditName(custom && custom.displayName ? custom.displayName : '');
+    setEditOpen(true);
+  }, [custom]);
+
+  const saveDisplayName = useCallback(async () => {
+    if (profileId === null) return;
+    setEditBusy(true);
+    try {
+      await app.saveCustom(profileId, {
+        displayName: editName.trim(),
+      });
+    } finally {
+      setEditBusy(false);
+    }
+  }, [app, profileId, editName]);
+
+  const pickImage = useCallback(
+    async (kind: 'avatar' | 'header') => {
+      if (profileId === null) return;
+      setEditBusy(true);
+      try {
+        const uri = await pickAndStoreProfileImage(profileId, kind);
+        if (uri) {
+          const old =
+            kind === 'avatar'
+              ? custom && custom.avatarPath
+              : custom && custom.headerPath;
+          if (old && old !== uri) deleteProfileImage(old);
+          await app.saveCustom(
+            profileId,
+            kind === 'avatar' ? { avatarPath: uri } : { headerPath: uri },
+          );
+        }
+      } catch {
+        /* picking failed — leave the current look as it is */
+      } finally {
+        setEditBusy(false);
+      }
+    },
+    [app, profileId, custom],
+  );
+
+  const resetCustom = useCallback(async () => {
+    if (profileId === null) return;
+    setEditBusy(true);
+    try {
+      const old = await app.clearCustom(profileId);
+      if (old) {
+        deleteProfileImage(old.avatarPath);
+        deleteProfileImage(old.headerPath);
+      }
+      setEditName('');
+    } finally {
+      setEditBusy(false);
+    }
+  }, [app, profileId]);
 
   const loadProfile = useCallback(async () => {
     setLoadState('loading');
@@ -155,6 +229,8 @@ export default function ProfileScreen({
     if (!pending) return;
     const { kind, item } = pending;
     setBusyByHash((prev) => ({ ...prev, [item.hash]: true }));
+    // Light the button up right away; undo if the send fails.
+    app.markMyAction(kind, item, true).catch(() => {});
     try {
       await performAction(app, {
         kind,
@@ -163,6 +239,7 @@ export default function ProfileScreen({
       });
       setStatusByHash((prev) => ({ ...prev, [item.hash]: tr('act.done') }));
     } catch (e) {
+      app.markMyAction(kind, item, false).catch(() => {});
       const msg =
         e instanceof Error && e.message === 'need-name'
           ? tr('compose.needName')
@@ -177,6 +254,7 @@ export default function ProfileScreen({
   const confirmFollow = useCallback(async () => {
     if (profileId === null) return;
     setFollowBusy(true);
+    app.markFollowed(profileId, true).catch(() => {});
     try {
       await performAction(app, {
         kind: 3,
@@ -184,7 +262,9 @@ export default function ProfileScreen({
         text: 'FOLLOW',
       });
       setFollowStatus(tr('act.followed'));
+      setFollowers((f) => (f === null ? f : f + 1n));
     } catch (e) {
+      app.markFollowed(profileId, false).catch(() => {});
       const msg =
         e instanceof Error && e.message === 'need-name'
           ? tr('compose.needName')
@@ -260,21 +340,40 @@ export default function ProfileScreen({
   const header = (
     <View>
       {backRow}
-      <LinearGradient
-        colors={['#e8590c', '#ffb59e']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-        style={styles.banner}
-      />
+      {custom && custom.headerPath ? (
+        <Image
+          source={{ uri: custom.headerPath }}
+          style={styles.banner}
+          resizeMode="cover"
+        />
+      ) : (
+        <LinearGradient
+          colors={['#e8590c', '#ffb59e']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.banner}
+        />
+      )}
       <View style={styles.avatarWrap}>
         {profileId !== null ? (
           <View style={styles.avatarRing}>
-            <Avatar nameId={profileId} size={96} />
+            <Avatar
+              nameId={profileId}
+              size={96}
+              customUri={custom ? custom.avatarPath : undefined}
+            />
           </View>
         ) : null}
       </View>
       <View style={{ paddingHorizontal: 16 }}>
-        <Text style={styles.username}>@{resolvedName}</Text>
+        {custom && custom.displayName ? (
+          <>
+            <Text style={styles.username}>{custom.displayName}</Text>
+            <Text style={S.small}>@{resolvedName}</Text>
+          </>
+        ) : (
+          <Text style={styles.username}>@{resolvedName}</Text>
+        )}
 
         <View style={styles.chipRow}>
           {profileId !== null ? (
@@ -306,9 +405,24 @@ export default function ProfileScreen({
         </View>
 
         {isOwn ? (
-          <Text style={[S.ok, { marginTop: 10 }]}>
-            {tr('profile.yourName')}
-          </Text>
+          <View style={{ marginTop: 10 }}>
+            <Text style={S.ok}>{tr('profile.yourName')}</Text>
+            <Pressable
+              style={[S.ghostBtn, { marginTop: 10, alignSelf: 'flex-start' }]}
+              onPress={openEditor}
+            >
+              <Text style={S.ghostBtnText}>{tr('custom.edit')}</Text>
+            </Pressable>
+          </View>
+        ) : followedByMe ? (
+          <View style={{ marginTop: 12, alignItems: 'flex-start' }}>
+            <View style={S.chip}>
+              <Text style={S.chipText}>✓ {tr('act.following')}</Text>
+            </View>
+            {followStatus ? (
+              <Text style={[S.small, { marginTop: 8 }]}>{followStatus}</Text>
+            ) : null}
+          </View>
         ) : acting ? (
           <View style={{ marginTop: 12, alignItems: 'flex-start' }}>
             <Pressable
@@ -346,12 +460,18 @@ export default function ProfileScreen({
             onAction={handleAction}
             actionStatus={statusByHash[item.hash]}
             busy={!!busyByHash[item.hash]}
+            liked={app.hasMyAction(1, item)}
+            recawed={app.hasMyAction(2, item)}
+            custom={app.customFor(item.senderId)}
           />
         )}
         ListEmptyComponent={
           loadingPosts ? (
             <View style={styles.center}>
               <ActivityIndicator color={ACCENT} />
+              <Text style={[S.small, { marginTop: 10 }]}>
+                {tr('profile.searching')}
+              </Text>
             </View>
           ) : (
             <View style={{ padding: 24, alignItems: 'center' }}>
@@ -407,6 +527,76 @@ export default function ProfileScreen({
         onCancel={() => setFollowConfirmOpen(false)}
         busy={followBusy}
       />
+
+      <Modal
+        visible={editOpen}
+        animationType="slide"
+        onRequestClose={() => setEditOpen(false)}
+      >
+        <View style={S.screen}>
+          <View style={styles.backRow}>
+            <Pressable onPress={() => setEditOpen(false)} hitSlop={8}>
+              <Text style={styles.backText}>← {tr('common.back')}</Text>
+            </Pressable>
+          </View>
+          <View style={S.scrollPad}>
+            <Text style={S.h1}>{tr('custom.title')}</Text>
+            <Text style={[S.small, { marginTop: 8 }]}>{tr('custom.note')}</Text>
+
+            <Text style={S.h2}>{tr('custom.displayName')}</Text>
+            <TextInput
+              style={[S.input, { marginTop: 8 }]}
+              value={editName}
+              onChangeText={setEditName}
+              placeholder={tr('custom.displayNamePh')}
+              maxLength={40}
+              autoCorrect={false}
+            />
+            <Pressable
+              style={[S.bigBtn, { marginTop: 12 }, editBusy && S.disabled]}
+              disabled={editBusy}
+              onPress={saveDisplayName}
+            >
+              <Text style={S.bigBtnText}>{tr('custom.save')}</Text>
+            </Pressable>
+
+            <View style={{ height: 18 }} />
+            <Pressable
+              style={[S.ghostBtn, editBusy && S.disabled]}
+              disabled={editBusy}
+              onPress={() => pickImage('avatar')}
+            >
+              <Text style={S.ghostBtnText}>
+                {tr('custom.pickAvatar')}
+                {custom && custom.avatarPath ? '' : '（' + tr('custom.notSet') + '）'}
+              </Text>
+            </Pressable>
+            <View style={{ height: 10 }} />
+            <Pressable
+              style={[S.ghostBtn, editBusy && S.disabled]}
+              disabled={editBusy}
+              onPress={() => pickImage('header')}
+            >
+              <Text style={S.ghostBtnText}>
+                {tr('custom.pickHeader')}
+                {custom && custom.headerPath ? '' : '（' + tr('custom.notSet') + '）'}
+              </Text>
+            </Pressable>
+
+            <View style={{ height: 18 }} />
+            <Pressable
+              style={[S.ghostBtn, editBusy && S.disabled]}
+              disabled={editBusy}
+              onPress={resetCustom}
+            >
+              <Text style={S.ghostBtnText}>{tr('custom.reset')}</Text>
+            </Pressable>
+            {editBusy ? (
+              <ActivityIndicator color={ACCENT} style={{ marginTop: 16 }} />
+            ) : null}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

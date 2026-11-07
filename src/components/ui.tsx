@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -15,8 +15,15 @@ import { SvgXml } from 'react-native-svg';
 
 import { ACCENT } from '../config';
 import { tr } from '../i18n';
-import { avatarFor, likesCount, resolveName, txUrl } from '../lib/cawApi';
+import {
+  avatarFor,
+  findPostByCawId,
+  likesCount,
+  resolveName,
+  txUrl,
+} from '../lib/cawApi';
 import type { TimelineItem } from '../lib/cawApi';
+import type { ProfileCustom } from '../lib/profileCustom';
 
 export const HAIRLINE = '#eff3f4';
 
@@ -84,9 +91,9 @@ export const S = StyleSheet.create({
 });
 
 /* ---------- line icons (same feather-style paths as the web) ---------- */
-export function HeartIcon({ size = 18, color = '#536471' }: { size?: number; color?: string }) {
+export function HeartIcon({ size = 18, color = '#536471', filled = false }: { size?: number; color?: string; filled?: boolean }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={filled ? color : 'none'} stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
     </Svg>
   );
@@ -107,24 +114,31 @@ export function Avatar({
   nameId,
   size = 44,
   onPress,
+  customUri,
 }: {
   nameId: bigint;
   size?: number;
   onPress?: () => void;
+  /** On-device custom picture (off-chain) — wins over the chain one. */
+  customUri?: string | null;
 }) {
   const [img, setImg] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
   useEffect(() => {
+    if (customUri) return; // the custom picture needs no chain reads
     let live = true;
     avatarFor(nameId).then((u) => live && setImg(u));
     resolveName(nameId).then((n) => live && setName(n));
     return () => {
       live = false;
     };
-  }, [nameId]);
+  }, [nameId, customUri]);
   const letter = name ? name.charAt(0).toUpperCase() : '?';
   let inner: React.ReactNode;
-  if (img && img.startsWith('data:image/svg+xml')) {
+  if (customUri) {
+    inner = <Image source={{ uri: customUri }} style={{ width: size, height: size }} />;
+  }
+  if (!inner && img && img.startsWith('data:image/svg+xml')) {
     try {
       const svg = decodeURIComponent(img.split(',').slice(1).join(','));
       inner = <SvgXml xml={svg} width={size} height={size} />;
@@ -197,6 +211,62 @@ export function formatTime(tsSec: number, lang: string): string {
   }
 }
 
+const LIKE_ON = '#e0245e';
+const RECAW_ON = '#00ba7c';
+
+/** The original post a like / share points at, shown as a quote box. */
+function TargetPostQuote({
+  item,
+  lang,
+  onOpenProfile,
+}: {
+  item: TimelineItem;
+  lang: string;
+  onOpenProfile: (username: string) => void;
+}) {
+  const [post, setPost] = useState<TimelineItem | null>(null);
+  const [author, setAuthor] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    findPostByCawId(item.cawId)
+      .then((p) => {
+        if (!live) return;
+        setPost(p);
+        if (p) {
+          resolveName(p.senderId).then((n) => live && setAuthor(n));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [item.cawId]);
+  if (!post || !post.text) return null;
+  const authorLabel = author
+    ? '@' + author
+    : tr('tl.unknownName') + post.senderId.toString();
+  return (
+    <Pressable
+      style={postStyles.quote}
+      onPress={author ? () => onOpenProfile(author) : undefined}
+    >
+      <View style={S.row}>
+        <Avatar nameId={post.senderId} size={20} />
+        <Text style={[postStyles.quoteName, { marginLeft: 6 }]}>
+          {authorLabel}
+        </Text>
+        <Text style={S.tiny}>
+          {'  ·  '}
+          {formatTime(post.ts, lang)}
+        </Text>
+      </View>
+      <Text style={postStyles.quoteText} numberOfLines={4}>
+        {post.text}
+      </Text>
+    </Pressable>
+  );
+}
+
 /* ---------- one timeline entry ---------- */
 export function PostCard({
   item,
@@ -205,6 +275,9 @@ export function PostCard({
   onAction,
   actionStatus,
   busy,
+  liked,
+  recawed,
+  custom,
 }: {
   item: TimelineItem;
   lang: string;
@@ -212,6 +285,12 @@ export function PostCard({
   onAction?: (kind: 1 | 2, item: TimelineItem) => void;
   actionStatus?: string;
   busy?: boolean;
+  /** This wallet already liked this post (remembered on the device). */
+  liked?: boolean;
+  /** This wallet already shared this post. */
+  recawed?: boolean;
+  /** Sender's on-device custom look (only ever set for my own names). */
+  custom?: ProfileCustom | null;
 }) {
   const [name, setName] = useState<string | null>(null);
   const [targetName, setTargetName] = useState<string | null>(null);
@@ -231,7 +310,23 @@ export function PostCard({
       live = false;
     };
   }, [item]);
+  // Keep the shown like count in step with my own like: +1 the moment
+  // it lights up (the chain read above was taken before my like), back
+  // down if the like is undone. On a fresh mount nothing changes — the
+  // chain count already includes my earlier like.
+  const prevLiked = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (prevLiked.current === null) {
+      prevLiked.current = !!liked;
+      return;
+    }
+    if (!!liked !== prevLiked.current) {
+      prevLiked.current = !!liked;
+      setLikes((l) => (l === null ? l : l + (liked ? 1n : -1n)));
+    }
+  }, [liked]);
   const who = name ? '@' + name : tr('tl.unknownName') + item.senderId.toString();
+  const displayName = custom && custom.displayName ? custom.displayName : null;
   const ctxTpl =
     item.type === 1
       ? tr('tl.ctxLike')
@@ -243,11 +338,14 @@ export function PostCard({
   const targetLabel = targetName
     ? '@' + targetName
     : tr('tl.unknownName') + item.receiverId.toString();
+  const showLikes =
+    item.type === 0 && ((likes !== null && likes > 0n) || liked);
   return (
     <View style={postStyles.post}>
       <Avatar
         nameId={item.senderId}
         size={44}
+        customUri={custom ? custom.avatarPath : undefined}
         onPress={name ? () => onOpenProfile(name) : undefined}
       />
       <View style={{ flex: 1, marginLeft: 10 }}>
@@ -256,8 +354,9 @@ export function PostCard({
         ) : null}
         <View style={S.row}>
           <Pressable onPress={name ? () => onOpenProfile(name) : undefined}>
-            <Text style={postStyles.name}>{who}</Text>
+            <Text style={postStyles.name}>{displayName || who}</Text>
           </Pressable>
+          {displayName ? <Text style={S.tiny}>{'  ' + who}</Text> : null}
           <Text style={S.tiny}>
             {'  ·  '}
             {formatTime(item.ts, lang)}
@@ -266,11 +365,16 @@ export function PostCard({
         {item.type === 0 && item.text ? (
           <Text style={postStyles.text}>{item.text}</Text>
         ) : null}
+        {item.type === 1 || item.type === 2 ? (
+          <TargetPostQuote item={item} lang={lang} onOpenProfile={onOpenProfile} />
+        ) : null}
         <View style={[S.row, { marginTop: 8, flexWrap: 'wrap', gap: 14 }]}>
-          {item.type === 0 && likes !== null && likes > 0n ? (
+          {showLikes ? (
             <View style={S.row}>
-              <HeartIcon size={15} />
-              <Text style={[S.tiny, { marginLeft: 4 }]}>{likes.toString()}</Text>
+              <HeartIcon size={15} color={liked ? LIKE_ON : '#536471'} filled={!!liked} />
+              <Text style={[S.tiny, { marginLeft: 4 }]}>
+                {(likes !== null ? likes : liked ? 1n : 0n).toString()}
+              </Text>
             </View>
           ) : null}
           {item.type === 0 && onAction ? (
@@ -280,16 +384,32 @@ export function PostCard({
                 onPress={() => onAction(1, item)}
                 style={[S.row, busy && S.disabled]}
               >
-                <HeartIcon size={16} />
-                <Text style={[S.tiny, { marginLeft: 4 }]}>{tr('tl.like')}</Text>
+                <HeartIcon size={16} color={liked ? LIKE_ON : '#536471'} filled={!!liked} />
+                <Text
+                  style={[
+                    S.tiny,
+                    { marginLeft: 4 },
+                    liked && { color: LIKE_ON, fontWeight: '700' },
+                  ]}
+                >
+                  {tr('tl.like')}
+                </Text>
               </Pressable>
               <Pressable
                 disabled={busy}
                 onPress={() => onAction(2, item)}
                 style={[S.row, busy && S.disabled]}
               >
-                <RepeatIcon size={16} />
-                <Text style={[S.tiny, { marginLeft: 4 }]}>{tr('tl.recaw')}</Text>
+                <RepeatIcon size={16} color={recawed ? RECAW_ON : '#536471'} />
+                <Text
+                  style={[
+                    S.tiny,
+                    { marginLeft: 4 },
+                    recawed && { color: RECAW_ON, fontWeight: '700' },
+                  ]}
+                >
+                  {tr('tl.recaw')}
+                </Text>
               </Pressable>
             </>
           ) : null}
@@ -318,6 +438,15 @@ const postStyles = StyleSheet.create({
   },
   name: { fontSize: 15, fontWeight: '700', color: '#0f1419' },
   text: { fontSize: 15, color: '#0f1419', lineHeight: 21, marginTop: 2 },
+  quote: {
+    borderWidth: 1,
+    borderColor: '#cfd9de',
+    borderRadius: 12,
+    padding: 10,
+    marginTop: 8,
+  },
+  quoteName: { fontSize: 13.5, fontWeight: '700', color: '#0f1419' },
+  quoteText: { fontSize: 14, color: '#0f1419', lineHeight: 19, marginTop: 4 },
 });
 
 /* ---------- bottom-sheet style confirm dialog ---------- */
