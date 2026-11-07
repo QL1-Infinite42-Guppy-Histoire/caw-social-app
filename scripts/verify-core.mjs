@@ -133,10 +133,10 @@ try {
 }
 try {
   const r = await api.resolveNameId('donaldtrump');
-  check('live resolveNameId(donaldtrump) == 1',
-    r.status === 'ok' && r.id === 1n, JSON.stringify(r, (k, v) => typeof v === 'bigint' ? v.toString() : v));
+  check('live resolveNameId(donaldtrump) == 2',
+    r.status === 'ok' && r.id === 2n, JSON.stringify(r, (k, v) => typeof v === 'bigint' ? v.toString() : v));
 } catch (e) {
-  check('live resolveNameId(donaldtrump) == 1', false, String(e && e.message || e));
+  check('live resolveNameId(donaldtrump) == 2', false, String(e && e.message || e));
 }
 let neptuneId = null;
 try {

@@ -9,9 +9,10 @@
  *   (measured before the fix: name #189 → 0 found, first hit on feed
  *   page 21) and findPostByCawId must locate a share's target post.
  * Bug 3 (profile pages wrong/unreachable): live — resolveName and
- *   tokensOf must agree with the usernames() mapping (the chain's
- *   tokens() rows carry shifted usernames; #189 is "neptune", not
- *   "dreamin"), and name → id → name must round-trip.
+ *   tokensOf must agree with the tokens' CARDS (tokenURI names,
+ *   which match the mint records; the chain's usernames() mapping
+ *   is the shifted one — #189 is "dreamin", not the "neptune" that
+ *   usernames(189) returns), and name → id → name must round-trip.
  * Profile customization (off-chain): ProfileCustomStore merge,
  *   persistence across a simulated restart, clear, and the
  *   unset-fallback label logic.
@@ -190,16 +191,16 @@ if (!existsSync(corpusPath)) {
 /* ================= live: bug 3 (names) ================= */
 try {
   const n189 = await api.resolveName(189n);
-  check('live resolveName(189) is neptune (not the shifted dreamin)', n189 === 'neptune', String(n189));
+  check('live resolveName(189) is dreamin (its card name; usernames(189)="neptune" is the shifted one)', n189 === 'dreamin', String(n189));
   const owner189 = await api.nameOwner(189n);
   const toks = await api.tokensOf(owner189);
   const row = toks.find((t) => t.id === 189n);
-  check('live tokensOf gives id 189 the name neptune', !!row && row.username === 'neptune',
+  check('live tokensOf gives id 189 the card name dreamin', !!row && row.username === 'dreamin',
     row ? row.username : 'row missing');
   const r1 = await api.resolveNameId('neptune');
   const r2 = await api.resolveNameId('dreamin');
-  check('live name round-trip: neptune→189, dreamin→188',
-    r1.status === 'ok' && r1.id === 189n && r2.status === 'ok' && r2.id === 188n,
+  check('live name round-trip: neptune→190, dreamin→189',
+    r1.status === 'ok' && r1.id === 190n && r2.status === 'ok' && r2.id === 189n,
     JSON.stringify({ neptune: r1.status === 'ok' ? r1.id.toString() : r1.status, dreamin: r2.status === 'ok' ? r2.id.toString() : r2.status }));
 } catch (e) {
   check('live name checks', false, String((e && e.message) || e));

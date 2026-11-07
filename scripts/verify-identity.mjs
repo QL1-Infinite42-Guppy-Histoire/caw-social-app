@@ -1,25 +1,38 @@
-/* Verification for the v0.1.2 identity fix. Run: node scripts/verify-identity.mjs
+/* Verification for name identity. Run: node scripts/verify-identity.mjs
  *
- * Background (user report 2026-11-07 20:19 JST): the app presented
- * @loveforqom (id 190) as the user's own name, but the user is
- * @neptune (id 189). Chain facts, re-measured live by this script:
- *   - usernames(189) = "neptune",   ownerOf(189) = 0x75bb… (the user)
- *   - usernames(190) = "loveforqom", ownerOf(190) = 0x9035… (a friend)
- *   - CawName.tokens(owner) pairs every id with the username of the
- *     token one id lower (the id-190 row literally carries the string
- *     "neptune"), so in v0.1.0 a name could be picked believing it was
- *     a different one, and the choice then persisted.
- *   - The four actions shown under the loveforqom name on 2026-11-07
- *     (18:44 post, 18:49 like, 18:50 share, 20:18 like) were all
- *     SIGNED by 0x9035… — the last section below re-recovers the
- *     signer from the real calldata and asserts it. The user's own
- *     key (0x75bb…) signed none of them; that address sent no
- *     transaction at all on 2026-11-07.
+ * CORRECTED BACKGROUND (v0.1.3 — this script's v0.1.2-era framing
+ * had the shift backwards, and is rewritten here):
  *
- * The fix: "my names" (tokensOf) is built ONLY from the ERC-721
- * enumeration (balanceOf + tokenOfOwnerByIndex), every id is
- * cross-checked with ownerOf, names come from usernames(id) and
- * balances from cawBalanceOf(id). tokens() is never consulted.
+ * On 2026-11-07 the app showed the user his token #190 under the
+ * name "loveforqom" and he protested: "I am neptune — that is my
+ * friend's id." v0.1.2 took the usernames() mapping as the truth
+ * (usernames(190) = "loveforqom") and rebuilt identity on it. The
+ * MINT TRANSACTIONS then settled which getter is broken:
+ *
+ *   - tx 0xc4ac11ad… (block 5189285): Minter.mint("dreamin")
+ *     created token 189, delivered to 0x75bb…
+ *   - tx 0x9c374074… (block 5189287): Minter.mint("neptune")
+ *     created token 190, delivered to 0x0Cdd1E…, later transferred
+ *     to the user's wallet 0x9035…f8cc.
+ *
+ * So the tokenURI CARD names are the mint truth (#189 "dreamin",
+ * #190 "neptune", #191 "loveforqom"), and the one shifted getter is
+ * usernames(): usernames(n) returns token n+1's minted name (a
+ * 0-based list read against 1-based ids — slot 0 holds token 1's
+ * name, "elonmusk"). tokens() and idByUsername agree with the
+ * cards. The user was right from the start: #190 IS his neptune.
+ *
+ * What v0.1.2 got right and v0.1.3 keeps: "my names" is built from
+ * the ERC-721 enumeration (balanceOf + tokenOfOwnerByIndex) with
+ * every id cross-checked by ownerOf, and the pre-sign guard is
+ * fail-closed. What v0.1.3 fixes: names come from the tokens'
+ * CARDS (tokenURI name field; fallback usernames(id − 1), the
+ * corrected slot), never from usernames(id).
+ *
+ * The last section re-recovers the signers of the four actions of
+ * 2026-11-07 that were displayed under #190: all were signed by
+ * 0x9035…f8cc — the owner of #190 — i.e. by the user's own wallet,
+ * acting as his own "neptune", exactly as the chain recorded.
  *
  * No keys, no sends — reads and local logic only.
  */
@@ -49,50 +62,51 @@ execFileSync(
 );
 const core = require(BUILD + '/lib/cawCore.js');
 const api = require(BUILD + '/lib/cawApi.js');
+const { CAW_NAME } = require(BUILD + '/config.js');
 
-const USER = '0x75bb70588b1de571487C4e6dd62546765B7c55e2';   // owns 189 neptune
-const FRIEND = '0x90359C6913915B9824b9ce8Abf4b85B30A5cF8cC'; // owns 190 loveforqom (+33)
-const NOBODY = '0x000000000000000000000000000000000000dEaD'; // owns nothing
+const WALLET_A = '0x75bb70588b1de571487C4e6dd62546765b7c55e2'; // owns 189 (card: dreamin)
+const F8CC = '0x90359C6913915B9824b9ce8Abf4b85B30A5cF8cC';     // owns 190 (card: neptune) + 33 more
+const NOBODY = '0x000000000000000000000000000000000000dEaD';     // owns nothing
+
+/** Ground-truth oracle: the name on a token's card, read raw. */
+async function cardNameDirect(id) {
+  const uri = await api.withRetry(
+    () => api.readStr(CAW_NAME, '0xc87b56dd' + core.word(id)), 3, 500);
+  if (!uri.startsWith('data:application/json;base64,')) return null;
+  const meta = JSON.parse(Buffer.from(uri.split(',')[1], 'base64').toString('utf8'));
+  return meta.name || null;
+}
 
 /* ---------- live identity resolution ---------- */
 try {
-  const mine = await api.tokensOf(USER);
-  check('user wallet resolves to exactly one name',
-    mine.length === 1, 'got ' + mine.length);
-  check('user name is id 189 "neptune"',
-    mine.length === 1 && mine[0].id === 189n && mine[0].username === 'neptune',
-    mine.length ? '#' + mine[0].id + ' @' + mine[0].username : 'empty');
-  check('id 190 (loveforqom) is NOT in the user list',
-    !mine.some((t) => t.id === 190n));
-  check('user name balance matches cawBalanceOf(189)',
-    mine.length === 1 && mine[0].balance === (await api.nameBalance(189n)));
-
-  // every row of every list must be provably owned + correctly named
-  const friend = await api.tokensOf(FRIEND);
-  const { CAW_NAME: CN, SEL: SL } = require(BUILD + '/config.js');
-  let allOwned = friend.length > 0;
-  let allNamed = true;
-  for (const t of friend) {
+  const b = await api.tokensOf(F8CC);
+  check('f8cc wallet resolves its names', b.length > 0, 'got ' + b.length);
+  const b190 = b.find((t) => t.id === 190n);
+  check('f8cc list: id 190 labelled "neptune" (its card / mint name)',
+    !!b190 && b190.username === 'neptune',
+    b190 ? '#' + b190.id + ' @' + b190.username : 'row missing');
+  check('f8cc list: NO row labelled "loveforqom" (that name is #191, not owned here)',
+    !b.some((t) => t.username === 'loveforqom'));
+  let allOwned = b.length > 0;
+  let allCard = true;
+  for (const t of b) {
     const o = await api.nameOwner(t.id);
-    if (o.toLowerCase() !== FRIEND.toLowerCase()) allOwned = false;
-    // Compare against a direct usernames(id) read. The read REVERTS
-    // for duplicate-minted names (measured: "community" was minted
-    // twice, ids 3913+3914; usernames(3914) reverts) — both the app
-    // and this check treat that as "no readable name" ('' / null).
+    if (o.toLowerCase() !== F8CC.toLowerCase()) allOwned = false;
     let expected = null;
-    try {
-      expected = await api.readStr(CN, SL.usernames + core.word(t.id));
-    } catch { /* reverted read = no readable name */ }
-    if ((expected || '') !== t.username) allNamed = false;
+    try { expected = await cardNameDirect(t.id); } catch { /* unreadable card */ }
+    if ((expected || '') !== t.username) allCard = false;
   }
-  check('friend list: every id ownerOf-verified (' + friend.length + ' names)', allOwned);
-  check('friend list: every username matches usernames(id)', allNamed);
-  const f190 = friend.find((t) => t.id === 190n);
-  check('friend list: id 190 labelled loveforqom, never neptune',
-    !!f190 && f190.username === 'loveforqom',
-    f190 ? '@' + f190.username : 'row missing');
-  check('friend list: id 189 (neptune) is NOT in it',
-    !friend.some((t) => t.id === 189n));
+  check('f8cc list: every id ownerOf-verified (' + b.length + ' names)', allOwned);
+  check('f8cc list: every label matches the tokenURI card name', allCard);
+
+  const a = await api.tokensOf(WALLET_A);
+  check('wallet A resolves to exactly one name', a.length === 1, 'got ' + a.length);
+  check('wallet A name is id 189 "dreamin" (its card / mint name)',
+    a.length === 1 && a[0].id === 189n && a[0].username === 'dreamin',
+    a.length ? '#' + a[0].id + ' @' + a[0].username : 'empty');
+  check('id 190 (neptune) is NOT in wallet A list', !a.some((t) => t.id === 190n));
+  check('wallet A name balance matches cawBalanceOf(189)',
+    a.length === 1 && a[0].balance === (await api.nameBalance(189n)));
 
   const none = await api.tokensOf(NOBODY);
   check('address with no names resolves to an empty list', none.length === 0);
@@ -101,28 +115,28 @@ try {
   // the live lists: a remembered id is honoured only when owned.
   const restore = (toks, saved) =>
     saved !== null && toks.some((t) => t.id === saved) ? saved : (toks[0] ? toks[0].id : null);
-  check('restore: remembered 190 is rejected for the user (falls back to 189)',
-    restore(mine, 190n) === 189n);
-  check('restore: remembered 189 is kept for the user',
-    restore(mine, 189n) === 189n);
-  check('restore: remembered 190 is kept for its real owner (the friend)',
-    restore(friend, 190n) === 190n);
+  check('restore: remembered 190 is rejected for wallet A (falls back to 189)',
+    restore(a, 190n) === 189n);
+  check('restore: remembered 189 is kept for wallet A', restore(a, 189n) === 189n);
+  check('restore: remembered 190 is kept for its owner (f8cc)', restore(b, 190n) === 190n);
 } catch (e) {
   check('live identity checks', false, String((e && e.message) || e));
 }
 
-/* ---------- the tokens() trap, demonstrated ---------- */
+/* ---------- the usernames() trap, demonstrated ---------- */
 try {
-  const { CAW_NAME } = require(BUILD + '/config.js');
-  // SEL.tokens was removed in v0.1.2; call the raw selector directly.
-  const raw = await api.ethCall(CAW_NAME, '0xe4860339' + core.encAddr(FRIEND));
+  const shifted = await api.withRetry(
+    () => api.readStr(CAW_NAME, '0x136dd963' + core.word(190n)), 3, 500);
+  check('evidence: usernames(190) returns the SHIFTED "loveforqom" (name of #191)',
+    shifted === 'loveforqom', 'usernames(190)=' + JSON.stringify(shifted));
+  const raw = await api.ethCall(CAW_NAME, '0xe4860339' + core.encAddr(F8CC));
   const rows = core.decTokensRet(raw);
   const row190 = rows.find((r) => r.id === 190n);
-  check('evidence: tokens() row for id 190 carries the shifted string "neptune"',
+  check('evidence: tokens() row for id 190 carries the TRUE name "neptune"',
     !!row190 && row190.username === 'neptune',
     row190 ? 'row username="' + row190.username + '"' : 'row missing');
 } catch (e) {
-  check('tokens() shift evidence', false, String((e && e.message) || e));
+  check('usernames() shift evidence', false, String((e && e.message) || e));
 }
 
 /* ---------- who signed the flagged 2026-11-07 actions? ---------- */
@@ -144,6 +158,7 @@ function sigOf(raw, k) {
   return { v: wi(vsAt + 1 + k), r: '0x' + wAt(rsAt + 1 + k), s: '0x' + wAt(ssAt + 1 + k) };
 }
 try {
+  const owner190 = await api.nameOwner(190n);
   for (const f of FLAGGED) {
     const res = await fetch(API + '/transactions/' + f.hash);
     if (!res.ok) throw new Error('api ' + res.status);
@@ -151,10 +166,10 @@ try {
     const acts = core.decodeActions(tx.raw_input);
     const a = acts[0];
     const signer = recoverAddress(core.actionDigest(a), sigOf(tx.raw_input, 0));
-    check('signer of ' + f.label + ' is the loveforqom owner (friend), not the user',
+    check('signer of ' + f.label + ' is the owner of #190 (f8cc) — the name owner himself',
       !!a && a.type === f.type && a.senderId === 190n &&
-        signer.toLowerCase() === FRIEND.toLowerCase() &&
-        signer.toLowerCase() !== USER.toLowerCase(),
+        signer.toLowerCase() === F8CC.toLowerCase() &&
+        signer.toLowerCase() === owner190.toLowerCase(),
       'signer=' + signer);
   }
 } catch (e) {

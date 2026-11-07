@@ -11,10 +11,12 @@ import {
   View,
 } from 'react-native';
 import Svg, { Path, Polyline } from 'react-native-svg';
+import { SvgXml } from 'react-native-svg';
 
 import { ACCENT } from '../config';
 import { tr } from '../i18n';
 import {
+  avatarFor,
   findPostByCawId,
   likesCount,
   resolveName,
@@ -108,15 +110,15 @@ export function RepeatIcon({ size = 18, color = '#536471' }: { size?: number; co
   );
 }
 
-/* ---------- avatar (generated from the registry name) ---------- */
+/* ---------- avatar (the name's card picture) ---------- */
 /**
- * Avatars are generated on-device from the registry username
- * (initial letter + a colour hashed from that name, see avatarSpec).
- * The on-chain tokenURI picture is NEVER used: on QL1 its metadata
- * is shifted by one id, so the picture belonging to a name carries
- * the previous name's text — showing it would keep the mix-up
- * alive even with correct labels. A user's own off-chain custom
- * picture (profileCustom) still wins over the generated one.
+ * The avatar is the picture from the name's card (tokenURI) — the
+ * same metadata whose name field matches the mint records, so the
+ * picture and the displayed name always belong to the same name.
+ * While it loads (or when a token has no picture) a generated
+ * initial-letter avatar stands in, derived from the card name via
+ * avatarSpec. A user's own off-chain custom picture (profileCustom)
+ * wins over both.
  */
 export function Avatar({
   nameId,
@@ -127,13 +129,15 @@ export function Avatar({
   nameId: bigint;
   size?: number;
   onPress?: () => void;
-  /** On-device custom picture (off-chain) — wins over the generated one. */
+  /** On-device custom picture (off-chain) — wins over the card one. */
   customUri?: string | null;
 }) {
+  const [img, setImg] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
   useEffect(() => {
     if (customUri) return; // the custom picture needs no chain reads
     let live = true;
+    avatarFor(nameId).then((u) => live && setImg(u));
     resolveName(nameId).then((n) => live && setName(n));
     return () => {
       live = false;
@@ -142,7 +146,19 @@ export function Avatar({
   let inner: React.ReactNode;
   if (customUri) {
     inner = <Image source={{ uri: customUri }} style={{ width: size, height: size }} />;
-  } else {
+  }
+  if (!inner && img && img.startsWith('data:image/svg+xml')) {
+    try {
+      const svg = decodeURIComponent(img.split(',').slice(1).join(','));
+      inner = <SvgXml xml={svg} width={size} height={size} />;
+    } catch {
+      inner = null;
+    }
+  }
+  if (!inner && img) {
+    inner = <Image source={{ uri: img }} style={{ width: size, height: size }} />;
+  }
+  if (!inner) {
     const spec = avatarSpec(name, nameId);
     inner = (
       <View

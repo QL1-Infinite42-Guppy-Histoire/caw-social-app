@@ -84,10 +84,15 @@ export interface NameToken {
 /**
  * Decode the return of CawName.tokens(owner): (uint256, uint256, string)[]
  *
- * WARNING: on QL1 the username in each row is the name of the token
- * one id lower — the rows are display-poisoned and must NEVER feed
- * identity resolution. Kept only so tests can demonstrate the shift;
- * the app builds "my names" from tokenOfOwnerByIndex + ownerOf.
+ * The username in each row is the token's true (minted) name — the
+ * rows agree with the tokenURI cards and the mint records. The one
+ * shifted getter on this contract is usernames(): usernames(n)
+ * returns token n+1's name. (An earlier version of this comment
+ * claimed the opposite; the mint transactions — e.g. mint("neptune")
+ * creating token 190, whose tokens() row and card both say
+ * "neptune" — settled which side is shifted.) The app still builds
+ * "my names" from tokenOfOwnerByIndex + ownerOf with card names, so
+ * this decoder serves the verification scripts.
  */
 export function decTokensRet(hexIn: string): NameToken[] {
   const hex = strip(hexIn);
@@ -105,17 +110,15 @@ export function decTokensRet(hexIn: string): NameToken[] {
   return out;
 }
 
-/* ---------- generated avatars ---------- */
+/* ---------- generated avatars (fallback) ---------- */
 /**
- * The app's avatars are GENERATED from the registry username
- * (usernames(id)) — never from tokenURI data. On QL1 the tokenURI
- * metadata (both its name field and the picture it points at) is
- * shifted by one id: token 190's card literally says "neptune"
- * while usernames(190) is "loveforqom". Rendering that picture
- * would keep the mix-up alive even with correct labels, so the
- * only picture a name gets here is its initial letter on a colour
- * derived from the registry name itself. (A user's own on-device
- * custom picture, when set, still wins — see profileCustom.ts.)
+ * Fallback avatar, generated from a name's card name (the tokenURI
+ * name field — the mint truth): the initial letter on a colour
+ * hashed from that name. Used while the card picture loads, when a
+ * token has no picture, and for names whose card cannot be read.
+ * The picture itself comes from tokenURI (see avatarFor in
+ * cawApi.ts) and a user's own on-device custom picture, when set,
+ * still wins over both (see profileCustom.ts).
  */
 const AVATAR_COLORS = [
   '#1d9bf0', '#6c4bd8', '#e0245e', '#e8590c',

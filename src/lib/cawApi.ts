@@ -3,6 +3,8 @@
  * the verified web front end. No keys are handled here; writes go
  * through src/lib/wallet.ts with the in-app signer.
  */
+import { decodeBase64, toUtf8String } from 'ethers';
+
 import { API, CAW_ACTIONS, CAW_NAME, EXPLORER, MINTER, QCAW, RPC, SEL } from '../config';
 import {
   CawAction,
@@ -68,25 +70,77 @@ export async function withRetry<T>(
 }
 
 /* ---------- names ---------- */
+/** Parse the JSON metadata a tokenURI returns (data: base64). */
+function metaFromUri(uri: string): Record<string, unknown> | null {
+  try {
+    if (uri.startsWith('data:application/json;base64,')) {
+      return JSON.parse(toUtf8String(decodeBase64(uri.split(',')[1])));
+    }
+    if (uri.startsWith('data:application/json')) {
+      return JSON.parse(decodeURIComponent(uri.split(',').slice(1).join(',')));
+    }
+  } catch {
+    /* not parseable metadata */
+  }
+  return null;
+}
+
+/**
+ * The name of a token — from its CARD (the tokenURI name field).
+ *
+ * Which source is true was settled by the mint transactions
+ * themselves (verified on-chain): Minter.mint("dreamin") created
+ * token 189 (tx 0xc4ac11ad…, block 5189285) and Minter.mint(
+ * "neptune") created token 190 (tx 0x9c374074…, block 5189287) —
+ * exactly the names the two tokens' cards carry. The one broken
+ * getter is usernames(): usernames(n) returns the minted name of
+ * token n+1 (it is a 0-based list read against 1-based token ids;
+ * slot 0 holds token 1's name, "elonmusk"). tokenURI, tokens() and
+ * idByUsername all agree with the mint records; only usernames()
+ * is shifted, so it is used solely as a fallback in its corrected
+ * form usernames(id − 1), which returns this token's minted name.
+ *
+ * (v0.1.2 had this backwards — it treated usernames(id) as the
+ * truth — which is why the user's own "neptune" (#190) was shown
+ * to him as "loveforqom". Corrected in v0.1.3.)
+ */
+export async function readCardName(idIn: bigint): Promise<string> {
+  const id = BigInt(idIn);
+  try {
+    const uri = await withRetry(
+      () => readStr(CAW_NAME, SEL.tokenURI + word(id)),
+      2,
+      400,
+    );
+    const meta = metaFromUri(uri);
+    const n = meta && typeof meta.name === 'string' ? meta.name : '';
+    if (n) return n;
+  } catch {
+    /* fall through to the corrected usernames slot */
+  }
+  if (id >= 1n) {
+    const n = await withRetry(
+      () => readStr(CAW_NAME, SEL.usernames + word(id - 1n)),
+      2,
+      400,
+    );
+    if (n) return n;
+  }
+  return '';
+}
+
 /**
  * IMPORTANT — identity ("which names are MINE") is built ONLY from
  * the ERC-721 enumeration, cross-checked against ownerOf:
  *
  *   balanceOf(owner) → tokenOfOwnerByIndex(owner, i) → ownerOf(id)
  *
- * and each name is read from the usernames(id) mapping, each balance
- * from cawBalanceOf(id). CawName.tokens(owner) is NEVER used for
- * identity: its rows pair every token id with the WRONG username —
- * the name of the token one id lower (proven from the raw return
- * data: the row for id 189 carries "dreamin", which belongs to id
- * 188; usernames(189) is "neptune", and the row for id 190 carries
- * "neptune" while usernames(190) is "loveforqom"). In v0.1.0 those
- * shifted labels were shown in the name picker, so a name could be
- * picked believing it was a different one. An id is included ONLY
- * when ownerOf(id) really returns this wallet — somebody else's
- * name can never appear in the list, whatever any helper view
- * returns. A failed username read leaves the username empty (the UI
- * shows "#id") rather than somebody else's name.
+ * Names come from each token's card (see readCardName), balances
+ * from cawBalanceOf(id). An id is included ONLY when ownerOf(id)
+ * really returns this wallet — somebody else's name can never
+ * appear in the list, whatever any helper view returns. A failed
+ * name read leaves the username empty (the UI shows "#id") rather
+ * than somebody else's name.
  */
 async function enumerateOwnedTokens(owner: string): Promise<NameToken[]> {
   const count = Number(
@@ -128,12 +182,7 @@ async function enumerateOwnedTokens(owner: string): Promise<NameToken[]> {
     if (realOwner.toLowerCase() !== owner.toLowerCase()) continue;
     let username = '';
     try {
-      username =
-        (await withRetry(
-          () => readStr(CAW_NAME, SEL.usernames + word(id)),
-          2,
-          400,
-        )) || '';
+      username = (await readCardName(id)) || '';
     } catch {
       username = '';
     }
@@ -169,6 +218,7 @@ export function tokensOf(owner: string): Promise<NameToken[]> {
 export function clearNameCaches(): void {
   ownerTokensCache.clear();
   nameCache.clear();
+  avatarCache.clear();
 }
 
 const nameCache = new Map<bigint, Promise<string | null>>();
@@ -177,14 +227,10 @@ export function resolveName(idIn: bigint): Promise<string | null> {
   if (!nameCache.has(id)) {
     const p = (async (): Promise<string | null> => {
       let result: string | null = null;
-      // The usernames(id) mapping is the authoritative name source
-      // (tokens() pairs ids with shifted names — see tokensOf above).
+      // The token's card (tokenURI name) is the authoritative name
+      // source — it matches the mint records (see readCardName).
       try {
-        const n = await withRetry(
-          () => readStr(CAW_NAME, SEL.usernames + word(id)),
-          2,
-          400,
-        );
+        const n = await readCardName(id);
         if (n) result = n;
       } catch {
         /* fall through to the token list */
@@ -214,29 +260,27 @@ export type ResolveResult =
   | { status: 'notfound' };
 
 /**
- * Resolve a username to its token id, verified against the name list.
- * The QL1 name desk answers idByUsername(name) with tokenId + 1, so the
- * raw answer can never be trusted on its own: check the neighbours and
- * accept only the id whose stored name matches exactly. Returns
- * 'notfound' for a genuinely free/unknown name and THROWS when the reads
- * themselves failed (callers show a load error, never a false
- * "not found").
+ * Resolve a username to its token id, verified against the token's
+ * card. idByUsername(name) returns the TRUE token id (it agrees with
+ * the mint records and the cards — the "+1" once suspected here was
+ * an artifact of comparing it against the shifted usernames()).
+ * The answer is still never trusted on its own: the id (and, as a
+ * belt-and-braces measure, its neighbours) must carry exactly this
+ * name on its card. Returns 'notfound' for a genuinely free/unknown
+ * name and THROWS when the reads themselves failed (callers show a
+ * load error, never a false "not found").
  */
 export async function resolveNameId(rawName: string): Promise<ResolveResult> {
   const q = String(rawName || '').trim().toLowerCase();
   if (!q) return { status: 'notfound' };
   const id0 = await withRetry(() => readUint(MINTER, SEL.idByUsername + encStr(q)));
   if (id0 === 0n) return { status: 'notfound' };
-  const cands = [id0 - 1n, id0, id0 + 1n].filter((c) => c >= 1n);
+  const cands = [id0, id0 - 1n, id0 + 1n].filter((c) => c >= 1n);
   let readFailed = false;
   for (const c of cands) {
     let uname: string | null = null;
     try {
-      uname = await withRetry(
-        () => readStr(CAW_NAME, SEL.usernames + word(c)),
-        2,
-        500,
-      );
+      uname = await readCardName(c);
     } catch {
       readFailed = true;
     }
@@ -247,16 +291,47 @@ export async function resolveNameId(rawName: string): Promise<ResolveResult> {
 }
 
 /* ---------- avatars ---------- */
+const avatarCache = new Map<bigint, Promise<string | null>>();
 /**
- * There is deliberately NO chain-read avatar picture anymore
- * (removed in v0.1.3). The old reader took the image out of
- * tokenURI(id) metadata — but on QL1 that metadata is shifted by
- * one id (token 190's card says "neptune" while usernames(190) is
- * "loveforqom"), so the picture itself carried the wrong name.
- * Avatars are now generated on-device from the registry username
- * (see avatarSpec in cawCore.ts); a user's own off-chain custom
- * picture still wins over the generated one.
+ * Avatar image for a name id, from its card (tokenURI) metadata.
+ * The card picture belongs to the same metadata whose name field
+ * matches the mint records, so the picture and the displayed name
+ * always describe the same name. (The brief v0.1.3 detour that
+ * dropped this reader rested on the same backwards reading of
+ * usernames() as v0.1.2; the mint transactions settled it.)
  */
+export function avatarFor(idIn: bigint): Promise<string | null> {
+  const id = BigInt(idIn);
+  if (!avatarCache.has(id)) {
+    const p = (async (): Promise<string | null> => {
+      let result: string | null = null;
+      try {
+        const uri = await withRetry(
+          () => readStr(CAW_NAME, SEL.tokenURI + word(id)),
+          2,
+          400,
+        );
+        const meta = metaFromUri(uri);
+        const image =
+          meta && typeof meta.image === 'string' ? meta.image : '';
+        if (image) {
+          result = image.startsWith('ipfs://')
+            ? 'https://ipfs.io/ipfs/' + image.slice(7)
+            : image;
+        } else if (uri.startsWith('http')) {
+          result = uri;
+        }
+      } catch {
+        /* no picture, or a transient failure */
+      }
+      // Same rule as names: a failure-driven null must not stick.
+      if (!result) avatarCache.delete(id);
+      return result;
+    })();
+    avatarCache.set(id, p);
+  }
+  return avatarCache.get(id)!;
+}
 
 /* ---------- balances & counts ---------- */
 export async function walletBalances(

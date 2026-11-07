@@ -17,35 +17,39 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 - **現在版 / Current: v0.1.3** — released 2026-11-07.
   APK 直リンク / direct download:
   https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.1.3/caw-social.apk
-  v0.1.3 removes the last place the one-id shift could still show
-  itself. The chain's `tokenURI` metadata is shifted just like the
-  `tokens()` rows (token 190's card says "neptune", token 189's card
-  says "dreamin", while the registry `usernames(id)` says
-  "loveforqom" / "neptune"), and the avatar used to render the
-  picture from that metadata — so a name could still *look* like a
-  different one even with correct labels. The app no longer reads
-  `tokenURI` at all: every avatar is generated on-device from the
-  registry username (initial letter + a colour hashed from the
-  name), and a whole-source audit confirms no `tokenURI`-derived
-  name or picture remains in any screen (name picker, my-names
-  list, profiles, timeline, compose). A user's own off-chain
-  custom picture still wins over the generated avatar. Verified
-  with `node scripts/verify-display.mjs` (live, including ids
-  188/189/190) plus all earlier suites.
-  v0.1.2 fixes the identity mix-up reported the same evening ("the
-  app shows me as @loveforqom, but I am @neptune"): "my names" is no
-  longer read from `CawName.tokens()` at all — not even its ids. It
-  is rebuilt from the ERC-721 enumeration (`balanceOf` +
+  v0.1.3 corrects the name source — with an apology: v0.1.2 (and a
+  first v0.1.3 draft) had the one-id shift backwards. The mint
+  transactions settle it: `Minter.mint("dreamin")` created token
+  189 (tx `0xc4ac11ad…`, block 5189285, to the wallet that still
+  holds it) and `Minter.mint("neptune")` created token 190 (tx
+  `0x9c374074…`, block 5189287, later transferred to its current
+  owner) — exactly the names on the tokens' CARDS (`tokenURI`).
+  The one broken getter is `usernames()`: `usernames(n)` returns
+  token n+1's minted name (a 0-based list read against 1-based
+  token ids; slot 0 holds token 1's name, "elonmusk"). `tokenURI`,
+  `tokens()` and `idByUsername` all agree with the mint records.
+  So in v0.1.3 every displayed name (name picker, my-names list,
+  profiles, timeline, compose) comes from the token's card —
+  fallback `usernames(id − 1)`, the corrected slot — and the
+  avatar again renders the card picture, so picture and caption
+  always describe the same name. What v0.1.2 got right is kept:
+  "my names" is built from the ERC-721 enumeration (`balanceOf` +
   `tokenOfOwnerByIndex`), every id is cross-checked with
-  `ownerOf(id)`, names come from `usernames(id)` and balances from
-  `cawBalanceOf(id)`, so a name this wallet does not own can never
-  appear as yours. (The `tokens()` rows pair each id with the
-  *previous* token's username — the id-190 row literally carries the
-  string "neptune" — which is how a name could be picked in v0.1.0
-  believing it was a different one. On-chain signature recovery also
-  showed the loveforqom actions of that day were signed by the
-  loveforqom owner's key, never by the neptune owner's key.)
-  Verified with `node scripts/verify-identity.mjs` (17/17, live).
+  `ownerOf(id)`, and signing is fail-closed (the app refuses to
+  sign for a token id the wallet does not provably own). Verified
+  with `node scripts/verify-display.mjs` (17/17, live, ids
+  188–191) and `node scripts/verify-identity.mjs` (19/19, live,
+  expectations corrected to the mint records), plus the earlier
+  suites (9/9, 26/26).
+  v0.1.2 addressed the identity mix-up reported the same evening
+  ("the app shows me as @loveforqom, but I am @neptune") by
+  rebuilding "my names" from the ERC-721 enumeration with
+  `ownerOf(id)` cross-checks — that part stands — but it took the
+  names from `usernames(id)`, which the mint records have since
+  proven to be the shifted source; v0.1.3 above corrects it.
+  (Signature recovery also showed the day's #190 actions were
+  signed by #190's owner's key — the user's own wallet, acting as
+  his own "neptune", exactly as recorded on-chain.)
   v0.1.0 was confirmed on a real phone the same day (name mint, post,
   like and share all work). v0.1.1 fixes the three problems reported
   from that check and adds on-device profile customization:
@@ -59,12 +63,11 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
     original post they point at (quoted box). Profile pages scan much
     deeper for a name's posts — the old 4-page scan found none at all
     for quieter names.
-  - **Wrong / unreachable profiles fixed.** The chain's
-    `CawName.tokens()` rows pair each token id with the *previous*
-    token's username (measured on-chain: id 189 came back as
-    "dreamin" instead of "neptune"), so names now come from the
-    `usernames(id)` mapping everywhere; and a name/avatar read that
+  - **Wrong / unreachable profiles fixed.** A name/avatar read that
     fails once no longer stays broken for the whole session.
+    (This bullet originally also claimed the `tokens()` rows were
+    shifted and moved names to `usernames(id)` — the mint records
+    later proved the opposite; see the v0.1.3 note above.)
   - **Profile customization (off-chain).** On your own profile you
     can set a display name, a profile picture and a header picture
     (picked from your photos, copied into the app's own storage).
