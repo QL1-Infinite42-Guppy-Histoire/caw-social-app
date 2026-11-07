@@ -700,6 +700,7 @@ function BuySection({ onClose }: { onClose: () => void }) {
             {balLine('USDT (BSC)', balances?.bscUsdt ?? null, 18, 'USDT')}
             {balLine('ETH (Ethereum)', balances?.ethNative ?? null, 18, 'ETH')}
             {balLine('USDT (Ethereum)', balances?.ethUsdt ?? null, 6, 'USDT')}
+            {balLine('42', balances?.infNative ?? null, 18, '42')}
             {balLine('USDT (42 Chain)', balances?.infUsdt ?? null, 18, 'USDT')}
             {balLine('QOM (QL1)', balances?.ql1Native ?? null, 18, 'QOM')}
             {balLine('qCAW (QL1)', balances?.ql1Qcaw ?? null, 18, 'qCAW')}
@@ -913,6 +914,8 @@ function BuySection({ onClose }: { onClose: () => void }) {
                 {fmtTok(balances.ql1Qcaw, 18)} qCAW
               </Text>
             ) : null}
+            {balLine('42', balances?.infNative ?? null, 18, '42')}
+            {balLine('USDT (42 Chain)', balances?.infUsdt ?? null, 18, 'USDT')}
             <Pressable style={[S.bigBtn, { marginTop: 18 }]} onPress={onClose}>
               <Text style={S.bigBtnText}>{tr('common.close')}</Text>
             </Pressable>
@@ -1724,6 +1727,10 @@ function SellSection({ onClose }: { onClose: () => void }) {
             <Text style={[S.body, { marginTop: 10 }]}>
               {finishedWithUsdt ? tr('hs.doneUsdtDesc') : tr('hs.doneSellDesc')}
             </Text>
+            {balLine(targetSym, target === 'bsc' ? balances?.bscNative ?? null : balances?.ethNative ?? null, 18, targetSym)}
+            {balLine('USDT', target === 'bsc' ? balances?.bscUsdt ?? null : balances?.ethUsdt ?? null, USDT_ON[target].decimals, 'USDT')}
+            {balLine('42', balances?.infNative ?? null, 18, '42')}
+            {balLine('QOM', balances?.ql1Native ?? null, 18, 'QOM')}
             <Pressable style={[S.bigBtn, { marginTop: 18 }]} onPress={onClose}>
               <Text style={S.bigBtnText}>{tr('common.close')}</Text>
             </Pressable>
