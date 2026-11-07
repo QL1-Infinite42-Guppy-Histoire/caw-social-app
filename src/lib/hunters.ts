@@ -36,6 +36,8 @@ import {
   ETH_MIN_ENTRY_USD,
   HS_CHAINS,
   USDT_ON,
+  BRIDGE_OUT_USDT_42,
+  TARGET_DOMAIN,
   type EntryKey,
   type HsChainKey,
 } from './chains';
@@ -585,6 +587,19 @@ export function buildAggBridge(cand: any, recipient: string, amount: bigint, nat
   return normTx(aggBuildBridgeTx(pair, 'infinite', recipient, amount, nativeFee));
 }
 
+/** Same bridge builder for parts whose source chain is QL1
+ *  (sell direction: the candidate object comes from a QL1 ->
+ *  infinite quote). */
+export function buildAggBridgeFromQl1(
+  cand: any,
+  recipient: string,
+  amount: bigint,
+  nativeFee: bigint,
+): BuiltTx {
+  const pair = cand.pair;
+  return normTx(aggBuildBridgeTx(pair, 'ql1', recipient, amount, nativeFee));
+}
+
 /** Fresh live 42->QL1 message fee (in [42] raw) for a pair symbol. */
 export async function freshBridgeFee42(sym: string): Promise<bigint> {
   const pair = BRIDGE_PAIRS.find((p) => p.sym === sym);
@@ -666,3 +681,139 @@ export function applySlippage(amount: bigint, bps: number): bigint {
 }
 
 export { formatUnits, parseUnits };
+
+
+/* ------------------------------------------------------------------ */
+/* Reverse direction (sell): qCAW -> QOM -> 42 USDT -> target chain   */
+/* ------------------------------------------------------------------ */
+/* Reverse direction (sell): qCAW -> QOM -> 42 USDT -> target chain   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Sell back half: qCAW on QL1 -> USDT on 42 Chain, best route via
+ * the ported engine (quoteCrossPlan works QL1 -> infinite; live
+ * verified 2026-11-08: 75B qCAW -> ~81.8 USDT via QOM, QL1-side
+ * bridge legs carry nativeFee 0 — the QL1 warp routers expose no
+ * quote functions and real sends go out with value 0).
+ */
+export async function quoteBackHalfReverse(
+  qcawRaw: bigint,
+): Promise<BackHalfQuote> {
+  const qcaw = tokenById('ql1', 'qcaw');
+  const usdt = tokenById('infinite', 'usdt');
+  const cands = await quoteCrossPlan('ql1', qcaw, 'infinite', usdt, qcawRaw);
+  const enabled = cands.filter((c: any) => c.enabled);
+  if (!enabled.length) throw new Error('no-route');
+  const bestSingle = enabled
+    .slice()
+    .sort((a: any, b: any) => (b.finalOut > a.finalOut ? 1 : -1))[0];
+  let split: BackHalfQuote['split'] = null;
+  try {
+    const xs = await evaluateCrossSplit('ql1', 'infinite', qcawRaw, cands);
+    const net = await evaluateCrossSplitNet('ql1', 'infinite', usdt, xs);
+    if (net && net.shown && xs.best) {
+      split = {
+        parts: xs.best.parts,
+        totalOut: xs.best.totalOut,
+        netOut: bestSingle.finalOut + (net.netGain ?? 0n),
+        netGainPct: net.netPct ?? 0,
+      };
+    }
+  } catch {
+    split = null;
+  }
+  return { candidates: cands, bestSingle, split, feePerLeg42: 0n, at: Date.now() };
+}
+
+const BRIDGE_OUT_IFACE = new Interface([
+  'function quoteBridge(uint256 amount) view returns (uint256 forwardAmount, uint256 tokenFee, uint256 totalRequired)',
+  'function quoteNative(uint32 destinationDomain, bytes hookData) view returns (uint256 nativeFee, uint256 hookFee, uint256 totalNative)',
+  'function transferRemote(uint32 destinationDomain, bytes32 mintRecipient, uint256 amount, bytes hookMetadata) payable returns (bytes32 messageId)',
+]);
+
+export interface BridgeOutQuote {
+  forward: bigint;
+  tokenFee: bigint;
+  totalRequired: bigint;
+  totalNative: bigint;
+}
+
+/** Live quote for the 42 -> target USDT bridge (sell exit leg). */
+export async function quoteBridgeOut42(
+  target: EntryKey,
+  amountRaw: bigint,
+): Promise<BridgeOutQuote> {
+  const provider = providerFor('infinite');
+  const data = BRIDGE_OUT_IFACE.encodeFunctionData('quoteBridge', [amountRaw]);
+  const res = await provider.call({ to: BRIDGE_OUT_USDT_42.router, data });
+  const [forward, tokenFee, totalRequired] =
+    BRIDGE_OUT_IFACE.decodeFunctionResult('quoteBridge', res) as unknown as [
+      bigint,
+      bigint,
+      bigint,
+    ];
+  const nData = BRIDGE_OUT_IFACE.encodeFunctionData('quoteNative', [
+    TARGET_DOMAIN[target],
+    '0x',
+  ]);
+  const nRes = await provider.call({ to: BRIDGE_OUT_USDT_42.router, data: nData });
+  const [, , totalNative] = BRIDGE_OUT_IFACE.decodeFunctionResult(
+    'quoteNative',
+    nRes,
+  ) as unknown as [bigint, bigint, bigint];
+  return { forward, tokenFee, totalRequired, totalNative };
+}
+
+/** transferRemote calldata for the 42 -> target USDT bridge. */
+export function buildBridgeOut42Tx(
+  target: EntryKey,
+  recipient: string,
+  amountRaw: bigint,
+  totalNative: bigint,
+): TxReq {
+  const data = BRIDGE_OUT_IFACE.encodeFunctionData('transferRemote', [
+    TARGET_DOMAIN[target],
+    zeroPadValue(getAddress(recipient), 32),
+    amountRaw,
+    '0x',
+  ]);
+  return { to: BRIDGE_OUT_USDT_42.router, data, value: totalNative };
+}
+
+const FINAL_SWAP_ABI = [
+  'function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)',
+  'function swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline) returns (uint256[] amounts)',
+];
+
+/** Quote the final target-chain swap USDT -> native coin. */
+export async function quoteFinalSwap(
+  target: EntryKey,
+  usdtRaw: bigint,
+): Promise<bigint> {
+  const dex = ENTRY_DEX[target];
+  const c = new Contract(dex.router, FINAL_SWAP_ABI, providerFor(target));
+  const amounts = (await c.getAmountsOut(usdtRaw, [
+    dex.usdt,
+    dex.wrapped,
+  ])) as bigint[];
+  return amounts[amounts.length - 1];
+}
+
+/** swapExactTokensForETH calldata (USDT -> BNB / ETH). */
+export function buildFinalSwapTx(
+  target: EntryKey,
+  usdtRaw: bigint,
+  minOutRaw: bigint,
+  to: string,
+): TxReq {
+  const dex = ENTRY_DEX[target];
+  const iface = new Interface(FINAL_SWAP_ABI);
+  const data = iface.encodeFunctionData('swapExactTokensForETH', [
+    usdtRaw,
+    minOutRaw,
+    [dex.usdt, dex.wrapped],
+    to,
+    BigInt(Math.floor(Date.now() / 1000) + 1200),
+  ]);
+  return { to: dex.router, data, value: 0n };
+}

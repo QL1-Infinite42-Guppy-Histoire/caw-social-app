@@ -168,3 +168,23 @@ export const BRIDGE_NATIVE_FEE_42_FALLBACK = 2.947;
 /** Extra [42] kept per bridge leg for 42-Chain gas on top of the
  *  bridge message fee (42 gas is tiny; this is a wide margin). */
 export const CARVE_GAS_MARGIN_42 = 0.3;
+
+/**
+ * Outbound bridge 42 Chain -> BSC / Ethereum for USDT.
+ * The 42-side USDT BridgeRouter (GuppyWallet INFINITE_CONTRACTS.
+ * bridgeRouterUsdt; live re-verified 2026-11-08):
+ * quoteBridge(100) = forward 98 / fee 2.0 / totalRequired 100 —
+ * the flat 2 USDT is taken inside the send — and
+ * quoteNative(56) = quoteNative(1) = 0 (no message fee).
+ */
+export const BRIDGE_OUT_USDT_42 = {
+  router: '0x8667682B62CacedA9e87B3CAA21D5B09D9Ae13c3',
+  token: '0xC2684966e5c95B2bc636FB4a1f3Da9Ad23d94753',
+  feeUsdt: 2,
+} as const;
+
+/** Hyperlane domains of the exit target chains. */
+export const TARGET_DOMAIN: Record<EntryKey, number> = {
+  bsc: 56,
+  ethereum: 1,
+};

@@ -17,3 +17,6 @@ export const storeKV: KVStorage = {
 export const myActionStore = new MyActionStore();
 export const profileCustomStore = new ProfileCustomStore();
 export const huntersFlowStore = new HuntersFlowStore();
+export const huntersSellFlowStore = new HuntersFlowStore(
+  'caw-huntersflow-sell-',
+);

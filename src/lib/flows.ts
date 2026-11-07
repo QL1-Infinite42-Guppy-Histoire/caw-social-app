@@ -19,6 +19,10 @@ export type FlowPhase =
   | 'entryBridge'
   | 'wait42'
   | 'back'
+  | 'exitBridge'
+  | 'waitTarget'
+  | 'pausedTarget'
+  | 'finalSwap'
   | 'done';
 
 /** Per-part progress: 0 swap1, 1 bridge, 2 wait, 3 swap2, 4 done. */
@@ -44,7 +48,20 @@ export interface HuntersFlow {
   v: 1;
   id: string;
   address: string;
+  /** 'buy' = BNB/ETH -> qCAW; 'sell' = qCAW -> BNB/ETH. */
+  direction?: 'buy' | 'sell';
   entry: 'bsc' | 'ethereum';
+  /** Sell only: the chain the USDT finally lands on / swaps on. */
+  exitTarget?: 'bsc' | 'ethereum';
+  /** Sell only: USDT expected on 42 Chain from the back half. */
+  sellUsdt42Expected?: string;
+  /** Sell only: native coin expected from the final swap. */
+  sellNativeExpected?: string;
+  /** Sell only: target-chain USDT balance before the exit bridge. */
+  targetUsdtBefore?: string;
+  /** Sell only: USDT expected on the target chain after the exit
+   *  bridge, in the TARGET chain's USDT decimals (6 on Ethereum). */
+  exitForward?: string;
   /** Native coin amount put in at the entry (string, 18 dec). */
   entryAmountRaw: string;
   /** USDT the entry swap is expected to make (string, entry dec). */
@@ -91,6 +108,10 @@ export type NextStep =
   | { kind: 'requote' }
   | { kind: 'carve' }
   | { kind: 'part'; partIdx: number; step: PartStep }
+  | { kind: 'exitBridge' }
+  | { kind: 'waitTarget' }
+  | { kind: 'pausedTarget' }
+  | { kind: 'finalSwap' }
   | { kind: 'done' };
 
 export function nextStep(flow: HuntersFlow): NextStep {
@@ -103,6 +124,14 @@ export function nextStep(flow: HuntersFlow): NextStep {
       return { kind: 'wait42' };
     case 'done':
       return { kind: 'done' };
+    case 'exitBridge':
+      return { kind: 'exitBridge' };
+    case 'waitTarget':
+      return { kind: 'waitTarget' };
+    case 'pausedTarget':
+      return { kind: 'pausedTarget' };
+    case 'finalSwap':
+      return { kind: 'finalSwap' };
     case 'back': {
       // No parts yet: the back half still has to be (re)quoted and
       // the user must accept the fresh numbers before anything runs.
@@ -138,9 +167,11 @@ export class HuntersFlowStore {
   private kv: KVStorage | null = null;
   private storageKey: string | null = null;
 
+  constructor(private readonly prefix: string = KEY_PREFIX) {}
+
   async init(kv: KVStorage, address: string): Promise<void> {
     this.kv = kv;
-    this.storageKey = KEY_PREFIX + address.toLowerCase();
+    this.storageKey = this.prefix + address.toLowerCase();
   }
 
   async load(): Promise<HuntersFlow | null> {
