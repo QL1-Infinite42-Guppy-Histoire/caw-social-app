@@ -31,6 +31,12 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
   the key instead. Secrets are loaded only after the password
   verifies (scripts/verify-reveal.mjs, 16 checks) and are never
   stored anywhere new.
+  v0.3.1 also ships the **new app icon** (the user's artwork:
+  yellow emblem disc on navy #151426) — icon, Android adaptive
+  icon (emblem padded to ~78% so launcher masks never clip it,
+  navy background, monochrome silhouette generated from the
+  artwork) and splash (navy background so it blends seamlessly).
+  The source was 400x400, upscaled with Lanczos to 1024.
   v0.3.0 adds **HuntersSwap** and a follow-list speed fix:
   - **HuntersSwap (buy).** A guided, one-step-at-a-time flow from
     BNB (BSC) or ETH (Ethereum) to QL1 qCAW, entirely in-app:

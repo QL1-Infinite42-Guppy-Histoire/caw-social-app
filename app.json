@@ -2,9 +2,8 @@
   "expo": {
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#FFFFFF",
-        "backgroundImage": "./assets/android-icon-background.png",
         "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundColor": "#151426",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "package": "one.guppyguide.cawsocial",
@@ -45,9 +44,9 @@
     "scheme": "cawsocial",
     "slug": "caw-social-app",
     "splash": {
-      "backgroundColor": "#FFFFFF",
       "image": "./assets/splash-icon.png",
-      "resizeMode": "contain"
+      "resizeMode": "contain",
+      "backgroundColor": "#151426"
     },
     "userInterfaceStyle": "light",
     "version": "0.3.1",
