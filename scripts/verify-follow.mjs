@@ -84,6 +84,7 @@ const memKV = () => {
 }
 
 /* ---- 2 + 3. follow index vs chain counts ---- */
+let refLists = null;
 followIndex.initFollowIndex(memKV());
 {
   const t0 = Date.now();
@@ -105,6 +106,8 @@ followIndex.initFollowIndex(memKV());
   );
 
   const samples = [10n, 27n, 190n, 191n, 298n];
+  refLists = {};
+  for (const id of samples) refLists[id.toString()] = followIndex.followListsOf(id);
   for (const id of samples) {
     const lists = await followIndex.refinedFollowListsOf(id);
     const fc = Number(await api.followerCount(id));
@@ -124,6 +127,57 @@ followIndex.initFollowIndex(memKV());
         `refined=${lists.followers.length} chain=${fc}`);
     }
   }
+}
+
+/* ---- 3b. resumable build + progressive snapshots (v0.3.0) ---- */
+{
+  const kv2 = memKV();
+  followIndex.resetFollowIndexForTest();
+  followIndex.initFollowIndex(kv2);
+  // Partial build: only the first 10 pages, then a "pause".
+  await followIndex.buildFollowIndex(undefined, { maxPages: 10 });
+  check('partial build leaves a progressive snapshot', followIndex.followIndexReady());
+  const stored = JSON.parse(await kv2.getItem('caw-follow-index-v1'));
+  check(
+    'partial build persisted a resume cursor',
+    !!stored && !!stored.buildCursor,
+  );
+  const partial10 = followIndex.followListsOf(10n);
+  const ref10 = refLists['10'];
+  const asSet = (a) => new Set(a.map((x) => x.toString()));
+  const sub = (a, b) => [...asSet(a)].every((x) => asSet(b).has(x));
+  check(
+    'progressive followers of #10 are a subset of the final list',
+    sub(partial10.followers, ref10.followers),
+    `partial=${partial10.followers.length} final=${ref10.followers.length}`,
+  );
+  check(
+    'progressive following of #10 is a subset of the final list',
+    sub(partial10.following, ref10.following),
+    `partial=${partial10.following.length} final=${ref10.following.length}`,
+  );
+  // Simulate an app restart: in-memory state gone, KV kept.
+  followIndex.resetFollowIndexForTest();
+  followIndex.initFollowIndex(kv2);
+  const t0 = Date.now();
+  await followIndex.buildFollowIndex();
+  console.log(`  (resumed build: ${((Date.now() - t0) / 1000).toFixed(0)}s)`);
+  const stored2 = JSON.parse(await kv2.getItem('caw-follow-index-v1'));
+  check('resumed build clears the cursor when done', !!stored2 && !stored2.buildCursor);
+  let allEq = true;
+  for (const id of [10n, 27n, 190n]) {
+    const got = followIndex.followListsOf(id);
+    const ref = refLists[id.toString()];
+    const eq = (a, b) =>
+      a.length === b.length && asSet(a).size === asSet(b).size && sub(a, b) && sub(b, a);
+    if (!eq(got.followers, ref.followers) || !eq(got.following, ref.following)) {
+      allEq = false;
+      console.log(
+        `  #${id}: resumed followers=${got.followers.length} vs ref=${ref.followers.length}; following=${got.following.length} vs ref=${ref.following.length}`,
+      );
+    }
+  }
+  check('interrupted + resumed build == uninterrupted build', allEq);
 }
 
 /* ---- 4. name directory + partial search ---- */

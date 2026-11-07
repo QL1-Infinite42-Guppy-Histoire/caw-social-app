@@ -424,6 +424,8 @@ export interface BackHalfQuote {
   } | null;
   /** Live 42->QL1 bridge message fee per leg, in [42] raw. */
   feePerLeg42: bigint;
+  /** Live bridge TOKEN fee of the best route's pair (0 today). */
+  tokenFeeBest?: bigint;
   at: number;
 }
 
@@ -431,6 +433,7 @@ export async function quoteBackHalf(usdt42Raw: bigint): Promise<BackHalfQuote> {
   const usdt = tokenById('infinite', 'usdt');
   const qcaw = tokenById('ql1', 'qcaw');
   const cands = await quoteCrossPlan('infinite', usdt, 'ql1', qcaw, usdt42Raw);
+  await applyTokenFees(cands, 'infinite', 'ql1', qcaw.address);
   const enabled = cands.filter((c: any) => c.enabled);
   if (!enabled.length) throw new Error('no-route');
   const bestSingle = enabled
@@ -451,14 +454,28 @@ export async function quoteBackHalf(usdt42Raw: bigint): Promise<BackHalfQuote> {
   } catch {
     split = null; // split evaluation is best-effort; single still works
   }
+  // The engine quotes quoteNative per pair, live — take the BEST
+  // route's pair fee (all pairs price the same mailbox today).
   let feePerLeg42 = parseUnits(String(BRIDGE_NATIVE_FEE_42_FALLBACK), 18);
-  try {
-    const q = await fetchBridgeNativeQuote(BRIDGE_PAIRS[0]);
-    if (q && q.totalNative > 0n) feePerLeg42 = q.totalNative;
-  } catch {
-    /* keep the measured fallback */
+  if (bestSingle.nativeFee && bestSingle.nativeFee > 0n) {
+    feePerLeg42 = bestSingle.nativeFee as bigint;
+  } else {
+    try {
+      const pair = BRIDGE_PAIRS.find((p) => p.sym === bestSingle.pair.sym);
+      const q = pair ? await fetchBridgeNativeQuote(pair) : null;
+      if (q && q.totalNative > 0n) feePerLeg42 = q.totalNative;
+    } catch {
+      /* keep the measured fallback */
+    }
   }
-  return { candidates: cands, bestSingle, split, feePerLeg42, at: Date.now() };
+  return {
+    candidates: cands,
+    bestSingle,
+    split,
+    feePerLeg42,
+    tokenFeeBest: (bestSingle.tokenFee ?? 0n) as bigint,
+    at: Date.now(),
+  };
 }
 
 /* ---------------- [42] carve-out -------------------------------- */
@@ -516,13 +533,15 @@ export async function quoteCarveUsdtCost(
       tokenById('infinite', 'native'),
       best.amountOut,
     );
-    if (!usdtTo42 || !usdtTo42.route) return null;
+    if (!usdtTo42 || !usdtTo42.amountOut || usdtTo42.amountOut <= 0n) return null;
     // Scale the input by need/actual-received, +5% margin.
-    const got = usdtTo42.amountOut > 0n ? usdtTo42.amountOut : 1n;
+    // (fetchBestRoute returns { path, amounts, amountOut } — there
+    // is no `.route` field; execution re-quotes via freshRoute.)
+    const got = usdtTo42.amountOut;
     let cost = (best.amountOut * need42Raw) / got;
     cost = (cost * 105n) / 100n;
     if (cost <= 0n) cost = best.amountOut;
-    return { usdtCost: cost, route: usdtTo42.route };
+    return { usdtCost: cost, route: usdtTo42 };
   } catch {
     return null;
   }
@@ -702,6 +721,7 @@ export async function quoteBackHalfReverse(
   const qcaw = tokenById('ql1', 'qcaw');
   const usdt = tokenById('infinite', 'usdt');
   const cands = await quoteCrossPlan('ql1', qcaw, 'infinite', usdt, qcawRaw);
+  await applyTokenFees(cands, 'ql1', 'infinite', usdt.address);
   const enabled = cands.filter((c: any) => c.enabled);
   if (!enabled.length) throw new Error('no-route');
   const bestSingle = enabled
@@ -728,7 +748,7 @@ export async function quoteBackHalfReverse(
 const BRIDGE_OUT_IFACE = new Interface([
   'function quoteBridge(uint256 amount) view returns (uint256 forwardAmount, uint256 tokenFee, uint256 totalRequired)',
   'function quoteNative(uint32 destinationDomain, bytes hookData) view returns (uint256 nativeFee, uint256 hookFee, uint256 totalNative)',
-  'function transferRemote(uint32 destinationDomain, bytes32 mintRecipient, uint256 amount, bytes hookMetadata) payable returns (bytes32 messageId)',
+  'function transferRemote(uint32 destinationDomain, bytes32 mintRecipient, uint256 amount) payable returns (bytes32 messageId)',
 ]);
 
 export interface BridgeOutQuote {
@@ -775,7 +795,6 @@ export function buildBridgeOut42Tx(
     TARGET_DOMAIN[target],
     zeroPadValue(getAddress(recipient), 32),
     amountRaw,
-    '0x',
   ]);
   return { to: BRIDGE_OUT_USDT_42.router, data, value: totalNative };
 }
@@ -816,4 +835,119 @@ export function buildFinalSwapTx(
     BigInt(Math.floor(Date.now() / 1000) + 1200),
   ]);
   return { to: dex.router, data, value: 0n };
+}
+
+
+/** Convert an 18-decimal amount into the target chain's USDT raw
+ *  units (Ethereum USDT has 6 decimals; BSC keeps 18). */
+export function toTargetUsdtRaw(amount18: bigint, target: EntryKey): bigint {
+  const dec = USDT_ON[target].decimals;
+  if (dec >= 18) return amount18;
+  return amount18 / 10n ** BigInt(18 - dec);
+}
+
+const QUOTE_BRIDGE_IFACE = new Interface([
+  'function quoteBridge(uint256 amount) view returns (uint256 forwardAmount, uint256 tokenFee, uint256 totalRequired)',
+]);
+
+/**
+ * LIVE per-pair bridge TOKEN fee from quoteBridge on the pair's
+ * source-side router. Returns null when the router has no
+ * quoteBridge (plain warp routers — their sends are 1:1, verified
+ * by sampled deliveries). Measured 2026-11-08: fee = 0 on every
+ * enabled pair (QOM / BABY / CAW quote; the rest revert).
+ */
+export async function quotePairTokenFee(
+  pair: { br: string; ql1Router: string },
+  amountRaw: bigint,
+  srcKey: 'infinite' | 'ql1',
+): Promise<bigint | null> {
+  try {
+    const data = QUOTE_BRIDGE_IFACE.encodeFunctionData('quoteBridge', [amountRaw]);
+    const res = await providerFor(srcKey).call({
+      to: srcKey === 'infinite' ? pair.br : pair.ql1Router,
+      data,
+    });
+    const [, fee] = QUOTE_BRIDGE_IFACE.decodeFunctionResult(
+      'quoteBridge',
+      res,
+    ) as unknown as [bigint, bigint, bigint];
+    return fee;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fold the live token fee into candidate estimates: when a pair
+ * charges one, the bridged amount shrinks, so leg 2 is re-quoted
+ * at the reduced amount before routes are compared or a split is
+ * evaluated. (Execution needs no such math — it measures arrived
+ * balances.) With today's fee = 0 this is a verified no-op.
+ */
+async function applyTokenFees(
+  cands: any[],
+  srcKey: 'infinite' | 'ql1',
+  dstKey: 'infinite' | 'ql1',
+  toTokAddr: string,
+): Promise<void> {
+  const feeBySym = new Map<string, bigint | null>();
+  for (const c of cands) {
+    if (!c.enabled) continue;
+    const sym = c.pair.sym as string;
+    if (!feeBySym.has(sym)) {
+      feeBySym.set(sym, await quotePairTokenFee(c.pair, c.bridgeOut, srcKey));
+    }
+    const fee = feeBySym.get(sym) ?? 0n;
+    c.tokenFee = fee ?? 0n;
+    if (fee && fee > 0n && c.bridgeOut > fee) {
+      const reduced = c.bridgeOut - fee;
+      const r = await freshRoute(dstKey, c.tDst.address, toTokAddr, reduced, c.leg2Path);
+      if (r) {
+        c.bridgeOut = reduced;
+        c.finalOut = r.amountOut as bigint;
+      }
+    }
+  }
+}
+
+/** Live gas estimates for the confirm screens (never hardcoded). */
+export interface GasEstimates {
+  /** [42] for one 42->QL1 leg's 42-side steps (approve+swap+bridge). */
+  gas42PerLeg: bigint;
+  /** QOM for one swap on QL1. */
+  gasQomPerSwap: bigint;
+}
+
+export async function quoteGasEstimates(): Promise<GasEstimates | null> {
+  try {
+    const [f42, fQ] = await Promise.all([
+      providerFor('infinite').getFeeData(),
+      providerFor('ql1').getFeeData(),
+    ]);
+    if (!f42.gasPrice || !fQ.gasPrice) return null;
+    return {
+      gas42PerLeg: BigInt(f42.gasPrice) * 410000n,
+      gasQomPerSwap: BigInt(fQ.gasPrice) * 250000n,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Headline estimate NET of the carve-out's opportunity cost: the
+ * carve swap keeps K of the input out of the route, so the routed
+ * amount — and proportionally the expected output — shrinks.
+ * (Linear scaling; the carve is ~2% of the input at $100 size, so
+ * the approximation error is far below the 3% freshness guard.)
+ */
+export function netHeadline(
+  finalOut: bigint,
+  inputRaw: bigint,
+  carveCostRaw: bigint,
+): bigint {
+  if (inputRaw <= 0n || carveCostRaw <= 0n) return finalOut;
+  if (carveCostRaw >= inputRaw) return 0n;
+  return (finalOut * (inputRaw - carveCostRaw)) / inputRaw;
 }

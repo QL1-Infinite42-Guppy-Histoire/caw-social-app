@@ -57,3 +57,4 @@ scripts/.build-reactions/
 .env
 *.jks
 *.keystore
+scripts/.build-hunters/

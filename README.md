@@ -14,10 +14,42 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.2.0** — released 2026-11-08.
+- **現在版 / Current: v0.3.0** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.2.0/caw-social.apk
-  v0.2.0 adds the five features approved the night before:
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.0/caw-social.apk
+  v0.3.0 adds **HuntersSwap** and a follow-list speed fix:
+  - **HuntersSwap (buy).** A guided, one-step-at-a-time flow from
+    BNB (BSC) or ETH (Ethereum) to QL1 qCAW, entirely in-app:
+    entry swap (PancakeSwap / Uniswap V2) -> bridge to 42 Chain
+    (-2 USDT on arrival) -> best route to QL1 quoted by the DEX
+    aggregator engine (split routes offered only when they beat
+    the best single route after fees). The 42->QL1 bridge fee is
+    USD-fixed at $2 per leg (the [42] amount floats with the
+    price — live quoteNative, 2.947 [42] at ship time), the token
+    fee is 0 on every pair (live quoteBridge), and the fee + gas
+    [42] is set aside from the flow itself; every fee is itemised
+    on the confirm screen and the headline estimate is net of the
+    set-aside. BSC keeps $3 of BNB for gas; the ETH entry starts
+    at $100. Progress is saved on the phone and can be resumed.
+  - **HuntersSwap (sell).** The same flow in reverse: qCAW ->
+    USDT on 42 Chain -> bridge to BSC / Ethereum (flat 2 USDT,
+    message fee 0) -> BNB / ETH. If the target chain has no gas
+    coin, the flow can stop cleanly at "USDT arrived" and resume
+    later; a missing [42] gas balance on 42 Chain is warned about
+    before starting.
+  - **Follow lists open instantly.** The follow index now renders
+    progressively (cached / partially built lists show right away
+    and update as the build walks the feed, with a slim progress
+    note), persists its progress every 10 pages with a resume
+    cursor (closing the app mid-build no longer restarts from
+    page 1), and applies the balance refinement after first paint.
+  - Verification: `scripts/verify-huntersswap.mjs` (live quotes
+    for both directions, the full 42->QL1 fee stack, calldata
+    selectors) and the extended `scripts/verify-follow.mjs`
+    (interrupted + resumed build == uninterrupted build).
+    No real-money send has been made yet — the first live run
+    should be a small test.
+  v0.2.0 added the five features approved the night before:
   - **"Following" timeline.** Home gains Latest / Following tabs;
     the Following tab shows only posts and shares by the names
     your acting name follows (same follow index as the profile
@@ -176,7 +208,7 @@ longer works. This app keeps the key on your phone (Android
 Keystore-backed secure storage) and signs in-app, exactly like the
 original signers did.
 
-## Features (v0.2.0)
+## Features (v0.3.0)
 
 - Wallet: create new (secret words) or import (secret words / private
   key). QL1 only. Unlock by password or biometrics — asked when the

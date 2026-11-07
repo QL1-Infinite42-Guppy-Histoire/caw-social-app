@@ -70,6 +70,10 @@ import {
   quoteBridgeIn,
   quoteCarveUsdtCost,
   quoteEntrySwap,
+  netHeadline,
+  quoteGasEstimates,
+  toTargetUsdtRaw,
+  type GasEstimates,
   buildAggBridgeFromQl1,
   buildBridgeOut42Tx,
   buildFinalSwapTx,
@@ -93,7 +97,10 @@ interface Plan {
   usdt42: bigint;
   back: BackHalfQuote;
   carve: CarvePlan;
+  /** USDT (42) the carve swap will spend to make the kept [42]. */
+  carveCost: bigint;
   choice: 'single' | 'split';
+  /** Headline estimate, NET of the carve-out (see netHeadline). */
   expectedOut: bigint;
 }
 
@@ -123,6 +130,7 @@ function BuySection({ onClose }: { onClose: () => void }) {
   const [bnbUsd, setBnbUsd] = useState<number | null>(null);
   const [ethUsd, setEthUsd] = useState<number | null>(null);
   const [gasUsd, setGasUsd] = useState<number | null>(null);
+  const [gasEst, setGasEst] = useState<GasEstimates | null>(null);
   const [entry, setEntry] = useState<EntryKey>('bsc');
   const [amountText, setAmountText] = useState('');
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -145,6 +153,7 @@ function BuySection({ onClose }: { onClose: () => void }) {
       nativeUsdPrice('ethereum').catch(() => null),
       ethGasInfo().catch(() => null),
     ]);
+    quoteGasEstimates().then((g) => g && setGasEst(g)).catch(() => {});
     if (b) setBalances(b);
     if (pb) setBnbUsd(pb);
     if (pe) setEthUsd(pe);
@@ -209,9 +218,15 @@ function BuySection({ onClose }: { onClose: () => void }) {
       const legs =
         choice === 'split' && back.split ? back.split.parts.length : 1;
       const carve = planCarveout(legs, back.feePerLeg42, balances?.infNative ?? 0n);
-      const expectedOut =
+      let carveCost = 0n;
+      if (carve.needFromFlow > 0n) {
+        const q = await quoteCarveUsdtCost(carve.needFromFlow);
+        if (q) carveCost = q.usdtCost;
+      }
+      const rawOut =
         choice === 'split' && back.split ? back.split.netOut : back.bestSingle.finalOut;
-      setPlan({ entryAmount: amt, entryUsdt, usdt42, back, carve, choice, expectedOut });
+      const expectedOut = netHeadline(rawOut, usdt42, carveCost);
+      setPlan({ entryAmount: amt, entryUsdt, usdt42, back, carve, carveCost, choice, expectedOut });
       setPhase('confirm');
     } catch {
       setStatus({ text: tr('hs.failed'), err: true });
@@ -239,6 +254,7 @@ function BuySection({ onClose }: { onClose: () => void }) {
       choice: plan.choice,
       createdAt: Date.now(),
       entryUsdtBefore: before.toString(),
+      carveUsdtCost: plan.carveCost.toString(),
     });
     setResumeFlow(null);
     await persist(f);
@@ -372,8 +388,9 @@ function BuySection({ onClose }: { onClose: () => void }) {
     try {
       const total = BigInt(f.usdt42Actual ?? f.usdt42Expected);
       const back = await quoteBackHalf(total);
-      const freshExpected =
+      const freshRaw =
         f.choice === 'split' && back.split ? back.split.netOut : back.bestSingle.finalOut;
+      const freshExpected = netHeadline(freshRaw, total, BigInt(f.carveUsdtCost ?? '0'));
       if (!accept && worseThanConfirmed(freshExpected, BigInt(f.confirmedOut))) {
         // Prices moved a lot while bridging: stop and ask before
         // running anything on the back half.
@@ -778,7 +795,41 @@ function BuySection({ onClose }: { onClose: () => void }) {
             {balLine(entry === 'bsc' ? 'BNB' : 'ETH', plan.entryAmount, 18, entry === 'bsc' ? 'BNB' : 'ETH')}
             {balLine('USDT', plan.entryUsdt, ENTRY_DEX[entry].usdtDecimals, 'USDT')}
             {balLine(tr('hs.feeBridgeIn'), parseUnits('2', 18), 18, 'USDT')}
-            {balLine(tr('hs.fee42'), plan.back.feePerLeg42 * BigInt(plan.choice === 'split' && plan.back.split ? plan.back.split.parts.length : 1), 18, '42')}
+            {balLine(
+              tr('hs.feeBridge42') +
+                ' (' +
+                String(plan.choice === 'split' && plan.back.split ? plan.back.split.parts.length : 1) +
+                ' × ' +
+                fmtTok(plan.back.feePerLeg42, 18) +
+                ', ' +
+                tr('hs.aboutUsdEach') +
+                ')',
+              plan.back.feePerLeg42 * BigInt(plan.choice === 'split' && plan.back.split ? plan.back.split.parts.length : 1),
+              18,
+              '42',
+            )}
+            {plan.back.tokenFeeBest && plan.back.tokenFeeBest > 0n
+              ? balLine(tr('hs.feeToken'), plan.back.tokenFeeBest, 18, plan.back.bestSingle.pair.sym)
+              : null}
+            {gasEst
+              ? balLine(
+                  tr('hs.gas42Est'),
+                  gasEst.gas42PerLeg * BigInt(plan.choice === 'split' && plan.back.split ? plan.back.split.parts.length : 1),
+                  18,
+                  '42',
+                )
+              : null}
+            {gasEst
+              ? balLine(
+                  tr('hs.gasQl1Est'),
+                  gasEst.gasQomPerSwap * BigInt(plan.choice === 'split' && plan.back.split ? plan.back.split.parts.length : 1),
+                  18,
+                  'QOM',
+                )
+              : null}
+            {plan.carve.reserveTotal > 0n
+              ? balLine(tr('hs.keep42'), plan.carve.reserveTotal, 18, '42')
+              : null}
             <View style={{ marginTop: 16 }}>
               <Text style={S.small}>{tr('hs.youGet')}</Text>
               <Text style={[S.h1, { color: ACCENT }]}>{fmtTok(plan.expectedOut, 18)} qCAW</Text>
@@ -929,6 +980,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
   const [resumeFlow, setResumeFlow] = useState<HuntersFlow | null>(null);
   const [pending, setPending] = useState<{ title: string; run: () => Promise<void> } | null>(null);
   const [finishedWithUsdt, setFinishedWithUsdt] = useState(false);
+  const [gasEst, setGasEst] = useState<GasEstimates | null>(null);
   const flowRef = useRef<HuntersFlow | null>(null);
   flowRef.current = flow;
 
@@ -994,11 +1046,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
       const usdt42 =
         choice === 'split' && back.split ? back.split.netOut : back.bestSingle.finalOut;
       const q = await quoteBridgeOut42(target, usdt42);
-      const forwardTarget = truncateToDstDecimals(
-        q.forward,
-        18,
-        USDT_ON[target].decimals,
-      );
+      const forwardTarget = toTargetUsdtRaw(q.forward, target);
       const nativeOut = await quoteFinalSwap(target, forwardTarget);
       setPlan({ qcawAmount: amt, back, choice, usdt42, forwardTarget, nativeOut });
       setPhase('confirm');
@@ -1354,7 +1402,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
         targetBefore = (
           await erc20Balance(t, USDT_ON[t].address, address).catch(() => 0n)
         ).toString();
-        fwdTarget = truncateToDstDecimals(q.forward, 18, USDT_ON[t].decimals);
+        fwdTarget = toTargetUsdtRaw(q.forward, t);
         return buildBridgeOut42Tx(t, address, amt, q.totalNative);
       }, (g) => ({
         ...g,
@@ -1574,6 +1622,22 @@ function SellSection({ onClose }: { onClose: () => void }) {
               <Text style={[S.body, { fontWeight: '600' }]}>-2 USDT</Text>
             </View>
             {balLine(tr('hs.usdtArriving'), plan.forwardTarget, USDT_ON[target].decimals, 'USDT')}
+            {gasEst
+              ? balLine(
+                  tr('hs.gasQl1Est'),
+                  gasEst.gasQomPerSwap * BigInt(plan.choice === 'split' && plan.back.split ? plan.back.split.parts.length : 1),
+                  18,
+                  'QOM',
+                )
+              : null}
+            {gasEst
+              ? balLine(
+                  tr('hs.gas42Est'),
+                  gasEst.gas42PerLeg * BigInt(plan.choice === 'split' && plan.back.split ? plan.back.split.parts.length : 1),
+                  18,
+                  '42',
+                )
+              : null}
             <View style={[S.row, { justifyContent: 'space-between', marginTop: 10 }]}>
               <Text style={S.body}>{tr('hs.youGet')}</Text>
               <Text style={[S.h2, { color: ACCENT }]}>
