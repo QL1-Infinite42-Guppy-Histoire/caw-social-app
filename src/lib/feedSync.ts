@@ -98,6 +98,21 @@ export function reconcileOwnPosts(fetched: TimelineItem[]): TimelineItem[] {
   return [...still, ...fetched];
 }
 
+/**
+ * Feed presentation rule (v0.4.0): LIKE actions (type 1) never
+ * render as feed rows — not other people's likes, not the user's
+ * own. This is display-only: the raw feed walk keeps returning
+ * likes (the follow index, reaction lists and the my-actions
+ * memory all still consume them), and like COUNTS on posts are
+ * read from the contract as before. Both feeds apply this —
+ * the Following walk already only collects posts and recaws,
+ * so running its items through the same filter keeps the rule
+ * uniform and provable in one place.
+ */
+export function visibleFeedItems(items: TimelineItem[]): TimelineItem[] {
+  return items.filter((i) => i.type !== 1);
+}
+
 /** Pending own posts, newest first (tests / diagnostics). */
 export function pendingOwnPosts(): TimelineItem[] {
   return [...pendingOwn.values()].sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0));

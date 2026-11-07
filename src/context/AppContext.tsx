@@ -18,6 +18,14 @@ import {
   type TimelineItem,
 } from '../lib/cawApi';
 import type { NameToken } from '../lib/cawCore';
+import type { PostRefKind } from '../lib/postRef';
+
+/** What the composer is aimed at (v0.4.0): a reply to, or a
+ *  quote Recaw of, an existing post. */
+export interface ComposeTarget {
+  kind: PostRefKind;
+  post: TimelineItem;
+}
 import { initDrafts } from '../lib/drafts';
 import { initFollowIndex } from '../lib/followIndex';
 import { initNameDirectory } from '../lib/nameDirectory';
@@ -108,6 +116,13 @@ export interface AppContextValue {
   closePost: () => void;
   composeOpen: boolean;
   setComposeOpen: (open: boolean) => void;
+  /** Reply / quote target for the composer (v0.4.0): the post a
+   *  new post will reference. Null for a plain new post. */
+  composeTarget: ComposeTarget | null;
+  /** Open the composer, optionally targeted at a post. */
+  openCompose: (target?: ComposeTarget | null) => void;
+  /** Close the composer and forget its target. */
+  closeCompose: () => void;
   /* password prompt plumbing (rendered by App) */
   pwPrompt: PwPromptState | null;
   answerPwPrompt: (password: string | null) => Promise<void>;
@@ -139,6 +154,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [tab, setTab] = useState<Tab>('home');
   const [profileName, setProfileName] = useState<string | null>(null);
   const [postDetail, setPostDetail] = useState<TimelineItem | null>(null);
+  const [composeTarget, setComposeTarget] = useState<ComposeTarget | null>(null);
   const [wallets, setWallets] = useState<WalletPublicInfo[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
   const [pwPrompt, setPwPrompt] = useState<PwPromptState | null>(null);
@@ -346,6 +362,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setProfileName(null);
     setPostDetail(null);
     setComposeOpen(false);
+    setComposeTarget(null);
     refreshBalances();
     refreshMyTokens();
   }, [refreshBalances, refreshMyTokens]);
@@ -433,6 +450,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setProfileName(null);
     setPostDetail(null);
     setComposeOpen(false);
+    setComposeTarget(null);
   }, []);
 
   const openProfile = useCallback((username: string) => {
@@ -443,6 +461,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setPostDetail(item);
   }, []);
   const closePost = useCallback(() => setPostDetail(null), []);
+
+  const openCompose = useCallback((target?: ComposeTarget | null) => {
+    setComposeTarget(target ?? null);
+    setComposeOpen(true);
+  }, []);
+  const closeCompose = useCallback(() => {
+    setComposeOpen(false);
+    setComposeTarget(null);
+  }, []);
 
   const value: AppContextValue = {
     lang,
@@ -484,6 +511,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     closePost,
     composeOpen,
     setComposeOpen,
+    composeTarget,
+    openCompose,
+    closeCompose,
     pwPrompt,
     answerPwPrompt,
     onWalletDeleted,

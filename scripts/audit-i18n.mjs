@@ -1,7 +1,8 @@
-/* String-length audit for the 7-language UI. Run: node scripts/audit-i18n.mjs
+/* String-length audit for the 13-language UI. Run: node scripts/audit-i18n.mjs
  *
- * The UI must not break when a language's words run long (Spanish
- * and Korean are the usual risks): tab labels, buttons and chips
+ * The UI must not break when a language's words run long (Spanish,
+ * Korean, French and Dutch compounds are the usual risks; the audit
+ * iterates LANGS, so every shipped language is covered): tab labels, buttons and chips
  * are flexible-width, but a hard budget still applies to the fixed
  * places — above all the four bottom tab labels, which share one
  * row. This audit:
@@ -37,7 +38,7 @@ const src = readFileSync(
   new URL('../src/i18n.ts', import.meta.url),
   'utf8',
 );
-const keys = [...new Set([...src.matchAll(/^\s*'([a-z]+(?:\.[a-zA-Z]+)+)':/gm)].map((m) => m[1]))];
+const keys = [...new Set([...src.matchAll(/^\s*'([a-z]+(?:\.[a-zA-Z0-9]+)+)':/gm)].map((m) => m[1]))];
 
 const width = (s) => {
   let w = 0;
@@ -105,6 +106,9 @@ const BUDGETS = [
       'wallet.savedIt', 'wallet.importBtn',
       'draft.discard', 'wallets.add', 'wallets.deleteOne',
       'detail.likedBy', 'detail.sharedBy',
+      /* The HuntersDEX header (v0.4.0): the buy/sell segmented
+       * control and the header Send pill share fixed rows too. */
+      'hs.buy', 'hs.sell', 'send.title',
     ],
     max: 26,
     why: 'button labels',

@@ -308,6 +308,10 @@ export default function ProfileScreen({
     }
   }, [profileId, next, done, loadingMore]);
 
+  /* Recaw offers the same choice as the timeline (v0.4.0):
+   * the plain recaw action, or a quote Recaw. */
+  const [recawChoice, setRecawChoice] = useState<TimelineItem | null>(null);
+
   const handleAction = useCallback(
     (kind: 1 | 2, item: TimelineItem) => {
       if (!acting) {
@@ -315,6 +319,10 @@ export default function ProfileScreen({
           ...prev,
           [item.hash]: tr('compose.needName'),
         }));
+        return;
+      }
+      if (kind === 2) {
+        setRecawChoice(item);
         return;
       }
       setPending({ kind, item });
@@ -580,6 +588,7 @@ export default function ProfileScreen({
             onOpenProfile={(name) => app.openProfile(name)}
             onAction={handleAction}
             onOpenPost={(it) => app.openPost(it)}
+            onReply={(it) => app.openCompose({ kind: 'reply', post: it })}
             actionStatus={statusByHash[item.hash]}
             busy={!!busyByHash[item.hash]}
             liked={app.hasMyAction(1, item)}
@@ -638,6 +647,47 @@ export default function ProfileScreen({
         onCancel={() => setPending(null)}
         busy={pending ? !!busyByHash[pending.item.hash] : false}
       />
+      <Modal
+        visible={!!recawChoice}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setRecawChoice(null)}
+      >
+        <View style={styles.choiceBackdrop}>
+          <View style={[styles.choiceSheet, { paddingBottom: 30 + insets.bottom }]}>
+            <Text style={S.h2}>{tr('act.recawChoiceTitle')}</Text>
+            <View style={{ height: 16 }} />
+            <Pressable
+              style={S.bigBtn}
+              onPress={() => {
+                const it = recawChoice;
+                setRecawChoice(null);
+                if (it) setPending({ kind: 2, item: it });
+              }}
+            >
+              <Text style={S.bigBtnText}>{tr('act.share')}</Text>
+            </Pressable>
+            <View style={{ height: 10 }} />
+            <Pressable
+              style={S.ghostBtn}
+              onPress={() => {
+                const it = recawChoice;
+                setRecawChoice(null);
+                if (it) app.openCompose({ kind: 'quote', post: it });
+              }}
+            >
+              <Text style={S.ghostBtnText}>{tr('act.quoteRecaw')}</Text>
+            </Pressable>
+            <View style={{ height: 10 }} />
+            <Pressable
+              style={S.ghostBtn}
+              onPress={() => setRecawChoice(null)}
+            >
+              <Text style={S.ghostBtnText}>{tr('compose.cancel')}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
       <ConfirmSheet
         visible={followConfirmOpen}
         title={tr('act.confirmFollow', {
@@ -875,6 +925,20 @@ function FollowRow({
 }
 
 const styles = StyleSheet.create({
+  /* Recaw choice sheet (v0.4.0) — same bottom-sheet language as
+   * the shared ConfirmSheet. */
+  choiceBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  choiceSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    padding: 20,
+    paddingBottom: 30,
+  },
   backRow: {
     paddingHorizontal: 16,
     paddingVertical: 12,

@@ -30,6 +30,7 @@ import {
   insertOwnPost,
   reconcileOwnPosts,
   subscribeOwnPosts,
+  visibleFeedItems,
 } from '../lib/feedSync';
 import { performAction } from '../lib/actionFlow';
 import { fmtAmount } from '../lib/cawCore';
@@ -100,8 +101,10 @@ export default function TimelineScreen() {
       // The head page is always a fresh fetch (cawApi never serves
       // it settled from the session cache); reconcile keeps a
       // just-posted own post pinned at the head until the scanned
-      // copy of the same tx shows up in a fetched page.
-      setItems(reconcileOwnPosts(page.items));
+      // copy of the same tx shows up in a fetched page. Likes are
+      // filtered out of the feed view (v0.4.0) — presentation
+      // only; the raw page still carries them for other readers.
+      setItems(visibleFeedItems(reconcileOwnPosts(page.items)));
       setNext(page.next);
     } catch {
       setLoadFailed(true);
@@ -190,7 +193,14 @@ export default function TimelineScreen() {
         }
         fCursorRef.current = cursor;
         setFDone(done);
-        setFItems((prev) => (reset ? found : [...prev, ...found]));
+        // The Following walk only collects posts and recaws, so
+        // likes never enter here; visibleFeedItems keeps the
+        // no-like-rows rule uniform across both feeds.
+        setFItems((prev) =>
+          reset
+            ? visibleFeedItems(found)
+            : [...prev, ...visibleFeedItems(found)],
+        );
       } catch {
         // Keep what we have; pulling again retries.
       } finally {
@@ -262,7 +272,7 @@ export default function TimelineScreen() {
     setLoadingMore(true);
     try {
       const page = await fetchTimelinePage(next);
-      setItems((prev) => [...prev, ...page.items]);
+      setItems((prev) => [...prev, ...visibleFeedItems(page.items)]);
       setNext(page.next);
     } catch {
       // Keep what we have; the button stays so the user can retry.
@@ -270,6 +280,10 @@ export default function TimelineScreen() {
       setLoadingMore(false);
     }
   }, [next, loadingMore]);
+
+  /* Recaw offers a choice (v0.4.0): the plain recaw action, or
+   * a quote Recaw (a new post referencing this one). */
+  const [recawChoice, setRecawChoice] = useState<TimelineItem | null>(null);
 
   const handleAction = useCallback(
     (kind: 1 | 2, item: TimelineItem) => {
@@ -280,9 +294,18 @@ export default function TimelineScreen() {
         }));
         return;
       }
+      if (kind === 2) {
+        setRecawChoice(item);
+        return;
+      }
       setPending({ kind, item });
     },
     [acting],
+  );
+
+  const openReplyCb = useCallback(
+    (item: TimelineItem) => app.openCompose({ kind: 'reply', post: item }),
+    [app],
   );
 
   const confirmAction = useCallback(async () => {
@@ -502,6 +525,7 @@ export default function TimelineScreen() {
             onOpenProfile={openProfileCb}
             onAction={handleAction}
             onOpenPost={openPostCb}
+            onReply={openReplyCb}
             actionStatus={statusByHash[item.hash]}
             busy={!!busyByHash[item.hash]}
             liked={app.hasMyAction(1, item)}
@@ -574,6 +598,47 @@ export default function TimelineScreen() {
         onCancel={() => setPending(null)}
         busy={pending ? !!busyByHash[pending.item.hash] : false}
       />
+      <Modal
+        visible={!!recawChoice}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setRecawChoice(null)}
+      >
+        <View style={styles.choiceBackdrop}>
+          <View style={styles.choiceSheet}>
+            <Text style={S.h2}>{tr('act.recawChoiceTitle')}</Text>
+            <View style={{ height: 16 }} />
+            <Pressable
+              style={S.bigBtn}
+              onPress={() => {
+                const it = recawChoice;
+                setRecawChoice(null);
+                if (it) setPending({ kind: 2, item: it });
+              }}
+            >
+              <Text style={S.bigBtnText}>{tr('act.share')}</Text>
+            </Pressable>
+            <View style={{ height: 10 }} />
+            <Pressable
+              style={S.ghostBtn}
+              onPress={() => {
+                const it = recawChoice;
+                setRecawChoice(null);
+                if (it) app.openCompose({ kind: 'quote', post: it });
+              }}
+            >
+              <Text style={S.ghostBtnText}>{tr('act.quoteRecaw')}</Text>
+            </Pressable>
+            <View style={{ height: 10 }} />
+            <Pressable
+              style={S.ghostBtn}
+              onPress={() => setRecawChoice(null)}
+            >
+              <Text style={S.ghostBtnText}>{tr('compose.cancel')}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
       <Modal
         visible={searchOpen}
         animationType="slide"
@@ -664,4 +729,18 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  /* Recaw choice sheet (v0.4.0) — same bottom-sheet language as
+   * the shared ConfirmSheet. */
+  choiceBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  choiceSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    padding: 20,
+    paddingBottom: 34,
+  },
 });

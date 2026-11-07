@@ -20,11 +20,13 @@ import { LOCALES, isLang, tr } from '../i18n';
 import {
   avatarFor,
   findPostByCawId,
+  knownReplyCount,
   likesCount,
   resolveName,
   txUrl,
 } from '../lib/cawApi';
 import { avatarSpec } from '../lib/cawCore';
+import { displayTextOf, parsePostText } from '../lib/postRef';
 import type { TimelineItem } from '../lib/cawApi';
 import type { ProfileCustom } from '../lib/profileCustom';
 
@@ -83,11 +85,16 @@ export const S = StyleSheet.create({
   scrollPad: { padding: 16, paddingBottom: 32 },
   h1: { fontSize: 22, fontWeight: '800', color: '#0f1419' },
   h2: { fontSize: 17, fontWeight: '700', color: '#0f1419', marginTop: 8 },
-  body: { fontSize: 15, color: '#0f1419', lineHeight: 21 },
-  small: { fontSize: 13, color: '#536471', lineHeight: 18 },
+  /* Line heights sit at ~1.45x the font size (v0.4.0): Devanagari
+   * (Hindi) combining marks reach above and below the base glyph,
+   * and tighter explicit line heights can clip them on Android.
+   * Styles without a lineHeight use the font's own metrics and
+   * need no help. */
+  body: { fontSize: 15, color: '#0f1419', lineHeight: 22 },
+  small: { fontSize: 13, color: '#536471', lineHeight: 19 },
   tiny: { fontSize: 12, color: '#536471' },
-  err: { fontSize: 14, color: '#c62828', lineHeight: 20 },
-  ok: { fontSize: 14, color: '#1b7a43', lineHeight: 20 },
+  err: { fontSize: 14, color: '#c62828', lineHeight: 21 },
+  ok: { fontSize: 14, color: '#1b7a43', lineHeight: 21 },
   input: {
     borderWidth: 1,
     borderColor: '#cfd9de',
@@ -199,6 +206,13 @@ export function RepeatIcon({ size = 18, color = '#536471' }: { size?: number; co
       <Path d="M3 11V9a4 4 0 0 1 4-4h14" />
       <Polyline points="7 23 3 19 7 15" />
       <Path d="M21 13v2a4 4 0 0 1-4 4H3" />
+    </Svg>
+  );
+}
+export function ReplyIcon({ size = 18, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
     </Svg>
   );
 }
@@ -430,25 +444,125 @@ function TargetPostQuote({
   );
 }
 
-/* ---------- one timeline entry ---------- */
-function PostCardBase({
-  item,
+/**
+ * A resolved original post inside a quote frame — used by quote
+ * Recaws (their embedded original) and by the composer (the post
+ * being quoted/replied to). Text shown is the display body
+ * (any parent-reference marker line hidden).
+ */
+export function QuotedPostFrame({
+  post,
   lang,
   onOpenProfile,
-  onAction,
   onOpenPost,
-  actionStatus,
-  busy,
-  liked,
-  recawed,
-  custom,
 }: {
+  post: TimelineItem;
+  lang: string;
+  onOpenProfile: (username: string) => void;
+  onOpenPost?: (item: TimelineItem) => void;
+}) {
+  const [author, setAuthor] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    resolveName(post.senderId).then((n) => live && setAuthor(n));
+    return () => {
+      live = false;
+    };
+  }, [post.senderId]);
+  const authorLabel = author
+    ? '@' + author
+    : tr('tl.unknownName') + post.senderId.toString();
+  return (
+    <Pressable
+      style={postStyles.quote}
+      onPress={
+        onOpenPost
+          ? () => onOpenPost(post)
+          : author
+            ? () => onOpenProfile(author)
+            : undefined
+      }
+    >
+      <View style={S.row}>
+        <Avatar nameId={post.senderId} size={20} />
+        <Text style={[postStyles.quoteName, { marginStart: 6 }]}>
+          {authorLabel}
+        </Text>
+        <Text style={S.tiny}>
+          {'  ·  '}
+          {formatTime(post.ts, lang)}
+        </Text>
+      </View>
+      <Text style={postStyles.quoteText} numberOfLines={4}>
+        {displayTextOf(post.text)}
+      </Text>
+    </Pressable>
+  );
+}
+
+/**
+ * The original post referenced by cawId (a quote Recaw's parent),
+ * resolved from the feed index. While the lookup runs a plain
+ * loading frame shows; when the original cannot be found the
+ * frame says so honestly instead of inventing content.
+ */
+export function OriginalFrame({
+  cawId,
+  lang,
+  onOpenProfile,
+  onOpenPost,
+}: {
+  cawId: string;
+  lang: string;
+  onOpenProfile: (username: string) => void;
+  onOpenPost?: (item: TimelineItem) => void;
+}) {
+  const [post, setPost] = useState<TimelineItem | null | undefined>(
+    undefined,
+  );
+  useEffect(() => {
+    let live = true;
+    findPostByCawId(cawId)
+      .then((p) => live && setPost(p))
+      .catch(() => live && setPost(null));
+    return () => {
+      live = false;
+    };
+  }, [cawId]);
+  if (post === undefined) {
+    return (
+      <View style={postStyles.quote}>
+        <Text style={S.small}>{tr('tl.loading')}</Text>
+      </View>
+    );
+  }
+  if (!post) {
+    return (
+      <View style={postStyles.quote}>
+        <Text style={S.small}>{tr('tl.originalMissing')}</Text>
+      </View>
+    );
+  }
+  return (
+    <QuotedPostFrame
+      post={post}
+      lang={lang}
+      onOpenProfile={onOpenProfile}
+      onOpenPost={onOpenPost}
+    />
+  );
+}
+
+/* ---------- one timeline entry ---------- */
+export interface PostCardProps {
   item: TimelineItem;
   lang: string;
   onOpenProfile: (username: string) => void;
   onAction?: (kind: 1 | 2, item: TimelineItem) => void;
   /** Tap on a post's text opens its detail (v0.2.0). */
   onOpenPost?: (item: TimelineItem) => void;
+  /** Reply button (v0.4.0): opens the composer targeted at this post. */
+  onReply?: (item: TimelineItem) => void;
   actionStatus?: string;
   busy?: boolean;
   /** This wallet already liked this post (remembered on the device). */
@@ -457,10 +571,128 @@ function PostCardBase({
   recawed?: boolean;
   /** Sender's on-device custom look (only ever set for my own names). */
   custom?: ProfileCustom | null;
-}) {
+  /** Rendered inside another row (a recaw's embedded original):
+   *  no outer padding / border of its own. */
+  nested?: boolean;
+}
+
+/**
+ * A plain Recaw (type 2), X-style (v0.4.0): a small header line
+ * naming the recawer, and the body is the ORIGINAL post itself,
+ * rendered as a normal (nested) post card — its text, author,
+ * like count and action row. Tapping the original opens ITS
+ * detail. When the original cannot be found in the index, an
+ * honest "not found" frame replaces it; content is never faked.
+ */
+function RecawCard({
+  item,
+  lang,
+  onOpenProfile,
+  onAction,
+  onOpenPost,
+  onReply,
+  actionStatus,
+  busy,
+  liked,
+  recawed,
+  nested,
+}: PostCardProps) {
+  const [name, setName] = useState<string | null>(null);
+  const [original, setOriginal] = useState<TimelineItem | null | undefined>(
+    undefined,
+  );
+  useEffect(() => {
+    let live = true;
+    resolveName(item.senderId).then((n) => live && setName(n));
+    return () => {
+      live = false;
+    };
+  }, [item.senderId]);
+  useEffect(() => {
+    let live = true;
+    findPostByCawId(item.cawId)
+      .then((p) => live && setOriginal(p))
+      .catch(() => live && setOriginal(null));
+    return () => {
+      live = false;
+    };
+  }, [item.cawId]);
+  const who = name
+    ? '@' + name
+    : tr('tl.unknownName') + item.senderId.toString();
+  return (
+    <View style={nested ? postStyles.postNested : postStyles.post}>
+      <Avatar
+        nameId={item.senderId}
+        size={44}
+        onPress={name ? () => onOpenProfile(name) : undefined}
+      />
+      <View style={{ flex: 1, marginStart: 10 }}>
+        <View style={S.row}>
+          <RepeatIcon size={14} color={RECAW_ON} />
+          <Text style={[S.tiny, { marginStart: 5, fontWeight: '700' }]}>
+            {tr('tl.recawedBy', { name: who })}
+          </Text>
+        </View>
+        {original === undefined ? (
+          <View style={postStyles.quote}>
+            <Text style={S.small}>{tr('tl.loading')}</Text>
+          </View>
+        ) : original === null ? (
+          <View style={postStyles.quote}>
+            <Text style={S.small}>{tr('tl.originalMissing')}</Text>
+          </View>
+        ) : (
+          <PostCard
+            item={original}
+            lang={lang}
+            onOpenProfile={onOpenProfile}
+            onAction={onAction}
+            onOpenPost={onOpenPost}
+            onReply={onReply}
+            busy={busy}
+            liked={liked}
+            recawed={recawed}
+            nested
+          />
+        )}
+        <View style={[S.row, { marginTop: 8 }]}>
+          <Pressable onPress={() => Linking.openURL(txUrl(item.hash))}>
+            <Text style={[S.tiny, { color: ACCENT }]}>
+              {tr('tl.viewTx')} ↗
+            </Text>
+          </Pressable>
+        </View>
+        {actionStatus ? (
+          <Text style={[S.tiny, { marginTop: 4 }]}>{actionStatus}</Text>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function PostCardBase({
+  item,
+  lang,
+  onOpenProfile,
+  onAction,
+  onOpenPost,
+  onReply,
+  actionStatus,
+  busy,
+  liked,
+  recawed,
+  custom,
+  nested,
+}: PostCardProps) {
   const [name, setName] = useState<string | null>(null);
   const [targetName, setTargetName] = useState<string | null>(null);
   const [likes, setLikes] = useState<bigint | null>(null);
+  /* Reply state (v0.4.0): the count comes from the reference
+   * index (posts seen carrying this post's cawId in a reply
+   * marker); the reply-to line names the parent post's author. */
+  const [replyCount, setReplyCount] = useState(0);
+  const [replyToName, setReplyToName] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     resolveName(item.senderId).then((n) => live && setName(n));
@@ -471,6 +703,19 @@ function PostCardBase({
       likesCount(item)
         .then((v) => live && setLikes(v))
         .catch(() => {});
+      setReplyCount(knownReplyCount(item.cawId));
+      const ref = parsePostText(item.text).ref;
+      if (ref && ref.kind === 'reply') {
+        findPostByCawId(ref.parentCawId)
+          .then((p) => {
+            if (live && p) {
+              resolveName(p.senderId).then(
+                (n) => live && setReplyToName(n),
+              );
+            }
+          })
+          .catch(() => {});
+      }
     }
     return () => {
       live = false;
@@ -508,8 +753,31 @@ function PostCardBase({
     : tr('tl.unknownName') + item.receiverId.toString();
   const showLikes =
     item.type === 0 && ((likes !== null && likes > 0n) || liked);
+  /* A plain Recaw renders as its own X-style row (header + the
+   * original post as the body) — see RecawCard above. */
+  if (item.type === 2) {
+    return (
+      <RecawCard
+        item={item}
+        lang={lang}
+        onOpenProfile={onOpenProfile}
+        onAction={onAction}
+        onOpenPost={onOpenPost}
+        onReply={onReply}
+        actionStatus={actionStatus}
+        busy={busy}
+        liked={liked}
+        recawed={recawed}
+        nested={nested}
+      />
+    );
+  }
+  /* Posts: the display body hides the parent-reference marker
+   * line (replies / quote Recaws, lib/postRef.ts). */
+  const parsed = item.type === 0 ? parsePostText(item.text) : null;
+  const bodyText = parsed ? parsed.body : item.text;
   return (
-    <View style={postStyles.post}>
+    <View style={nested ? postStyles.postNested : postStyles.post}>
       <Avatar
         nameId={item.senderId}
         size={44}
@@ -530,16 +798,29 @@ function PostCardBase({
             {formatTime(item.ts, lang)}
           </Text>
         </View>
-        {item.type === 0 && item.text ? (
+        {parsed?.ref?.kind === 'reply' && replyToName ? (
+          <Text style={S.tiny}>
+            {tr('tl.replyTo', { name: '@' + replyToName })}
+          </Text>
+        ) : null}
+        {item.type === 0 && bodyText ? (
           onOpenPost ? (
             <Pressable onPress={() => onOpenPost(item)}>
-              <Text style={postStyles.text}>{item.text}</Text>
+              <Text style={postStyles.text}>{bodyText}</Text>
             </Pressable>
           ) : (
-            <Text style={postStyles.text}>{item.text}</Text>
+            <Text style={postStyles.text}>{bodyText}</Text>
           )
         ) : null}
-        {item.type === 1 || item.type === 2 ? (
+        {parsed?.ref?.kind === 'quote' ? (
+          <OriginalFrame
+            cawId={parsed.ref.parentCawId}
+            lang={lang}
+            onOpenProfile={onOpenProfile}
+            onOpenPost={onOpenPost}
+          />
+        ) : null}
+        {item.type === 1 ? (
           <TargetPostQuote item={item} lang={lang} onOpenProfile={onOpenProfile} />
         ) : null}
         <View style={[S.row, { marginTop: 8, flexWrap: 'wrap', gap: 14 }]}>
@@ -596,6 +877,22 @@ function PostCardBase({
                 </Text>
               </Pressable>
             </>
+          ) : null}
+          {item.type === 0 && (onReply || replyCount > 0) ? (
+            <Pressable
+              disabled={!onReply}
+              onPress={onReply ? () => onReply(item) : undefined}
+              style={({ pressed }) => [
+                S.row,
+                postStyles.actionBtn,
+                pressed && postStyles.actionBtnOn,
+              ]}
+            >
+              <ReplyIcon size={16} color="#536471" />
+              <Text style={[S.tiny, { marginStart: 4 }]}>
+                {replyCount > 0 ? replyCount.toString() : tr('tl.reply')}
+              </Text>
+            </Pressable>
           ) : null}
           <Pressable onPress={() => Linking.openURL(txUrl(item.hash))}>
             <Text style={[S.tiny, { color: ACCENT }]}>
@@ -669,6 +966,13 @@ const postStyles = StyleSheet.create({
     borderBottomColor: HAIRLINE,
     backgroundColor: '#fff',
   },
+  /* A post embedded inside a recaw row: same row layout, but the
+   * outer row owns the padding and the separator. */
+  postNested: {
+    flexDirection: 'row',
+    paddingTop: 6,
+    backgroundColor: 'transparent',
+  },
   name: { fontSize: 15, fontWeight: '700', color: '#0f1419' },
   nameRow: {
     flexDirection: 'row',
@@ -679,7 +983,7 @@ const postStyles = StyleSheet.create({
     borderBottomColor: HAIRLINE,
     backgroundColor: '#fff',
   },
-  text: { fontSize: 15, color: '#0f1419', lineHeight: 21, marginTop: 2 },
+  text: { fontSize: 15, color: '#0f1419', lineHeight: 22, marginTop: 2 },
   quote: {
     borderWidth: 1,
     borderColor: '#cfd9de',
@@ -688,7 +992,7 @@ const postStyles = StyleSheet.create({
     marginTop: 8,
   },
   quoteName: { fontSize: 13.5, fontWeight: '700', color: '#0f1419' },
-  quoteText: { fontSize: 14, color: '#0f1419', lineHeight: 19, marginTop: 4 },
+  quoteText: { fontSize: 14, color: '#0f1419', lineHeight: 20, marginTop: 4 },
   // X-style action buttons: a soft pill highlight while pressed.
   actionBtn: {
     paddingHorizontal: 8,

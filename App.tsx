@@ -150,7 +150,8 @@ function Main() {
     profileName,
     closeProfile,
     composeOpen,
-    setComposeOpen,
+    openCompose,
+    closeCompose,
     postDetail,
     closePost,
   } = app;
@@ -162,7 +163,7 @@ function Main() {
         return true;
       }
       if (composeOpen) {
-        setComposeOpen(false);
+        closeCompose();
         return true;
       }
       if (postDetail) {
@@ -176,7 +177,7 @@ function Main() {
       return false;
     });
     return () => sub.remove();
-  }, [hsOpen, composeOpen, profileName, postDetail, setComposeOpen, closeProfile, closePost]);
+  }, [hsOpen, composeOpen, profileName, postDetail, closeCompose, closeProfile, closePost]);
 
   const tabs: { key: typeof tab; label: string }[] = [
     { key: 'home', label: tr('nav.home') },
@@ -206,7 +207,7 @@ function Main() {
             styles.fab,
             { bottom: TAB_BAR_HEIGHT + insets.bottom + 14 },
           ]}
-          onPress={() => setComposeOpen(true)}
+          onPress={() => openCompose()}
         >
           <Text style={styles.fabText}>✎</Text>
         </Pressable>
@@ -289,9 +290,9 @@ function Main() {
       <Modal
         visible={composeOpen}
         animationType="slide"
-        onRequestClose={() => setComposeOpen(false)}
+        onRequestClose={closeCompose}
       >
-        <ComposeScreen onClose={() => setComposeOpen(false)} />
+        <ComposeScreen onClose={closeCompose} />
       </Modal>
     </SafeAreaView>
   );

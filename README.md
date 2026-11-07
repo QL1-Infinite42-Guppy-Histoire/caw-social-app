@@ -453,8 +453,49 @@ original signers did.
 - Get a name: availability + price check, qCAW approve → mint; a
   taken name links straight to its profile.
 - My names: per-name qCAW balance inside the name, deposit / withdraw.
-- Five languages — English (default), 日本語， 简体中文， 한국어，
-  Español — switchable in Settings.
+- Thirteen languages — English (default), 日本語， 简体中文， 한국어，
+  Español, Türkçe, فارسی, Bahasa Indonesia, Tiếng Việt, Português,
+  Nederlands, हिन्दी, Français — switchable in Settings.
+
+## Replies and quote Recaws (v0.4.0) — an app-level convention
+
+CAW itself has **no reply convention**: a full read of the on-chain
+action feed (6,065 actions, 1,035 posts, checked 2026-11-08) shows
+every post carries `receiverId = 0` and no post references a parent,
+and the CawActions contract exposes no thread/reply notion. Plain
+recaws and likes do reference their target (type 1/2 actions carry
+the target's `cawId`), but posts do not.
+
+So this app implements replies and quote Recaws as ordinary posts
+with one extra marker, documented here so anyone can implement the
+same reading rule:
+
+- A reply or quote is a normal type-0 post: its own fresh random
+  `cawId`, `receiverId` still `0`, sent through the unchanged
+  signing path. Its **text ends with one marker line**:
+
+  ```
+  [caw:reply:<base64url(parent cawId, 32 bytes, no padding)>]
+  [caw:quote:<base64url(parent cawId, 32 bytes, no padding)>]
+  ```
+
+  The keyword distinguishes reply from quote; a post without the
+  marker is a plain post. The marker costs 56 bytes of the
+  420-byte post budget.
+
+**Honest interop note:** other CAW clients do not know this
+convention. In them, a reply or quote from this app appears as an
+ordinary post whose text ends with that small bracketed line.
+Nothing on-chain changes for anyone; this app simply reads the
+marker to build threads and quote frames, and any client can do
+the same.
+
+Also in v0.4.0: **likes no longer appear as rows** in the Latest
+and Following feeds (presentation only — like counts, liked-by
+lists and reaction summaries still read them), and a **Recaw row
+shows the original post** it points to, X-style, instead of a bare
+"recawed your post" line (with an explicit fallback when the
+original is not in the local index).
 
 ## Verification
 

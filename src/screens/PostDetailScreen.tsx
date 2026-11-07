@@ -9,12 +9,14 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { NameRow, PostCard, S } from '../components/ui';
+import { NameRow, PostCard, ReplyIcon, S } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
 import {
   fetchPostReactions,
+  fetchPostThread,
+  type RefChild,
   type TimelineItem,
 } from '../lib/cawApi';
 import { backArrow } from '../lib/rtl';
@@ -39,6 +41,11 @@ export default function PostDetailScreen({
   const [shares, setShares] = useState<bigint[] | null>(null);
   const [complete, setComplete] = useState(true);
   const [failed, setFailed] = useState(false);
+  /* Reply thread (v0.4.0): the original post, then its replies
+   * in time order. Quote Recaws of this post are posts of their
+   * own and never appear here; plain recaws are the shares list. */
+  const [replies, setReplies] = useState<RefChild[] | null>(null);
+  const [threadComplete, setThreadComplete] = useState(true);
 
   const load = useCallback(async () => {
     setFailed(false);
@@ -49,6 +56,14 @@ export default function PostDetailScreen({
       setComplete(r.complete);
     } catch {
       setFailed(true);
+    }
+    try {
+      const t = await fetchPostThread(post);
+      setReplies(t.replies);
+      setThreadComplete(t.complete);
+    } catch {
+      setReplies([]);
+      setThreadComplete(false);
     }
   }, [post]);
 
@@ -78,6 +93,8 @@ export default function PostDetailScreen({
           item={post}
           lang={app.lang}
           onOpenProfile={openProfile}
+          onOpenPost={(it) => app.openPost(it)}
+          onReply={(it) => app.openCompose({ kind: 'reply', post: it })}
           liked={app.hasMyAction(1, post)}
           recawed={app.hasMyAction(2, post)}
           custom={app.customFor(post.senderId)}
@@ -90,6 +107,7 @@ export default function PostDetailScreen({
               onPress={() => {
                 setLikes(null);
                 setShares(null);
+                setReplies(null);
                 load();
               }}
             >
@@ -147,6 +165,44 @@ export default function PostDetailScreen({
                 />
               ))
             )}
+            <View style={styles.sectionRow}>
+              <View style={[styles.sectionBadge, { backgroundColor: '#1d9bf0' }]}>
+                <ReplyIcon size={13} color="#fff" />
+              </View>
+              <Text style={S.h2}>
+                {tr('detail.replies')} · {replies ? replies.length : '…'}
+              </Text>
+            </View>
+            {replies === null ? (
+              <View style={styles.center}>
+                <ActivityIndicator color={ACCENT} />
+              </View>
+            ) : replies.length === 0 ? (
+              <View style={[S.emptyCard, styles.emptyCardPad]}>
+                <Text style={S.small}>{tr('detail.noneYet')}</Text>
+              </View>
+            ) : (
+              replies.map((r) => (
+                <PostCard
+                  key={r.hash + ':' + r.cawId}
+                  item={r}
+                  lang={app.lang}
+                  onOpenProfile={openProfile}
+                  onOpenPost={(it) => app.openPost(it)}
+                  onReply={(it) =>
+                    app.openCompose({ kind: 'reply', post: it })
+                  }
+                  liked={app.hasMyAction(1, r)}
+                  recawed={app.hasMyAction(2, r)}
+                  custom={app.customFor(r.senderId)}
+                />
+              ))
+            )}
+            {!threadComplete ? (
+              <Text style={[S.tiny, styles.note]}>
+                {tr('detail.incomplete')}
+              </Text>
+            ) : null}
             {!complete ? (
               <Text style={[S.tiny, styles.note]}>
                 {tr('detail.incomplete')}

@@ -13,20 +13,51 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Avatar, ConfirmSheet, S } from '../components/ui';
+import { Avatar, ConfirmSheet, QuotedPostFrame, S } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
-import { invalidateFeedHead } from '../lib/cawApi';
+import {
+  indexPostRef,
+  invalidateFeedHead,
+  resolveName,
+} from '../lib/cawApi';
 import { textBytes, type CawAction } from '../lib/cawCore';
 import { clearDraft, loadDraft, saveDraft } from '../lib/drafts';
 import { noteOwnPost } from '../lib/feedSync';
+import {
+  appendPostRef,
+  postRefOverhead,
+  type PostRef,
+} from '../lib/postRef';
 import { nowSec, randomCawId, submitAction } from '../lib/wallet';
 
 export default function ComposeScreen({ onClose }: { onClose: () => void }) {
   const app = useApp();
   const insets = useSafeAreaInsets();
   const { myTokens, actingId, chooseActing } = app;
+  /* Reply / quote target (v0.4.0): when set, the sent post is an
+   * ordinary post whose text gains a parent-reference marker
+   * line (lib/postRef.ts). Drafts belong to plain posts only —
+   * a targeted composer never loads or overwrites them. */
+  const target = app.composeTarget;
+  const postRef: PostRef | null = target
+    ? { kind: target.kind, parentCawId: target.post.cawId }
+    : null;
+  const [targetName, setTargetName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!target) {
+      setTargetName(null);
+      return;
+    }
+    let live = true;
+    resolveName(target.post.senderId)
+      .then((n) => live && setTargetName(n))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [target]);
 
   const [text, setText] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -53,8 +84,10 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     app.refreshMyTokens().catch(() => {});
-    // Restore this wallet's saved draft, if any (v0.2.0).
-    if (app.address) {
+    // Restore this wallet's saved draft, if any (v0.2.0). A
+    // targeted (reply/quote) composer starts empty and leaves
+    // the plain-post draft untouched.
+    if (!target && app.address) {
       loadDraft(app.address)
         .then((d) => {
           if (d && d.text.trim().length > 0) {
@@ -79,7 +112,7 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
   // Auto-save the draft as the user types (debounced, on-device
   // only). A successful post clears it in doPost.
   useEffect(() => {
-    if (!app.address || postedRef.current) return;
+    if (!app.address || postedRef.current || target) return;
     if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
     draftTimerRef.current = setTimeout(() => {
       if (app.address) {
@@ -102,9 +135,12 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
   const acting =
     myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
 
-  const bytes = textBytes(text);
-  const remaining = 420 - bytes;
   const trimmed = text.trim();
+  /* The 420-byte budget covers the FINAL text — for a reply /
+   * quote that includes the parent-reference marker line. */
+  const overhead = postRef ? postRefOverhead(postRef) : 0;
+  const bytes = textBytes(trimmed) + overhead;
+  const remaining = 420 - bytes;
   const canPost = !!acting && trimmed.length > 0 && bytes <= 420 && !sending;
 
   const doPost = async () => {
@@ -128,10 +164,14 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
         ts: nowSec(),
         sender: app.address,
         cawId,
-        text: trimmed,
+        text: postRef ? appendPostRef(trimmed, postRef) : trimmed,
       };
       const hash = await submitAction(secret.kind, secret.secret, action);
       postedRef.current = true;
+      // A reply/quote is indexed by its parent reference right
+      // away, so counts and the parent's thread include it
+      // without waiting for the next feed walk.
+      if (postRef) indexPostRef({ ...action, hash });
       // The tx is confirmed (submitAction waits for the receipt).
       // Record the post so the timeline shows it at the head the
       // moment this modal closes — the explorer may still be a few
@@ -144,7 +184,7 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
         hash,
         blockTs: new Date().toISOString(),
       });
-      if (app.address) await clearDraft(app.address);
+      if (!postRef && app.address) await clearDraft(app.address);
       setConfirmOpen(false);
       setStatusOk(true);
       setStatus(tr('compose.posted'));
@@ -172,7 +212,13 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
     >
       <View style={styles.headerRow}>
-        <Text style={S.h1}>{tr('compose.title')}</Text>
+        <Text style={S.h1}>
+          {target
+            ? target.kind === 'reply'
+              ? tr('compose.replyTitle')
+              : tr('compose.quoteTitle')
+            : tr('compose.title')}
+        </Text>
         <Pressable onPress={onClose} hitSlop={8}>
           <Text style={styles.closeText}>{tr('common.close')}</Text>
         </Pressable>
@@ -191,6 +237,23 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
           <Text style={S.body}>{tr('compose.needName')}</Text>
         ) : (
           <>
+            {target ? (
+              <View style={{ marginBottom: 4 }}>
+                {target.kind === 'reply' && targetName ? (
+                  <Text style={[S.small, { marginBottom: 2 }]}>
+                    {tr('tl.replyTo', { name: '@' + targetName })}
+                  </Text>
+                ) : null}
+                <QuotedPostFrame
+                  post={target.post}
+                  lang={app.lang}
+                  onOpenProfile={(u) => {
+                    onClose();
+                    app.openProfile(u);
+                  }}
+                />
+              </View>
+            ) : null}
             {myTokens.length > 1 ? (
               <>
                 <Text style={S.small}>{tr('compose.postAs')}</Text>
@@ -324,7 +387,13 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
 
       <ConfirmSheet
         visible={confirmOpen}
-        title={tr('compose.confirmTitle')}
+        title={
+          target
+            ? target.kind === 'reply'
+              ? tr('compose.replyTitle')
+              : tr('compose.quoteTitle')
+            : tr('compose.confirmTitle')
+        }
         body={
           acting
             ? tr('compose.confirmPost', { name: '@' + acting.username })

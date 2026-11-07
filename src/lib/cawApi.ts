@@ -18,6 +18,7 @@ import {
   strip,
   word,
 } from './cawCore';
+import { parsePostText, type PostRefKind } from './postRef';
 
 export interface TimelineItem extends CawAction {
   hash: string;
@@ -466,6 +467,58 @@ function qs(params: Record<string, unknown>): string {
  */
 const postIndex = new Map<string, TimelineItem>();
 
+/* ---------- reply / quote reference index (v0.4.0) ----------
+ * Replies and quote Recaws are ordinary posts whose text ends
+ * with a parent-reference marker (see lib/postRef.ts). Every
+ * type-0 action the feed reads pass through here, so the
+ * children of a post can be found without a contract getter
+ * (none exists). Keyed by the PARENT's cawId, then the child's
+ * own cawId; plain recaws (type 2) never enter this index —
+ * they are counted by fetchPostReactions instead, which keeps
+ * quotes and recaws cleanly separate. */
+export interface RefChild extends TimelineItem {
+  refKind: PostRefKind;
+}
+
+const refIndex = new Map<string, Map<string, RefChild>>();
+
+/** Index one post's parent reference, when it carries one. */
+export function indexPostRef(item: TimelineItem): void {
+  if (item.type !== 0) return;
+  const { ref } = parsePostText(item.text);
+  if (!ref) return;
+  const parentKey = ref.parentCawId.toLowerCase();
+  let kids = refIndex.get(parentKey);
+  if (!kids) {
+    kids = new Map();
+    refIndex.set(parentKey, kids);
+  }
+  kids.set(item.cawId.toLowerCase(), { ...item, refKind: ref.kind });
+}
+
+function refChildren(cawId: string, kind: PostRefKind): RefChild[] {
+  const kids = refIndex.get((cawId || '').toLowerCase());
+  if (!kids) return [];
+  return [...kids.values()].filter((k) => k.refKind === kind);
+}
+
+/** Replies to a post that the feed reads have indexed so far. */
+export const knownRepliesOf = (cawId: string): RefChild[] =>
+  refChildren(cawId, 'reply');
+
+/** Quote Recaws of a post indexed so far (distinct from recaws). */
+export const knownQuotesOf = (cawId: string): RefChild[] =>
+  refChildren(cawId, 'quote');
+
+/** Reply count from what has been indexed so far (rows display). */
+export const knownReplyCount = (cawId: string): number =>
+  refChildren(cawId, 'reply').length;
+
+/** Drop the reference index (tests). */
+export function resetRefIndexForTest(): void {
+  refIndex.clear();
+}
+
 /** Optional hook: notified for every decoded action (used to seed the
  *  on-device "my actions" memory without a circular import). */
 let actionObserver: ((a: CawAction) => void) | null = null;
@@ -527,7 +580,10 @@ async function fetchActionPageUncached(
         txIndex: typeof it.index === 'number' ? it.index : undefined,
       };
       items.push(item);
-      if (a.type === 0) postIndex.set(a.cawId.toLowerCase(), item);
+      if (a.type === 0) {
+        postIndex.set(a.cawId.toLowerCase(), item);
+        indexPostRef(item);
+      }
       if (actionObserver) {
         try {
           actionObserver(a);
@@ -643,6 +699,70 @@ export async function fetchPostReactions(
     cursor = next;
   }
   return { likes, shares, complete };
+}
+
+/**
+ * The reply thread of one post (v0.4.0): every type-0 post whose
+ * parent-reference marker names this post, oldest first. A reply
+ * can only exist after its parent, so — exactly like
+ * fetchPostReactions — the walk starts at the newest feed item
+ * and stops once a whole page is older than the post. Children
+ * the session already indexed (including ones this walk passes
+ * again) are merged and de-duplicated by their own cawId.
+ * `complete` is false when the page cap stopped the walk first.
+ * Quote children are NOT replies and never appear here; plain
+ * recaws (type 2) neither.
+ */
+export async function fetchPostThread(
+  post: TimelineItem,
+  maxPages = 80,
+): Promise<{ replies: RefChild[]; complete: boolean }> {
+  const found = new Map<string, RefChild>();
+  const key = post.cawId.toLowerCase();
+  const consider = (it: TimelineItem) => {
+    if (it.type !== 0) return;
+    const { ref } = parsePostText(it.text);
+    if (
+      ref &&
+      ref.kind === 'reply' &&
+      ref.parentCawId.toLowerCase() === key &&
+      it.cawId.toLowerCase() !== key
+    ) {
+      found.set(it.cawId.toLowerCase(), { ...it, refKind: 'reply' });
+    }
+  };
+  let cursor: Record<string, unknown> | null = null;
+  let complete = false;
+  for (let page = 0; page < maxPages; page++) {
+    const { items, next } = await fetchActionPage(cursor);
+    if (items.length === 0) {
+      complete = true;
+      break;
+    }
+    for (const it of items) consider(it);
+    const lastBlock = items[items.length - 1].block ?? 0;
+    if ((post.block ?? 0) > 0 && lastBlock < (post.block ?? 0)) {
+      complete = true;
+      break;
+    }
+    if (!next) {
+      complete = true;
+      break;
+    }
+    cursor = next;
+  }
+  for (const kid of knownRepliesOf(post.cawId)) {
+    if (!found.has(kid.cawId.toLowerCase())) {
+      found.set(kid.cawId.toLowerCase(), kid);
+    }
+  }
+  const replies = [...found.values()].sort(
+    (a, b) =>
+      (a.block ?? 0) - (b.block ?? 0) ||
+      (a.txIndex ?? 0) - (b.txIndex ?? 0) ||
+      a.ts - b.ts,
+  );
+  return { replies, complete };
 }
 
 /**

@@ -194,5 +194,68 @@ check('(e) a fresh Following walk from the head finds the followed name’s post
   found.some((i) => i.hash === txMine.hash) && found.some((i) => i.hash === txNew.hash),
   'found ' + found.length);
 
+/* ---------- (f) v0.4.0: likes never render as feed rows ----------
+ * Presentation rule only: the RAW page still carries the like
+ * (counts / liked-by / inbox read it elsewhere), but
+ * visibleFeedItems — applied by both the Latest feed and the
+ * Following feed — yields no type-1 row, while posts and recaws
+ * still render. The Following collector itself also only picks
+ * type 0/2, so a followed name's like cannot enter there either. */
+function mkActionTx(hash, action, block, index) {
+  return {
+    hash,
+    raw_input: core.encodeBatch([action], [SIG]),
+    status: 'ok',
+    timestamp: new Date(1700000000000 + block * 1000).toISOString(),
+    block_number: block,
+    index,
+  };
+}
+const L_HASH = '0x' + '1'.repeat(64);
+const P_HASH = '0x' + '2'.repeat(64);
+const R_HASH = '0x' + '3'.repeat(64);
+const likeAction = { type: 1, senderId: 42n, receiverId: 7n, ts: 1700000000, sender: ME, cawId: '0x' + P_HASH.slice(2, 10).padEnd(64, '0'), text: 'LIKE' };
+const recawAction = { type: 2, senderId: 42n, receiverId: 7n, ts: 1700000000, sender: ME, cawId: '0x' + P_HASH.slice(2, 10).padEnd(64, '0'), text: 'REPOST' };
+const likeTxs = [
+  mkActionTx(L_HASH, likeAction, 913, 0),
+  mkTx(P_HASH, 42n, 'a plain post', 912, 0),
+  mkActionTx(R_HASH, recawAction, 911, 0),
+];
+globalThis.fetch = async (url) => {
+  const u = new URL(String(url));
+  if (!u.pathname.endsWith('/transactions')) throw new Error('unexpected fetch: ' + url);
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ items: likeTxs, next_page_params: null }),
+  };
+};
+const likePage = await api.fetchTimelinePage(null);
+check('(f) the raw feed page still carries the like (data untouched)',
+  likePage.items.some((i) => i.type === 1 && i.hash === L_HASH) &&
+    likePage.items.length === 3);
+const visible = sync.visibleFeedItems(likePage.items);
+check('(f) Latest feed: the like produces NO row; post and recaw still do',
+  visible.length === 2 &&
+    !visible.some((i) => i.type === 1) &&
+    visible.some((i) => i.hash === P_HASH) &&
+    visible.some((i) => i.hash === R_HASH),
+  'rows=' + visible.map((i) => 'type' + i.type).join(','));
+/* Following: the collector keeps only type 0/2 from followed
+ * senders; running its output through the same visibility rule
+ * must also hold no like row. */
+const followedOnly = likePage.items.filter(
+  (i) => (i.type === 0 || i.type === 2) && i.senderId === 42n,
+);
+const fVisible = sync.visibleFeedItems(followedOnly);
+check('(f) Following feed: no like row either (collector + visibility rule)',
+  !fVisible.some((i) => i.type === 1) &&
+    fVisible.some((i) => i.hash === R_HASH));
+check("(f) the user's OWN like is filtered by the same rule (sender = me)",
+  sync.visibleFeedItems([
+    { type: 1, sender: ME, hash: '0xown' },
+    { type: 0, sender: ME, hash: '0xother' },
+  ]).length === 1);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -898,7 +898,18 @@ function BuySection({ onClose }: { onClose: () => void }) {
 
         {phase === 'entry' ? (
           <>
-            <Text style={S.body}>{tr('hs.intro')}</Text>
+            <View
+              style={{
+                backgroundColor: '#f2f8ff',
+                borderWidth: 1,
+                borderColor: '#d9e9f9',
+                borderRadius: 14,
+                padding: 12,
+                marginBottom: 14,
+              }}
+            >
+              <Text style={S.body}>{tr('hs.intro')}</Text>
+            </View>
             <DepositAddressRow address={address} />
             <Text style={[S.h2, { marginTop: 18 }]}>{tr('hs.yourCoins')}</Text>
             <CoinCard>
@@ -1800,7 +1811,18 @@ function SellSection({ onClose }: { onClose: () => void }) {
 
         {phase === 'entry' ? (
           <>
-            <Text style={S.body}>{tr('hs.sellIntro')}</Text>
+            <View
+              style={{
+                backgroundColor: '#f2f8ff',
+                borderWidth: 1,
+                borderColor: '#d9e9f9',
+                borderRadius: 14,
+                padding: 12,
+                marginBottom: 14,
+              }}
+            >
+              <Text style={S.body}>{tr('hs.sellIntro')}</Text>
+            </View>
             <DepositAddressRow address={address} />
             <Text style={[S.h2, { marginTop: 16 }]}>{tr('hs.toChain')}</Text>
             {(['bsc', 'ethereum'] as EntryKey[]).map((k) => (
@@ -2118,15 +2140,94 @@ export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) 
   const [sendOpen, setSendOpen] = useState(false);
   return (
     <View style={[S.screen, { paddingTop: insets.top }]}>
-      <View style={[S.row, { paddingHorizontal: 16, paddingVertical: 10, justifyContent: 'space-between' }]}>
-        <Text style={S.h1}>{tr('hs.title')}</Text>
-        <View style={[S.row, { gap: 8 }]}>
-          <Pressable onPress={() => setSendOpen(true)} style={S.ghostBtn}>
-            <Text style={S.ghostBtnText}>{tr('send.title')}</Text>
-          </Pressable>
-          <Pressable onPress={onClose} style={S.ghostBtn}>
-            <Text style={S.ghostBtnText}>{tr('common.close')}</Text>
-          </Pressable>
+      {/* Brand header (v0.4.0): the feature's name is HuntersDEX
+       * (a proper noun, never translated); the localized
+       * "Buy / sell CAW" line stays as its caption. Display-only
+       * rename — internal ids and storage keys still say
+       * HuntersSwap, like the qCAW→CAW rename before it. */}
+      <View
+        style={{
+          paddingHorizontal: 16,
+          paddingTop: 12,
+          paddingBottom: 12,
+          borderBottomWidth: 1,
+          borderBottomColor: HAIRLINE,
+        }}
+      >
+        <View style={[S.row, { justifyContent: 'space-between', alignItems: 'flex-start' }]}>
+          <View style={{ flex: 1, paddingRight: 8 }}>
+            <Text style={{ fontSize: 25, fontWeight: '800', color: '#0f1419', letterSpacing: 0.2 }}>
+              Hunters<Text style={{ color: ACCENT }}>DEX</Text>
+            </Text>
+            <Text style={[S.small, { marginTop: 1 }]}>{tr('hs.title')}</Text>
+          </View>
+          <View style={[S.row, { gap: 8, paddingTop: 2 }]}>
+            <Pressable
+              onPress={() => setSendOpen(true)}
+              style={{
+                backgroundColor: ACCENT,
+                borderRadius: 999,
+                paddingHorizontal: 14,
+                paddingVertical: 8,
+              }}
+            >
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{tr('send.title')}</Text>
+            </Pressable>
+            <Pressable
+              onPress={onClose}
+              style={{
+                backgroundColor: '#eff3f4',
+                borderRadius: 999,
+                paddingHorizontal: 14,
+                paddingVertical: 8,
+              }}
+            >
+              <Text style={{ color: '#0f1419', fontSize: 14, fontWeight: '600' }}>{tr('common.close')}</Text>
+            </Pressable>
+          </View>
+        </View>
+        {/* Buy / sell as a segmented control (same language as the
+         * timeline's Latest / Following switch). */}
+        <View
+          style={{
+            flexDirection: 'row',
+            backgroundColor: '#eff3f4',
+            borderRadius: 12,
+            padding: 3,
+            marginTop: 12,
+          }}
+        >
+          {(['buy', 'sell'] as const).map((d) => {
+            const on = direction === d;
+            return (
+              <Pressable
+                key={d}
+                onPress={() => setDirection(d)}
+                style={{
+                  flex: 1,
+                  alignItems: 'center',
+                  paddingVertical: 8,
+                  borderRadius: 9,
+                  backgroundColor: on ? '#fff' : 'transparent',
+                  shadowColor: '#000',
+                  shadowOpacity: on ? 0.08 : 0,
+                  shadowRadius: 3,
+                  shadowOffset: { width: 0, height: 1 },
+                  elevation: on ? 1 : 0,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 15,
+                    fontWeight: on ? '700' : '500',
+                    color: on ? '#0f1419' : '#536471',
+                  }}
+                >
+                  {tr(d === 'buy' ? 'hs.buy' : 'hs.sell')}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
       </View>
       <Modal
@@ -2136,20 +2237,6 @@ export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) 
       >
         <SendScreen onClose={() => setSendOpen(false)} />
       </Modal>
-      <View style={[S.row, { gap: 10, paddingHorizontal: 16, marginBottom: 6 }]}>
-        <Pressable
-          style={[direction === 'buy' ? S.darkBtn : S.ghostBtn, { flex: 1 }]}
-          onPress={() => setDirection('buy')}
-        >
-          <Text style={direction === 'buy' ? S.darkBtnText : S.ghostBtnText}>{tr('hs.buy')}</Text>
-        </Pressable>
-        <Pressable
-          style={[direction === 'sell' ? S.darkBtn : S.ghostBtn, { flex: 1 }]}
-          onPress={() => setDirection('sell')}
-        >
-          <Text style={direction === 'sell' ? S.darkBtnText : S.ghostBtnText}>{tr('hs.sell')}</Text>
-        </Pressable>
-      </View>
       {direction === 'buy' ? (
         <BuySection onClose={onClose} />
       ) : (
