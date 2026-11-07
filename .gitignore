@@ -47,6 +47,7 @@ dist-web/
 # verification build output
 scripts/.build/
 scripts/.build-fixes/
+scripts/.build-identity/
 
 # local env / keys
 .env

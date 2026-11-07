@@ -81,7 +81,14 @@ export interface NameToken {
   username: string;
 }
 
-/** Decode the return of CawName.tokens(owner): (uint256, uint256, string)[] */
+/**
+ * Decode the return of CawName.tokens(owner): (uint256, uint256, string)[]
+ *
+ * WARNING: on QL1 the username in each row is the name of the token
+ * one id lower — the rows are display-poisoned and must NEVER feed
+ * identity resolution. Kept only so tests can demonstrate the shift;
+ * the app builds "my names" from tokenOfOwnerByIndex + ownerOf.
+ */
 export function decTokensRet(hexIn: string): NameToken[] {
   const hex = strip(hexIn);
   const arrOff = Number(uAt(hex, 0));

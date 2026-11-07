@@ -12,7 +12,6 @@ import {
   decodeActions,
   decAddrRet,
   decStringRet,
-  decTokensRet,
   decUintRet,
   encAddr,
   encStr,
@@ -72,38 +71,92 @@ export async function withRetry<T>(
 
 /* ---------- names ---------- */
 /**
- * IMPORTANT — the QL1 CawName.tokens(owner) rows pair each token id
- * with the WRONG username: the name of the token one id lower (proven
- * from the raw return data: the owner of id 189 gets username
- * "dreamin", which belongs to id 188; usernames(189) is "neptune").
- * Only the ids and balances in those rows can be trusted, so every
- * username is re-read from the usernames(id) mapping — the same source
- * resolveNameId verifies against. A failed read leaves the username
- * empty (the UI shows "#id") rather than somebody else's name.
+ * IMPORTANT — identity ("which names are MINE") is built ONLY from
+ * the ERC-721 enumeration, cross-checked against ownerOf:
+ *
+ *   balanceOf(owner) → tokenOfOwnerByIndex(owner, i) → ownerOf(id)
+ *
+ * and each name is read from the usernames(id) mapping, each balance
+ * from cawBalanceOf(id). CawName.tokens(owner) is NEVER used for
+ * identity: its rows pair every token id with the WRONG username —
+ * the name of the token one id lower (proven from the raw return
+ * data: the row for id 189 carries "dreamin", which belongs to id
+ * 188; usernames(189) is "neptune", and the row for id 190 carries
+ * "neptune" while usernames(190) is "loveforqom"). In v0.1.0 those
+ * shifted labels were shown in the name picker, so a name could be
+ * picked believing it was a different one. An id is included ONLY
+ * when ownerOf(id) really returns this wallet — somebody else's
+ * name can never appear in the list, whatever any helper view
+ * returns. A failed username read leaves the username empty (the UI
+ * shows "#id") rather than somebody else's name.
  */
+async function enumerateOwnedTokens(owner: string): Promise<NameToken[]> {
+  const count = Number(
+    await withRetry(() =>
+      readUint(CAW_NAME, SEL.balanceOf + encAddr(owner)),
+    ),
+  );
+  const out: NameToken[] = [];
+  const seen = new Set<string>();
+  const limit = Math.min(count, 1000);
+  for (let i = 0; i < limit; i++) {
+    let id: bigint;
+    try {
+      id = await withRetry(
+        () =>
+          readUint(
+            CAW_NAME,
+            SEL.tokenOfOwnerByIndex + encAddr(owner) + word(i),
+          ),
+        2,
+        400,
+      );
+    } catch {
+      continue; // a hole in the list must not kill the whole list
+    }
+    const k = id.toString();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    let realOwner: string;
+    try {
+      realOwner = await withRetry(
+        () => readAddr(CAW_NAME, SEL.ownerOf + word(id)),
+        2,
+        400,
+      );
+    } catch {
+      continue; // cannot prove ownership — leave it out
+    }
+    if (realOwner.toLowerCase() !== owner.toLowerCase()) continue;
+    let username = '';
+    try {
+      username =
+        (await withRetry(
+          () => readStr(CAW_NAME, SEL.usernames + word(id)),
+          2,
+          400,
+        )) || '';
+    } catch {
+      username = '';
+    }
+    let balance = 0n;
+    try {
+      balance = await readUint(CAW_NAME, SEL.cawBalanceOf + word(id));
+    } catch {
+      balance = 0n; // a balance hiccup must not drop the name itself
+    }
+    out.push({ id, balance, username });
+  }
+  return out;
+}
+
 const ownerTokensCache = new Map<string, Promise<NameToken[]>>();
 export function tokensOf(owner: string): Promise<NameToken[]> {
   const key = owner.toLowerCase();
   if (!ownerTokensCache.has(key)) {
     const p = (async (): Promise<NameToken[]> => {
       try {
-        const h = await ethCall(CAW_NAME, SEL.tokens + encAddr(owner));
-        const toks = decTokensRet(h);
-        await Promise.all(
-          toks.map(async (t) => {
-            try {
-              const un = await withRetry(
-                () => readStr(CAW_NAME, SEL.usernames + word(t.id)),
-                2,
-                400,
-              );
-              t.username = un || '';
-            } catch {
-              t.username = '';
-            }
-          }),
-        );
-        return toks;
+        return await enumerateOwnedTokens(owner);
       } catch {
         // Do not let one transient RPC failure poison the whole
         // session: drop the cache entry so the next call retries.

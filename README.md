@@ -14,9 +14,23 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.1.1** — released 2026-11-07.
+- **現在版 / Current: v0.1.2** — released 2026-11-07.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.1.1/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.1.2/caw-social.apk
+  v0.1.2 fixes the identity mix-up reported the same evening ("the
+  app shows me as @loveforqom, but I am @neptune"): "my names" is no
+  longer read from `CawName.tokens()` at all — not even its ids. It
+  is rebuilt from the ERC-721 enumeration (`balanceOf` +
+  `tokenOfOwnerByIndex`), every id is cross-checked with
+  `ownerOf(id)`, names come from `usernames(id)` and balances from
+  `cawBalanceOf(id)`, so a name this wallet does not own can never
+  appear as yours. (The `tokens()` rows pair each id with the
+  *previous* token's username — the id-190 row literally carries the
+  string "neptune" — which is how a name could be picked in v0.1.0
+  believing it was a different one. On-chain signature recovery also
+  showed the loveforqom actions of that day were signed by the
+  loveforqom owner's key, never by the neptune owner's key.)
+  Verified with `node scripts/verify-identity.mjs` (17/17, live).
   v0.1.0 was confirmed on a real phone the same day (name mint, post,
   like and share all work). v0.1.1 fixes the three problems reported
   from that check and adds on-device profile customization:
@@ -59,7 +73,7 @@ longer works. This app keeps the key on your phone (Android
 Keystore-backed secure storage) and signs in-app, exactly like the
 original signers did.
 
-## Features (v0.1.1)
+## Features (v0.1.2)
 
 - Wallet: create new (secret words) or import (secret words / private
   key). QL1 only. Unlock by password or biometrics — asked when the

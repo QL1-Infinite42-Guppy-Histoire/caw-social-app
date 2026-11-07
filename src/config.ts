@@ -17,7 +17,7 @@ export const ACTION_SELECTOR = '0x84e33f2f';
 export const SEL = {
   usernames: '0x136dd963',
   ownerOf: '0x6352211e',
-  tokens: '0xe4860339',
+  tokenOfOwnerByIndex: '0x2f745c59',
   tokenURI: '0xc87b56dd',
   cawBalanceOf: '0x532f3a34',
   totalSupply: '0x18160ddd',
