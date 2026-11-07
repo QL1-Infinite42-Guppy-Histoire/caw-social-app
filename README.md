@@ -14,10 +14,32 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.3.5** — released 2026-11-08.
+- **現在版 / Current: v0.3.6** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.5/caw-social.apk
-  v0.3.5 makes every balance SENDABLE: a plain 送る (Send) flow
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.6/caw-social.apk
+  v0.3.6 is a HOTFIX on top of everything in v0.3.4 (the v0.3.5
+  build was superseded before release and folded in here): it
+  fixes the critical bug that made EVERY HuntersSwap buy/sell
+  execution fail before broadcast — engine route objects did not
+  carry `amountIn`, so the swap-tx builder threw before any
+  transaction reached the chain. Routes now carry `amountIn`
+  from the quote that produced them, `freshRoute` normalizes it,
+  `buildAggSwap` attaches its explicit amount, and the engine
+  builder falls back to `amounts[0]` or throws a clear
+  `bad-route` error. Also fixed: the sell progress header showed
+  the raw `{a}`/`{b}` template (now passes the real counters).
+  Covered by production-path harness tests (live quote ->
+  freshRoute -> buildRouteSwapTx -> eth_call simulation from a
+  real funded address) in scripts/verify-huntersswap.mjs.
+  Also in v0.3.6: the bottom tab bar gets a visible frame
+  (deeper top border + subtle upward shadow on solid white;
+  flush layout kept so the safe-area and compose-FAB offsets
+  stay exact) and the four tab labels get single-line
+  shrink-to-fit in slightly wider slots (center slot narrowed),
+  so labels like 自分の名前 are never squeezed under the
+  raised center button.
+  Everything from the folded-in v0.3.5 follows:
+  the release makes every balance SENDABLE: a plain 送る (Send) flow
   (from the Home wallet card and from the HuntersSwap header) for
   all eight assets — BSC BNB/USDT, Ethereum ETH/USDT, 42 Chain
   [42]/USDT, QL1 QOM/CAW — pick the asset, type or paste the

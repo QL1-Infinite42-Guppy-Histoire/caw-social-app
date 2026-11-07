@@ -1806,7 +1806,22 @@ function SellSection({ onClose }: { onClose: () => void }) {
         {phase === 'run' && flow ? (
           <>
             <Text style={S.h2}>
-              {tr('hs.stepOf')} — {flow.direction === 'sell' ? tr('hs.sell') : ''}
+              {tr('hs.stepOf', {
+                a: String(
+                  Math.min(
+                    flow.parts.reduce((s, p) => s + Math.min(p.step, 4), 0) +
+                      (step?.kind === 'waitTarget' || step?.kind === 'finalSwap'
+                        ? 1
+                        : step?.kind === 'done'
+                          ? 2
+                          : 0) +
+                      1,
+                    flow.parts.length * 4 + 2,
+                  ),
+                ),
+                b: String(flow.parts.length * 4 + 2),
+              })}{' '}
+              — {flow.direction === 'sell' ? tr('hs.sell') : ''}
             </Text>
             {flow.parts.map((p, i) => (
               <Text key={i} style={[S.small, { marginTop: 6 }]}>

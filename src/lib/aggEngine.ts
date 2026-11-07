@@ -564,7 +564,7 @@ async function fetchQuotesForTokens(chainObj, fromTok, toTok, amountIn) {
     if (!amounts || !amounts.length) return;
     const out = amounts[amounts.length - 1];
     if (out <= 0n) return;
-    routes.push({ path: paths[i], amounts, amountOut: out, hops: paths[i].length - 1, priceImpactPct: null });
+    routes.push({ path: paths[i], amounts, amountOut: out, amountIn, hops: paths[i].length - 1, priceImpactPct: null });
   });
   if (!routes.length) throw new Error(t("errNoRoute"));
   routes.sort((a, b) => (b.amountOut > a.amountOut ? 1 : b.amountOut < a.amountOut ? -1 : 0));
@@ -594,7 +594,17 @@ function applySlippageBps(amount, slippagePct) {
 }
 function deadline20Min(nowSec) { return (nowSec || Math.floor(Date.now() / 1000)) + 20 * 60; }
 function buildSwapTx(chainObj, fromTok, toTok, route, account, slippagePct, nowSec) {
-  const amountIn = route.amountIn;
+  // Defense in depth (v0.3.6 hotfix): engine routes carry amountIn
+  // since the quote that produced them, but a route object that
+  // arrived by another path may only carry amounts[] — fall back
+  // to amounts[0] (= the quoted input). If neither exists, fail
+  // HERE with a clear error instead of a TypeError deep in encUint
+  // (that exact failure silently killed every HuntersSwap swap
+  // execution up to v0.3.5).
+  const amountIn = route.amountIn ?? (route.amounts && route.amounts.length ? route.amounts[0] : undefined);
+  if (amountIn === undefined || amountIn === null || !route.path || route.amountOut === undefined || route.amountOut === null) {
+    throw new Error("bad-route");
+  }
   const amountOutMin = applySlippageBps(route.amountOut, slippagePct);
   const deadline = deadline20Min(nowSec);
   const path = route.path;
@@ -700,7 +710,7 @@ async function fetchBestRoute(chainObj, fromTok, toTok, amountIn) {
     if (!amounts || !amounts.length) return;
     const out = amounts[amounts.length - 1];
     if (out <= 0n) return;
-    if (!best || out > best.amountOut) best = { path: paths[i], amounts, amountOut: out, hops: paths[i].length - 1, priceImpactPct: null };
+    if (!best || out > best.amountOut) best = { path: paths[i], amounts, amountOut: out, amountIn, hops: paths[i].length - 1, priceImpactPct: null };
   });
   if (!best) return null;
   try {
@@ -725,7 +735,7 @@ async function fetchRoutesOnly(chainObj, fromTok, toTok, amountIn) {
     if (!amounts || !amounts.length) return;
     const out = amounts[amounts.length - 1];
     if (out <= 0n) return;
-    routes.push({ path: paths[i], amounts, amountOut: out, hops: paths[i].length - 1, priceImpactPct: null });
+    routes.push({ path: paths[i], amounts, amountOut: out, amountIn, hops: paths[i].length - 1, priceImpactPct: null });
   });
   routes.sort((a, b) => (b.amountOut > a.amountOut ? 1 : b.amountOut < a.amountOut ? -1 : 0));
   return routes;

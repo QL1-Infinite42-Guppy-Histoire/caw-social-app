@@ -148,6 +148,9 @@ function Main() {
             onPress={() => setTab(t.key)}
           >
             <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
               style={[
                 styles.navLabel,
                 tab === t.key && styles.navLabelOn,
@@ -162,7 +165,7 @@ function Main() {
             underneath does not change. The circle rises ABOVE the
             bar (negative margin), so it never collides with the
             Android system navigation below the bar. */}
-        <View style={styles.navItem}>
+        <View style={styles.navItemCenter}>
           <Pressable
             accessibilityLabel={tr('hs.trade')}
             accessibilityRole="button"
@@ -179,6 +182,9 @@ function Main() {
             onPress={() => setTab(t.key)}
           >
             <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
               style={[
                 styles.navLabel,
                 tab === t.key && styles.navLabelOn,
@@ -279,12 +285,36 @@ const styles = StyleSheet.create({
   langCycleText: { fontSize: 13.5, color: '#536471', fontWeight: '600' },
   bottomNav: {
     flexDirection: 'row',
+    // v0.3.6: a visible frame for the bar — the old #eff3f4
+    // hairline was effectively invisible, so timeline content
+    // visually ran into the labels. Solid white + a deeper top
+    // border + a subtle UPWARD shadow read as a distinct bar.
+    // (A floating rounded pill was rejected: it would fight the
+    // safe-area handling and the compose FAB's bottom offset,
+    // which is computed from TAB_BAR_HEIGHT.)
     borderTopWidth: 1,
-    borderTopColor: '#eff3f4',
+    borderTopColor: '#e5e7eb',
     backgroundColor: '#fff',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: -2 },
+    zIndex: 10,
   },
-  navItem: { flex: 1, alignItems: 'center', paddingVertical: 12 },
-  navLabel: { fontSize: 12.5, color: '#536471', fontWeight: '600' },
+  navItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
+  // The center slot is narrower than the label slots so the four
+  // labels get the room; the 56px circle still fits inside it on
+  // standard-width phones and never overlaps a label.
+  navItemCenter: { flex: 0.8, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
+  navLabel: {
+    fontSize: 12,
+    color: '#536471',
+    fontWeight: '600',
+    textAlign: 'center',
+    width: '100%',
+    paddingHorizontal: 2,
+  },
   navLabelOn: { color: ACCENT, fontWeight: '800' },
   tradeBtn: {
     // Absolutely positioned inside its (normal-height) tab slot, so

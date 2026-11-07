@@ -320,5 +320,92 @@ for (const usd of [100, 500]) {
     !mineSrc.includes("tr('hs.buy')") && mineSrc.includes('CAW:') && !mineSrc.includes('qCAW'));
 }
 
+/* ---------- v0.3.6 HOTFIX: production-path swap builds -------- */
+{
+  // Regression guard for the bug that killed EVERY HuntersSwap swap
+  // execution up to v0.3.5: engine route objects did not carry
+  // amountIn, so buildSwapTx threw TypeError inside encUint before
+  // broadcast. These tests build txs through the EXACT call chain
+  // the screens use (quote -> freshRoute -> buildRouteSwapTx) —
+  // no hand-made route fixtures.
+  const AGG = require(BUILD + '/lib/aggEngine.js');
+  const PUB = '0x90359C6913915B9824b9ce8Abf4b85B30A5cF8cC'; // read-only eth_call source
+  const qcaw = AGG.tokenById('ql1', 'qcaw');
+  const SELL_AMT = 532110641315686598335238476n; // the exact on-device failure case
+
+  // (a) SELL leg 1: CAW -> bridge token on QL1.
+  const qs = await H.quoteBackHalfReverse(SELL_AMT);
+  const bs = qs.bestSingle;
+  check('(f) sell quote returns a best single with leg1Path', !!bs && !!bs.leg1Path, bs ? `via ${bs.pair.sym}` : 'none');
+  const pairS = AGG.BRIDGE_PAIRS.find((p) => p.sym === bs.pair.sym);
+  const dstS = AGG.tokenById('ql1', pairS.ql1Id);
+  const rSell = await H.freshRoute('ql1', qcaw.address, dstS.address, SELL_AMT, bs.leg1Path);
+  check('(f) freshRoute attaches amountIn (= requested amount)', !!rSell && rSell.amountIn === SELL_AMT);
+  const txSell = H.buildRouteSwapTx('ql1', rSell, PUB, 1);
+  check(
+    '(f) sell leg1 builds swapExactTokensForTokens calldata',
+    txSell.data.startsWith('0x38ed1739') && txSell.to.toLowerCase() === AGG.CHAINS.ql1.router.toLowerCase(),
+    `to=${txSell.to}`,
+  );
+
+  // (c) eth_call the built QL1 swap from the user's address.
+  const callRes = await fetch(AGG.CHAINS.ql1.rpcs[0], {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'eth_call',
+      params: [{ from: PUB, to: txSell.to, data: txSell.data, value: '0x0' }, 'latest'],
+    }),
+  }).then((r) => r.json());
+  check('(f) eth_call of the built QL1 swap succeeds', !callRes.error && typeof callRes.result === 'string',
+    callRes.error ? JSON.stringify(callRes.error).slice(0, 120) : 'ok');
+
+  // (b) BUY legs: USDT -> pair token on 42, then pair token -> CAW on QL1.
+  const USDT_IN = parseUnits('100', 18);
+  const qb = await H.quoteBackHalf(USDT_IN);
+  const bb = qb.bestSingle;
+  const pairB = AGG.BRIDGE_PAIRS.find((p) => p.sym === bb.pair.sym);
+  const usdt42 = AGG.tokenById('infinite', 'usdt');
+  const t42 = AGG.tokenById('infinite', pairB.infId);
+  const rBuy1 = bb.leg1Path
+    ? await H.freshRoute('infinite', usdt42.address, t42.address, USDT_IN, bb.leg1Path)
+    : null;
+  const txBuy1 = rBuy1 ? H.buildRouteSwapTx('infinite', rBuy1, PUB, 1) : null;
+  check('(f) buy 42-leg builds swap calldata (or pair token needs no swap)',
+    !bb.leg1Path || (!!txBuy1 && txBuy1.data.startsWith('0x38ed1739')), `via ${bb.pair.sym}`);
+  const dstB = AGG.tokenById('ql1', pairB.ql1Id);
+  const amt2 = rBuy1 ? rBuy1.amountOut : USDT_IN;
+  const rBuy2 = await H.freshRoute('ql1', dstB.address, qcaw.address, amt2, bb.leg2Path);
+  const txBuy2 = rBuy2 ? H.buildRouteSwapTx('ql1', rBuy2, PUB, 1) : null;
+  // The final leg starts from the bridged token: when that is
+  // native QOM the correct builder output is swapExactETHForTokens
+  // (value = amount in); otherwise swapExactTokensForTokens.
+  check('(f) buy QL1 final leg builds swap calldata',
+    !!txBuy2 &&
+      (txBuy2.data.startsWith('0x38ed1739') ||
+        (txBuy2.data.startsWith('0x7ff36ab5') && txBuy2.value === amt2)),
+    rBuy2 ? `hops=${rBuy2.hops}` : 'no route');
+
+  // (d) engine fallback + clear failure (direct builder calls).
+  const wqom = AGG.tokenById('ql1', 'wqom');
+  const x = parseUnits('1000', 18);
+  const y = parseUnits('2000', 18);
+  const txFb = H.buildRouteSwapTx(
+    'ql1',
+    { path: [wqom.address, qcaw.address], amounts: [x, y], amountOut: y, hops: 1, priceImpactPct: null },
+    PUB, 1,
+  );
+  // (WQOM's address resolves to the native token entry, so the
+  // ETH-for-tokens branch with value = amounts[0] is also correct.)
+  check('(f) route without amountIn but with amounts[] still builds (fallback)',
+    txFb.data.startsWith('0x38ed1739') ||
+      (txFb.data.startsWith('0x7ff36ab5') && txFb.value === x));
+  let threw = '';
+  try {
+    H.buildRouteSwapTx('ql1', { path: [wqom.address, qcaw.address] }, PUB, 1);
+  } catch (e) { threw = String(e && e.message); }
+  check('(f) route with neither amountIn nor amounts throws bad-route', threw === 'bad-route', threw || 'no throw');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

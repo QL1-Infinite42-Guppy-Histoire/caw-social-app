@@ -657,9 +657,11 @@ export function buildAggSwap(
   const fromTok = tokenByAddressSafe(chainKey, route.path[0]);
   const toTok = tokenByAddressSafe(chainKey, route.path[route.path.length - 1]);
   if (!fromTok || !toTok) return null;
-  void amountIn;
+  // The candidate's stored route may predate routes carrying
+  // amountIn (v0.3.6 hotfix): attach the caller's explicit amount.
+  const routeIn = { ...route, amountIn };
   return normTx(
-    aggBuildSwapTx(chainObj, fromTok, toTok, route, account, slippagePct, Math.floor(Date.now() / 1000)),
+    aggBuildSwapTx(chainObj, fromTok, toTok, routeIn, account, slippagePct, Math.floor(Date.now() / 1000)),
   );
 }
 
@@ -724,14 +726,19 @@ export async function freshRoute(
   if (!fromTok || !toTok) return null;
   const q = await fetchQuotesForTokens(chainObj, fromTok, toTok, amount);
   if (!q.routes || !q.routes.length) return null;
+  // Normalize at the source (v0.3.6 hotfix): execution builders
+  // read route.amountIn, so guarantee it here — the requested
+  // amount, which equals route.amounts[0] by construction.
+  const withAmountIn = (r: any) =>
+    r ? { ...r, amountIn: r.amounts?.[0] ?? amount } : r;
   if (wantPath) {
     const wp = wantPath.map((a) => a.toLowerCase()).join(',');
     const match = q.routes.find(
       (r: any) => r.path.map((a: string) => a.toLowerCase()).join(',') === wp,
     );
-    if (match) return match;
+    if (match) return withAmountIn(match);
   }
-  return q.routes[0];
+  return withAmountIn(q.routes[0]);
 }
 
 /** Build a swap tx from a fresh engine route (route amounts rule). */
