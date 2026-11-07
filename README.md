@@ -14,7 +14,10 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.1.0** — first release.
+- **現在版 / Current: v0.1.0** — code complete; the build pipeline is
+  in place and verified up to the EAS step. The first APK appears here
+  as soon as the repo's `EXPO_TOKEN` secret is set (same token as the
+  other Guppy's Guide apps) and the Expo project is linked.
 - Android package: `one.guppyguide.cawsocial`
 - APK: from the GitHub Releases page (asset `caw-social.apk`), or the
   `caw-social-apk` artifact of the latest Actions run.
