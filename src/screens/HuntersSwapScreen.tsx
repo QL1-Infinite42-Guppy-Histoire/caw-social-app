@@ -27,7 +27,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatUnits, parseUnits } from 'ethers';
 import * as Clipboard from 'expo-clipboard';
 
-import { ConfirmSheet, S } from '../components/ui';
+import { ConfirmSheet, MONO, S } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
@@ -90,6 +90,7 @@ import {
 } from '../lib/hunters';
 import { huntersFlowStore, huntersSellFlowStore, storeKV } from '../lib/stores';
 import { sendTxReq, signerForHsChain } from '../lib/wallet';
+import SendScreen from './SendScreen';
 
 type Phase = 'entry' | 'amount' | 'confirm' | 'run' | 'done';
 
@@ -152,7 +153,7 @@ function DepositAddressRow({ address }: { address: string }) {
       <Text style={[S.small, { marginTop: 2 }]}>{tr('hs.depositSame')}</Text>
       <Text
         selectable
-        style={{ fontFamily: 'monospace', fontSize: 13, color: '#0f1419', marginTop: 8 }}
+        style={{ fontFamily: MONO, fontSize: 13, color: '#0f1419', marginTop: 8 }}
       >
         {address}
       </Text>
@@ -1887,14 +1888,27 @@ function SellSection({ onClose }: { onClose: () => void }) {
 export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
   const [direction, setDirection] = useState<'buy' | 'sell'>('buy');
+  const [sendOpen, setSendOpen] = useState(false);
   return (
     <View style={[S.screen, { paddingTop: insets.top }]}>
       <View style={[S.row, { paddingHorizontal: 16, paddingVertical: 10, justifyContent: 'space-between' }]}>
         <Text style={S.h1}>{tr('hs.title')}</Text>
-        <Pressable onPress={onClose} style={S.ghostBtn}>
-          <Text style={S.ghostBtnText}>{tr('common.close')}</Text>
-        </Pressable>
+        <View style={[S.row, { gap: 8 }]}>
+          <Pressable onPress={() => setSendOpen(true)} style={S.ghostBtn}>
+            <Text style={S.ghostBtnText}>{tr('send.title')}</Text>
+          </Pressable>
+          <Pressable onPress={onClose} style={S.ghostBtn}>
+            <Text style={S.ghostBtnText}>{tr('common.close')}</Text>
+          </Pressable>
+        </View>
       </View>
+      <Modal
+        visible={sendOpen}
+        animationType="slide"
+        onRequestClose={() => setSendOpen(false)}
+      >
+        <SendScreen onClose={() => setSendOpen(false)} />
+      </Modal>
       <View style={[S.row, { gap: 10, paddingHorizontal: 16, marginBottom: 6 }]}>
         <Pressable
           style={[direction === 'buy' ? S.darkBtn : S.ghostBtn, { flex: 1 }]}

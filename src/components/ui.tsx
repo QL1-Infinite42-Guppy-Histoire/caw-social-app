@@ -4,6 +4,7 @@ import {
   Image,
   Linking,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -28,6 +29,18 @@ import type { TimelineItem } from '../lib/cawApi';
 import type { ProfileCustom } from '../lib/profileCustom';
 
 export const HAIRLINE = '#eff3f4';
+
+/**
+ * Monospace font for addresses / hashes (iOS readiness, v0.3.5):
+ * 'monospace' is an Android generic family — iOS has no such
+ * family and would silently fall back to the default font. Menlo
+ * is iOS's bundled monospace; Android keeps its generic.
+ */
+export const MONO: string = Platform.select({
+  ios: 'Menlo',
+  android: 'monospace',
+  default: 'monospace',
+}) as string;
 
 /**
  * The app logo (v0.3.4): the user's emblem artwork, the same image

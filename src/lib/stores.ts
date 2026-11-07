@@ -5,6 +5,7 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { AddressBookStore } from './addressBook';
 import { HuntersFlowStore } from './flows';
 import { MyActionStore, type KVStorage } from './myActions';
 import { ProfileCustomStore } from './profileCustom';
@@ -20,3 +21,4 @@ export const huntersFlowStore = new HuntersFlowStore();
 export const huntersSellFlowStore = new HuntersFlowStore(
   'caw-huntersflow-sell-',
 );
+export const addressBookStore = new AddressBookStore();

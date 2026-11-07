@@ -14,9 +14,32 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.3.4** — released 2026-11-08.
+- **現在版 / Current: v0.3.5** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.4/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.5/caw-social.apk
+  v0.3.5 makes every balance SENDABLE: a plain 送る (Send) flow
+  (from the Home wallet card and from the HuntersSwap header) for
+  all eight assets — BSC BNB/USDT, Ethereum ETH/USDT, 42 Chain
+  [42]/USDT, QL1 QOM/CAW — pick the asset, type or paste the
+  recipient (or pick it from the new address book), amount with
+  25/50/75/MAX chips (native MAX leaves the live gas reserve
+  behind), a confirm screen showing the FULL recipient address
+  and the fee estimate, then the app's usual auth + sign + send.
+  The address book is on-device only, shared across wallets:
+  register label + address (duplicates are refused and pointed
+  at the existing entry), edit/delete, quick-pick chips in the
+  send form, and a one-tap save offer after a successful send to
+  a new address. Verified read-only by scripts/verify-send.mjs
+  (42 checks: calldata/selector per asset, decimals pinned
+  against the chain config, address validation, MAX math,
+  address-book CRUD + persistence round-trip). NO real sends
+  were made from the build environment.
+  v0.3.5 also carries the free parts of iPhone readiness: the
+  iOS icon (same icon.png) verified alpha-free as iOS requires,
+  and the monospace font for addresses/hashes is now
+  platform-aware (Menlo on iOS — 'monospace' is Android-only).
+  An actual iPhone install still needs the paid Apple Developer
+  Program, which is shelved for now.
   v0.3.4 tidies the Home top area: the wallet info is now ONE
   clean card (posting name's avatar + display name + @username, a
   tappable address chip that copies the full address, then CAW

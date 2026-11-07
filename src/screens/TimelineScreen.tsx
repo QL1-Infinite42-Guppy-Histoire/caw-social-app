@@ -18,6 +18,7 @@ import {
   ConfirmSheet,
   HAIRLINE,
   LoadMoreFooter,
+  MONO,
   PostCard,
   S,
 } from '../components/ui';
@@ -35,6 +36,7 @@ import { loadSeen, scanReactions } from '../lib/inbox';
 import { storeKV } from '../lib/stores';
 import InboxScreen from './InboxScreen';
 import SearchScreen from './SearchScreen';
+import SendScreen from './SendScreen';
 
 type PendingAction = { kind: 1 | 2; item: TimelineItem };
 
@@ -62,6 +64,7 @@ export default function TimelineScreen() {
   const [loading, setLoading] = useState(!feedCache);
   const [searchOpen, setSearchOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
   /* "Following" feed (v0.2.0): posts + shares by the names my
    * acting name follows, filtered from the same public feed. */
   const [mode, setMode] = useState<'latest' | 'following'>('latest');
@@ -400,6 +403,12 @@ export default function TimelineScreen() {
             </Text>
           </View>
         </View>
+        <Pressable
+          style={[S.ghostBtn, { marginTop: 12 }]}
+          onPress={() => setSendOpen(true)}
+        >
+          <Text style={S.ghostBtnText}>{tr('send.title')}</Text>
+        </Pressable>
       </View>
       <View style={styles.searchRow}>
         <Pressable
@@ -590,6 +599,13 @@ export default function TimelineScreen() {
       >
         <InboxScreen onClose={() => setInboxOpen(false)} />
       </Modal>
+      <Modal
+        visible={sendOpen}
+        animationType="slide"
+        onRequestClose={() => setSendOpen(false)}
+      >
+        <SendScreen onClose={() => setSendOpen(false)} />
+      </Modal>
     </View>
   );
 }
@@ -649,7 +665,7 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontWeight: '700',
     color: '#0f1419',
-    fontFamily: 'monospace',
+    fontFamily: MONO,
   },
   statLabel: { fontSize: 12.5, color: '#536471', fontWeight: '600' },
   statBig: {
