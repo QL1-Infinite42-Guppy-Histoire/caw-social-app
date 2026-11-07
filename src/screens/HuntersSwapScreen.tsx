@@ -25,6 +25,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatUnits, parseUnits } from 'ethers';
+import * as Clipboard from 'expo-clipboard';
 
 import { ConfirmSheet, S } from '../components/ui';
 import { ACCENT } from '../config';
@@ -117,6 +118,49 @@ function balLine(label: string, raw: bigint | null, dec: number, sym: string) {
       <Text style={[S.body, { fontWeight: '600' }]}>
         {raw === null ? '—' : fmtTok(raw, dec) + ' ' + sym}
       </Text>
+    </View>
+  );
+}
+
+/**
+ * Deposit address card (v0.3.3): the active wallet's own address,
+ * shown above the balances on the entry screen so it can be copied
+ * and pasted into an exchange / another wallet. The app uses ONE
+ * address on every chain (BSC / Ethereum / 42 Chain / QL1), so a
+ * single row serves all chains. Copying always takes the full 0x
+ * string; the "copied" note follows the SettingsScreen pattern.
+ */
+function DepositAddressRow({ address }: { address: string }) {
+  const [copied, setCopied] = useState(false);
+  if (!address) return null;
+  const doCopy = async () => {
+    await Clipboard.setStringAsync(address);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <View
+      style={{
+        borderWidth: 1,
+        borderColor: '#eff3f4',
+        borderRadius: 14,
+        padding: 14,
+        marginTop: 14,
+      }}
+    >
+      <Text style={[S.body, { fontWeight: '700' }]}>{tr('hs.depositAddress')}</Text>
+      <Text style={[S.small, { marginTop: 2 }]}>{tr('hs.depositSame')}</Text>
+      <Text
+        selectable
+        style={{ fontFamily: 'monospace', fontSize: 13, color: '#0f1419', marginTop: 8 }}
+      >
+        {address}
+      </Text>
+      <Pressable style={[S.ghostBtn, { marginTop: 10 }]} onPress={doCopy}>
+        <Text style={S.ghostBtnText}>
+          {copied ? tr('hs.addressCopied') : tr('hs.copyAddress')}
+        </Text>
+      </Pressable>
     </View>
   );
 }
@@ -725,6 +769,7 @@ function BuySection({ onClose }: { onClose: () => void }) {
         {phase === 'entry' ? (
           <>
             <Text style={S.body}>{tr('hs.intro')}</Text>
+            <DepositAddressRow address={address} />
             <Text style={[S.h2, { marginTop: 18 }]}>{tr('hs.yourCoins')}</Text>
             {balLine('BNB (BSC)', balances?.bscNative ?? null, 18, 'BNB')}
             {balLine('USDT (BSC)', balances?.bscUsdt ?? null, 18, 'USDT')}
@@ -1596,6 +1641,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
         {phase === 'entry' ? (
           <>
             <Text style={S.body}>{tr('hs.sellIntro')}</Text>
+            <DepositAddressRow address={address} />
             <Text style={[S.h2, { marginTop: 16 }]}>{tr('hs.toChain')}</Text>
             {(['bsc', 'ethereum'] as EntryKey[]).map((k) => (
               <Pressable

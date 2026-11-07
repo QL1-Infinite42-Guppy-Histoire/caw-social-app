@@ -14,9 +14,15 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.3.2** — released 2026-11-08.
+- **現在版 / Current: v0.3.3** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.2/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.3/caw-social.apk
+  v0.3.3 adds one small thing: the HuntersSwap entry screen now
+  shows your **deposit address above the balances** (both buy and
+  sell views) — the active wallet's own address, the same on every
+  chain (BSC / Ethereum / 42 Chain / QL1), in monospace with a
+  copy button and a brief "Copied!" confirmation, so it can be
+  pasted straight into an exchange or another wallet.
   v0.3.2 fixes the **HuntersSwap sell-quote failure** reported on a
   real device (a 532M qCAW sell sat on "checking…" then failed with
   the generic error). Root cause: the quote engine fired many
