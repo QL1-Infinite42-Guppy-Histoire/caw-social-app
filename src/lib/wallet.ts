@@ -108,8 +108,15 @@ export async function sendCalldata(
 
 /**
  * Sign + submit one CAW action (post / like / share / follow) as a
- * processAction batch of one. Mirrors the web front end's checks: the
- * name must belong to this wallet before anything is signed.
+ * processAction batch of one.
+ *
+ * PRE-SIGN GUARD (fail-closed, app-side, independent of what the
+ * contract would accept): ownerOf(senderTokenId) is read fresh and
+ * MUST equal this wallet's address before anything is signed. A
+ * mismatch — or a failed read, which means ownership cannot be
+ * proven — refuses the send with Error('not-owner'). An action can
+ * therefore never be signed under a name this wallet does not own,
+ * whatever any list or cache said earlier.
  */
 export async function submitAction(
   kind: WalletKind,
@@ -117,8 +124,13 @@ export async function submitAction(
   action: CawAction,
 ): Promise<string> {
   const signer = signerFor(kind, secret);
-  const owner = await nameOwner(action.senderId).catch(() => null);
-  if (owner && owner.toLowerCase() !== signer.address.toLowerCase()) {
+  let owner: string | null = null;
+  try {
+    owner = await nameOwner(action.senderId);
+  } catch {
+    owner = null; // unreadable = unproven = refuse below
+  }
+  if (!owner || owner.toLowerCase() !== signer.address.toLowerCase()) {
     throw new Error('not-owner');
   }
   const sig = signAction(signer.privateKey, action);
