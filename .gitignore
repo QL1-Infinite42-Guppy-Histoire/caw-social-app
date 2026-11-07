@@ -58,3 +58,4 @@ scripts/.build-reactions/
 *.jks
 *.keystore
 scripts/.build-hunters/
+scripts/.build-reveal/

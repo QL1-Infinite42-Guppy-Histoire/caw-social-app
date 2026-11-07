@@ -20,6 +20,7 @@ import {
   type WalletPublicInfo,
 } from '../lib/walletStore';
 import AddWalletModal from './AddWalletModal';
+import RevealSecretScreen from './RevealSecretScreen';
 
 export default function SettingsScreen() {
   const app = useApp();
@@ -27,6 +28,7 @@ export default function SettingsScreen() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [revealOpen, setRevealOpen] = useState(false);
   const [deleteOne, setDeleteOne] = useState<WalletPublicInfo | null>(null);
   const [deletingOne, setDeletingOne] = useState(false);
   const [switching, setSwitching] = useState(false);
@@ -111,6 +113,12 @@ export default function SettingsScreen() {
         </Pressable>
         {copied ? <Text style={S.ok}>{tr('settings.copied')}</Text> : null}
       </View>
+
+      {/* backup / secret reveal (v0.3.1) */}
+      <Text style={[S.h2, { marginTop: 24 }]}>{tr('settings.backup')}</Text>
+      <Pressable style={[S.ghostBtn, { marginTop: 10, alignSelf: 'flex-start' }]} onPress={() => setRevealOpen(true)}>
+        <Text style={S.ghostBtnText}>{tr('settings.backup')}</Text>
+      </Pressable>
 
       {/* wallets (v0.2.0: several can live on this phone) */}
       <Text style={[S.h2, { marginTop: 24 }]}>{tr('wallets.title')}</Text>
@@ -216,6 +224,13 @@ export default function SettingsScreen() {
         }}
         busy={deletingOne}
       />
+      <Modal
+        visible={revealOpen}
+        animationType="slide"
+        onRequestClose={() => setRevealOpen(false)}
+      >
+        <RevealSecretScreen onClose={() => setRevealOpen(false)} />
+      </Modal>
       <Modal
         visible={addOpen}
         animationType="slide"

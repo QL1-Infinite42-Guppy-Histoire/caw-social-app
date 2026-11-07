@@ -14,9 +14,23 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.3.0** — released 2026-11-08.
+- **現在版 / Current: v0.3.1** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.0/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.1/caw-social.apk
+  v0.3.1 adds a **wallet backup / secret reveal page** (Settings ->
+  Wallet backup), copying MetaMask's ceremony: for the phrase —
+  intro, a 2-question safety quiz (wrong answers retry, correct
+  answers show the explanation), then the app password, then a
+  blurred reveal with decoy words underneath (tap to show, auto
+  re-hide after 60 s, copy only while shown). The private key
+  skips the quiz (it is phrase-specific, as in MetaMask) but
+  keeps the password gate. The gate is ALWAYS the app password:
+  biometric-only users (no password verifier) set an app password
+  in-flow first, and that password becomes the gate. Key-imported
+  wallets have no phrase — the page says so plainly and offers
+  the key instead. Secrets are loaded only after the password
+  verifies (scripts/verify-reveal.mjs, 16 checks) and are never
+  stored anywhere new.
   v0.3.0 adds **HuntersSwap** and a follow-list speed fix:
   - **HuntersSwap (buy).** A guided, one-step-at-a-time flow from
     BNB (BSC) or ETH (Ethereum) to QL1 qCAW, entirely in-app:
