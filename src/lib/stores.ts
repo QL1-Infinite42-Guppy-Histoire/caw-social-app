@@ -5,6 +5,7 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { HuntersFlowStore } from './flows';
 import { MyActionStore, type KVStorage } from './myActions';
 import { ProfileCustomStore } from './profileCustom';
 
@@ -15,3 +16,4 @@ export const storeKV: KVStorage = {
 
 export const myActionStore = new MyActionStore();
 export const profileCustomStore = new ProfileCustomStore();
+export const huntersFlowStore = new HuntersFlowStore();

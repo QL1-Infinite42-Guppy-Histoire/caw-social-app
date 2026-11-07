@@ -16,6 +16,8 @@ import {
 
 import { CAW_ACTIONS, CHAIN_ID, RPC } from '../config';
 import { nameOwner } from './cawApi';
+import type { HsChainKey } from './chains';
+import { providerFor, type TxReq } from './hunters';
 import {
   CawAction,
   CawSignature,
@@ -85,11 +87,34 @@ export function signerFor(kind: WalletKind, secret: string): Wallet {
   return new Wallet(privateKeyOf(kind, secret), getProvider());
 }
 
+/** Signer for any HuntersSwap chain (same key, other network). */
+export function signerForHsChain(
+  kind: WalletKind,
+  secret: string,
+  chain: HsChainKey,
+): Wallet {
+  return new Wallet(privateKeyOf(kind, secret), providerFor(chain));
+}
+
 /** Sign one action's digest with no extra prefix — the CAW way. */
 export function signAction(privateKey: string, action: CawAction): CawSignature {
   const digest = actionDigest(action);
   const sig = new SigningKey(privateKey).sign(digest);
   return { v: sig.v, r: sig.r, s: sig.s };
+}
+
+/** Send one HuntersSwap tx request and wait; throws on revert. */
+export async function sendTxReq(signer: Wallet, req: TxReq): Promise<string> {
+  const tx = await signer.sendTransaction({
+    to: req.to,
+    data: req.data,
+    value: req.value,
+  });
+  const receipt = await tx.wait();
+  if (!receipt || receipt.status !== 1) {
+    throw new Error('transaction failed on chain (tx ' + tx.hash + ')');
+  }
+  return tx.hash;
 }
 
 /** Send raw calldata and wait for the receipt; throws when it reverts. */
