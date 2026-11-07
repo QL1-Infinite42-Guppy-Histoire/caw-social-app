@@ -37,7 +37,15 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
   the app (BNB/ETH spot, USDT at $1; 42/QOM/CAW show no USD
   line rather than a made-up figure), zero-balance rows dimmed
   to 45%. The entry-picker cards carry the same badges.
-  Display only — no value or logic changes.
+  Display only — no value or logic changes. The MyNames tab is
+  compacted the same way: each owned name is now a single
+  ~64px row (avatar, name + @handle/#id/followers, deposited
+  CAW + chevron) that expands inline as an accordion (one open
+  at a time; a name with a deposit/withdraw in flight stays
+  open) to reveal the unchanged amount input and 入れる/出す
+  controls, with a slim summary line on top (name count +
+  total CAW held in names, new 'mine.summary' string in all
+  five languages).
   v0.3.6 is a HOTFIX on top of everything in v0.3.4 (the v0.3.5
   build was superseded before release and folded in here): it
   fixes the critical bug that made EVERY HuntersSwap buy/sell

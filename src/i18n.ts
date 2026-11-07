@@ -197,6 +197,7 @@ const EN = {
   'get.viewProfile': 'See this name’s page',
 
   'mine.title': 'My names',
+  'mine.summary': '{count} names · {total} CAW held in names',
   'mine.none': 'This wallet has no CAW names yet. Get one in “Get a name”!',
   'mine.inName': 'inside this name',
   'mine.followers': 'followers',
@@ -566,6 +567,7 @@ const JA: Dict = {
   'get.viewProfile': 'この名前のページを見る',
 
   'mine.title': '自分の名前',
+  'mine.summary': '名前 {count} 件 · 名前の中の CAW 合計 {total}',
   'mine.none': 'このウォレットには、まだ CAW の名前がありません。「名前を取る」で取ってみましょう！',
   'mine.inName': 'この名前の中にある CAW',
   'mine.followers': 'フォロワー',
@@ -932,6 +934,7 @@ const ZH: Dict = {
   'get.viewProfile': '查看这个名字的主页',
 
   'mine.title': '我的名字',
+  'mine.summary': '{count} 个名字 · 名字中共 {total} CAW',
   'mine.none': '这个钱包还没有 CAW 名字。去“取名字”取一个吧！',
   'mine.inName': '这个名字里有',
   'mine.followers': '关注者',
@@ -1296,6 +1299,7 @@ const KO: Dict = {
   'get.viewProfile': '이 이름의 페이지 보기',
 
   'mine.title': '내 이름',
+  'mine.summary': '이름 {count}개 · 이름 안의 CAW 합계 {total}',
   'mine.none': '이 지갑에는 아직 CAW 이름이 없어요. "이름 만들기"에서 만들어 보세요!',
   'mine.inName': '이 이름 안에 있는 CAW',
   'mine.followers': '팔로워',
@@ -1665,6 +1669,7 @@ const ES: Dict = {
   'get.viewProfile': 'Ver su página',
 
   'mine.title': 'Mis nombres',
+  'mine.summary': '{count} nombres · {total} CAW en nombres',
   'mine.none': 'Esta billetera todavía no tiene nombres de CAW. ¡Consigue uno en “Conseguir un nombre”!',
   'mine.inName': 'dentro de este nombre',
   'mine.followers': 'seguidores',

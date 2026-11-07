@@ -30,7 +30,17 @@ interface CardStatus {
   kind: 'info' | 'ok' | 'err';
 }
 
-function NameCard({ token }: { token: NameToken }) {
+function NameCard({
+  token,
+  expanded,
+  onToggle,
+  onBusyChange,
+}: {
+  token: NameToken;
+  expanded: boolean;
+  onToggle: () => void;
+  onBusyChange: (id: string, busy: boolean) => void;
+}) {
   const app = useApp();
   const [amount, setAmount] = useState('');
   const [followers, setFollowers] = useState<bigint | null>(null);
@@ -38,6 +48,13 @@ function NameCard({ token }: { token: NameToken }) {
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [pendingAmt, setPendingAmt] = useState<bigint | null>(null);
+
+  // The parent keeps a busy name's row expanded (its progress
+  // display must stay visible), so report busy changes upward.
+  useEffect(() => {
+    onBusyChange(token.id.toString(), busy);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy]);
 
   useEffect(() => {
     let live = true;
@@ -149,79 +166,98 @@ function NameCard({ token }: { token: NameToken }) {
   const custom = app.customFor(token.id);
   return (
     <View style={styles.card}>
-      <View style={S.row}>
+      {/* Compact row (v0.3.7): one line per name — avatar, name +
+       * handle/#id/followers, deposited CAW + chevron on the
+       * right. Tapping toggles the deposit/withdraw controls
+       * below (accordion). */}
+      <Pressable
+        onPress={onToggle}
+        style={({ pressed }) => [styles.rowHead, pressed && { opacity: 0.6 }]}
+        accessibilityRole="button"
+      >
         <Avatar
           nameId={token.id}
-          size={48}
+          size={40}
           customUri={custom ? custom.avatarPath : undefined}
           onPress={
             token.username ? () => app.openProfile(token.username) : undefined
           }
         />
-        <View style={{ marginLeft: 12, flex: 1 }}>
-          <Text style={styles.name}>
+        <View style={{ marginLeft: 10, flex: 1 }}>
+          <Text style={styles.name} numberOfLines={1}>
             {custom && custom.displayName
               ? custom.displayName
               : token.username
                 ? '@' + token.username
                 : '#' + token.id.toString()}
           </Text>
-          {custom && custom.displayName && token.username ? (
-            <Text style={S.small}>@{token.username}</Text>
-          ) : null}
-          <Text style={S.small}>
+          <Text style={S.small} numberOfLines={1}>
+            {custom && custom.displayName && token.username
+              ? '@' + token.username + ' · '
+              : ''}
             #{token.id.toString()}
             {followers !== null
               ? ' · ' + followers.toString() + ' ' + tr('mine.followers')
               : ''}
           </Text>
         </View>
-      </View>
+        <View style={{ alignItems: 'flex-end', marginLeft: 8 }}>
+          <Text
+            style={styles.rowAmount}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.6}
+          >
+            {fmtAmount(token.balance)}
+            <Text style={styles.rowUnit}> CAW</Text>
+          </Text>
+          <Text style={S.tiny}>{tr('mine.inName')}</Text>
+        </View>
+        <Text style={styles.chevron}>{expanded ? '▾' : '▸'}</Text>
+      </Pressable>
 
-      <Text style={[S.body, { marginTop: 12 }]}>
-        {tr('mine.inName')}:{' '}
-        <Text style={{ fontWeight: '700' }}>{fmtAmount(token.balance)}</Text>{' '}
-        CAW
-      </Text>
+      {expanded ? (
+        <View style={styles.expanded}>
+          <TextInput
+            style={S.input}
+            value={amount}
+            onChangeText={setAmount}
+            placeholder={tr('mine.amountPh')}
+            keyboardType="decimal-pad"
+            autoCorrect={false}
+          />
+          <View style={[S.row, { marginTop: 10, gap: 10 }]}>
+            <Pressable
+              style={[S.darkBtn, { flex: 1 }, busy && S.disabled]}
+              disabled={busy}
+              onPress={() => ask('deposit')}
+            >
+              <Text style={S.darkBtnText}>{tr('mine.deposit')}</Text>
+            </Pressable>
+            <Pressable
+              style={[S.ghostBtn, { flex: 1 }, busy && S.disabled]}
+              disabled={busy}
+              onPress={() => ask('withdraw')}
+            >
+              <Text style={S.ghostBtnText}>{tr('mine.withdraw')}</Text>
+            </Pressable>
+          </View>
 
-      <TextInput
-        style={[S.input, { marginTop: 12 }]}
-        value={amount}
-        onChangeText={setAmount}
-        placeholder={tr('mine.amountPh')}
-        keyboardType="decimal-pad"
-        autoCorrect={false}
-      />
-      <View style={[S.row, { marginTop: 10, gap: 10 }]}>
-        <Pressable
-          style={[S.darkBtn, { flex: 1 }, busy && S.disabled]}
-          disabled={busy}
-          onPress={() => ask('deposit')}
-        >
-          <Text style={S.darkBtnText}>{tr('mine.deposit')}</Text>
-        </Pressable>
-        <Pressable
-          style={[S.ghostBtn, { flex: 1 }, busy && S.disabled]}
-          disabled={busy}
-          onPress={() => ask('withdraw')}
-        >
-          <Text style={S.ghostBtnText}>{tr('mine.withdraw')}</Text>
-        </Pressable>
-      </View>
-
-      {status ? (
-        <Text
-          style={[
-            status.kind === 'err'
-              ? S.err
-              : status.kind === 'ok'
-                ? S.ok
-                : S.small,
-            { marginTop: 10 },
-          ]}
-        >
-          {status.text}
-        </Text>
+          {status ? (
+            <Text
+              style={[
+                status.kind === 'err'
+                  ? S.err
+                  : status.kind === 'ok'
+                    ? S.ok
+                    : S.small,
+                { marginTop: 10 },
+              ]}
+            >
+              {status.text}
+            </Text>
+          ) : null}
+        </View>
       ) : null}
 
       <ConfirmSheet
@@ -254,6 +290,32 @@ function NameCard({ token }: { token: NameToken }) {
 export default function MyNamesScreen() {
   const app = useApp();
   const [refreshing, setRefreshing] = useState(false);
+  /* Accordion state (v0.3.7): one name open at a time — except a
+   * name with a deposit/withdraw in flight, which always stays
+   * open so its progress remains visible. */
+  const [openSet, setOpenSet] = useState<ReadonlySet<string>>(new Set());
+  const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(new Set());
+  const onBusyChange = (id: string, busy: boolean) => {
+    setBusyIds((prev) => {
+      if (prev.has(id) === busy) return prev;
+      const next = new Set(prev);
+      if (busy) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+    if (busy) {
+      setOpenSet((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+    }
+  };
+  const toggle = (id: string) => {
+    setOpenSet((prev) => {
+      const next = new Set<string>();
+      busyIds.forEach((b) => next.add(b));
+      if (!prev.has(id) || busyIds.has(id)) next.add(id);
+      return next;
+    });
+  };
+  const totalInNames = app.myTokens.reduce((s, t) => s + t.balance, 0n);
 
   useEffect(() => {
     app.refreshMyTokens();
@@ -287,11 +349,25 @@ export default function MyNamesScreen() {
             opens from the orange button in the middle of the tab
             bar. The CAW balance line above stays. */}
       </View>
+      {app.myTokens.length > 0 ? (
+        <Text style={[S.small, { marginTop: 12 }]}>
+          {tr('mine.summary', {
+            count: String(app.myTokens.length),
+            total: fmtAmount(totalInNames),
+          })}
+        </Text>
+      ) : null}
       {app.myTokens.length === 0 ? (
         <Text style={[S.body, { marginTop: 14 }]}>{tr('mine.none')}</Text>
       ) : (
         app.myTokens.map((t) => (
-          <NameCard key={t.id.toString()} token={t} />
+          <NameCard
+            key={t.id.toString()}
+            token={t}
+            expanded={openSet.has(t.id.toString())}
+            onToggle={() => toggle(t.id.toString())}
+            onBusyChange={onBusyChange}
+          />
         ))
       )}
     </ScrollView>
@@ -303,9 +379,31 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#eff3f4',
     borderRadius: 14,
-    padding: 14,
-    marginTop: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    marginTop: 10,
     backgroundColor: '#fff',
   },
-  name: { fontSize: 16, fontWeight: '700', color: '#0f1419' },
+  rowHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 52,
+    paddingVertical: 6,
+  },
+  expanded: {
+    borderTopWidth: 1,
+    borderTopColor: '#eff3f4',
+    paddingTop: 12,
+    paddingBottom: 8,
+    marginTop: 2,
+  },
+  name: { fontSize: 15, fontWeight: '700', color: '#0f1419' },
+  rowAmount: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0f1419',
+    fontVariant: ['tabular-nums'],
+  },
+  rowUnit: { fontSize: 11, fontWeight: '600', color: '#536471' },
+  chevron: { fontSize: 15, color: '#536471', marginLeft: 8, width: 16, textAlign: 'center' },
 });
