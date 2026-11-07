@@ -8,8 +8,11 @@ import {
   View,
 } from 'react-native';
 
+import { SvgXml } from 'react-native-svg';
+
 import { ConfirmSheet, S } from '../components/ui';
 import { ACCENT, MINTER, QCAW, SEL } from '../config';
+import { nameNftSvg } from '../lib/nameNftPreview';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
 import {
@@ -209,11 +212,36 @@ export default function GetNameScreen() {
         </View>
       ) : null}
 
+      {/* NFT preview (v0.3.8): the real name-NFT design with the
+          checked name rendered into it, reproduced locally from
+          the on-chain tokenURI template (see nameNftPreview.ts).
+          Shown for any successfully checked name — for a taken
+          name this is that NFT's actual image; for an available
+          name it is exactly what minting will produce. */}
+      {checkedName && check && check.kind !== 'invalid' ? (
+        <View style={[S.cardBox, { alignItems: 'center', marginTop: 16 }]}>
+          <View
+            style={{
+              borderRadius: 14,
+              overflow: 'hidden',
+              borderWidth: 1,
+              borderColor: '#e5e5e5',
+            }}
+          >
+            <SvgXml xml={nameNftSvg(checkedName)} width={208} height={208} />
+          </View>
+          <Text style={[S.body, { fontWeight: '700', marginTop: 10 }]}>
+            @{checkedName}
+          </Text>
+          <Text style={S.tiny}>{tr('get.preview')}</Text>
+        </View>
+      ) : null}
+
       {check?.kind === 'invalid' ? (
         <Text style={[S.err, { marginTop: 14 }]}>{tr('get.invalid')}</Text>
       ) : null}
       {check?.kind === 'taken' ? (
-        <View style={{ marginTop: 14 }}>
+        <View style={[S.cardBox, { marginTop: 14 }]}>
           <Text style={[S.body, { color: '#a15c00' }]}>{tr('get.taken')}</Text>
           <Pressable
             style={[S.ghostBtn, { marginTop: 10, alignSelf: 'flex-start' }]}
@@ -225,7 +253,7 @@ export default function GetNameScreen() {
       ) : null}
 
       {check?.kind === 'available' && cost !== null ? (
-        <View style={{ marginTop: 14 }}>
+        <View style={[S.cardBox, { marginTop: 14 }]}>
           <Text style={S.ok}>{tr('get.available')}</Text>
           <Text style={[S.body, { marginTop: 6 }]}>
             {tr('get.price')}: <Text style={{ fontWeight: '700' }}>{fmtAmount(cost)}</Text>{' '}

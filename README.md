@@ -14,9 +14,34 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.3.7** — released 2026-11-08.
+- **現在版 / Current: v0.3.8** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.7/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.8/caw-social.apk
+  v0.3.8 adds three things on top of v0.3.7. (1) A REAL NFT
+  preview on the Mint screen: the CAW name NFT image is a
+  data-URI SVG whose only variable part is the name itself
+  (verified against the on-chain tokenURI of 600+ names; the
+  local generator in src/lib/nameNftPreview.ts reproduces the
+  contract's SVG byte-for-byte, font size per name length
+  included), so once a name is checked the screen shows the
+  exact image that name's NFT has / will have. (2) Two new
+  languages — Turkish (Türkçe) and Persian (فارسی) — bringing
+  the total to seven; every one of the 341 keys is translated
+  for both (audit-i18n now checks 7 languages, 35/35). Persian
+  ships with the current left-to-right layout; full RTL
+  mirroring is not applied yet. (3) A design polish pass in
+  the v0.3.7 card language (shared S.cardBox / S.cardFlush /
+  S.rowDivider / S.emptyCard primitives): Settings sections
+  became cards with divider rows, the backup/reveal text
+  blocks sit in cards, HuntersSwap confirm breakdowns and
+  done states are cards (done gets a big ✓ badge), sell
+  progress parts are a card, the Mint result blocks are
+  cards, inbox rows carry a colored kind badge on the avatar
+  (♥ pink / Recaw green / follow blue) with a soft empty
+  card, post-detail section headers carry the same badges,
+  the profile follow counts became a two-cell stat card, and
+  timeline/profile empty states use the soft empty card.
+  Display only — no behavior or wording changes.
   v0.3.7 is a small UI/wording release on top of v0.3.6: the
   v0.3.4 Home mini header is removed (it duplicated the app
   header — "CAW Social" appeared twice) and its notification

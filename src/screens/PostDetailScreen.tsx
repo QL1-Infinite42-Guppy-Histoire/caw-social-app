@@ -104,13 +104,18 @@ export default function PostDetailScreen({
           </View>
         ) : (
           <>
-            <Text style={[S.h2, styles.section]}>
-              {tr('detail.likedBy')} · {likes.length}
-            </Text>
-            {likes.length === 0 ? (
-              <Text style={[S.small, styles.empty]}>
-                {tr('detail.noneYet')}
+            <View style={styles.sectionRow}>
+              <View style={[styles.sectionBadge, { backgroundColor: '#e0245e' }]}>
+                <Text style={styles.sectionBadgeText}>♥</Text>
+              </View>
+              <Text style={S.h2}>
+                {tr('detail.likedBy')} · {likes.length}
               </Text>
+            </View>
+            {likes.length === 0 ? (
+              <View style={[S.emptyCard, styles.emptyCardPad]}>
+                <Text style={S.small}>{tr('detail.noneYet')}</Text>
+              </View>
             ) : (
               likes.map((id) => (
                 <NameRow
@@ -120,13 +125,18 @@ export default function PostDetailScreen({
                 />
               ))
             )}
-            <Text style={[S.h2, styles.section]}>
-              {tr('detail.sharedBy')} · {shares.length}
-            </Text>
-            {shares.length === 0 ? (
-              <Text style={[S.small, styles.empty]}>
-                {tr('detail.noneYet')}
+            <View style={styles.sectionRow}>
+              <View style={[styles.sectionBadge, { backgroundColor: '#17bf63' }]}>
+                <Text style={styles.sectionBadgeText}>🔁</Text>
+              </View>
+              <Text style={S.h2}>
+                {tr('detail.sharedBy')} · {shares.length}
               </Text>
+            </View>
+            {shares.length === 0 ? (
+              <View style={[S.emptyCard, styles.emptyCardPad]}>
+                <Text style={S.small}>{tr('detail.noneYet')}</Text>
+              </View>
             ) : (
               shares.map((id) => (
                 <NameRow
@@ -160,7 +170,22 @@ const styles = StyleSheet.create({
   },
   backText: { fontSize: 15, color: ACCENT, fontWeight: '600', width: 60 },
   center: { alignItems: 'center', padding: 28 },
-  section: { marginTop: 20, marginBottom: 4, paddingHorizontal: 16 },
-  empty: { paddingHorizontal: 16, paddingVertical: 8 },
+  sectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 20,
+    marginBottom: 4,
+    paddingHorizontal: 16,
+  },
+  sectionBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sectionBadgeText: { fontSize: 12, color: '#fff', fontWeight: '700' },
+  emptyCardPad: { marginHorizontal: 16, paddingVertical: 18 },
   note: { paddingHorizontal: 16, paddingVertical: 12 },
 });

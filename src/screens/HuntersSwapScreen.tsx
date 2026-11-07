@@ -1010,6 +1010,7 @@ function BuySection({ onClose }: { onClose: () => void }) {
         {phase === 'confirm' && plan ? (
           <>
             <Text style={S.h2}>{tr('hs.confirmTitle')}</Text>
+            <View style={S.cardBox}>
             {balLine(entry === 'bsc' ? 'BNB' : 'ETH', plan.entryAmount, 18, entry === 'bsc' ? 'BNB' : 'ETH')}
             {balLine('USDT', plan.entryUsdt, ENTRY_DEX[entry].usdtDecimals, 'USDT')}
             {balLine(tr('hs.feeBridgeIn'), parseUnits('2', 18), 18, 'USDT')}
@@ -1048,6 +1049,7 @@ function BuySection({ onClose }: { onClose: () => void }) {
             {plan.carve.reserveTotal > 0n
               ? balLine(tr('hs.keep42'), plan.carve.reserveTotal, 18, '42')
               : null}
+            </View>
             <View style={{ marginTop: 16 }}>
               <Text style={S.small}>{tr('hs.youGet')}</Text>
               <Text style={[S.h1, { color: ACCENT }]}>{fmtTok(plan.expectedOut, 18)} CAW</Text>
@@ -1133,15 +1135,31 @@ function BuySection({ onClose }: { onClose: () => void }) {
 
         {phase === 'done' ? (
           <>
-            <Text style={S.h1}>{tr('hs.doneTitle')}</Text>
-            <Text style={[S.body, { marginTop: 10 }]}>{tr('hs.doneDesc')}</Text>
-            {balances?.ql1Qcaw !== null && balances?.ql1Qcaw !== undefined ? (
-              <Text style={[S.body, { marginTop: 8 }]}>
-                {fmtTok(balances.ql1Qcaw, 18)} CAW
-              </Text>
-            ) : null}
-            {balLine('42', balances?.infNative ?? null, 18, '42')}
-            {balLine('USDT (42 Chain)', balances?.infUsdt ?? null, 18, 'USDT')}
+            <View style={[S.cardBox, { marginTop: 16 }]}>
+              <View style={{ alignItems: 'center' }}>
+                <View
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 28,
+                    backgroundColor: '#1b7a43',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 28, fontWeight: '800' }}>✓</Text>
+                </View>
+                <Text style={[S.h1, { marginTop: 12 }]}>{tr('hs.doneTitle')}</Text>
+                <Text style={[S.body, { marginTop: 8, textAlign: 'center' }]}>{tr('hs.doneDesc')}</Text>
+                {balances?.ql1Qcaw !== null && balances?.ql1Qcaw !== undefined ? (
+                  <Text style={[S.body, { marginTop: 8, fontWeight: '700' }]}>
+                    {fmtTok(balances.ql1Qcaw, 18)} CAW
+                  </Text>
+                ) : null}
+              </View>
+              {balLine('42', balances?.infNative ?? null, 18, '42')}
+              {balLine('USDT (42 Chain)', balances?.infUsdt ?? null, 18, 'USDT')}
+            </View>
             <Pressable style={[S.bigBtn, { marginTop: 18 }]} onPress={onClose}>
               <Text style={S.bigBtnText}>{tr('common.close')}</Text>
             </Pressable>
@@ -1891,6 +1909,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
         {phase === 'confirm' && plan ? (
           <>
             <Text style={S.h2}>{tr('hs.confirmTitle')}</Text>
+            <View style={S.cardBox}>
             {balLine('CAW', plan.qcawAmount, 18, 'CAW')}
             {balLine('USDT (42 Chain)', plan.usdt42, 18, 'USDT')}
             <View style={[S.row, { justifyContent: 'space-between', marginTop: 6 }]}>
@@ -1914,6 +1933,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
                   '42',
                 )
               : null}
+            </View>
             <View style={[S.row, { justifyContent: 'space-between', marginTop: 10 }]}>
               <Text style={S.body}>{tr('hs.youGet')}</Text>
               <Text style={[S.h2, { color: ACCENT }]}>
@@ -1982,13 +2002,30 @@ function SellSection({ onClose }: { onClose: () => void }) {
               })}{' '}
               — {flow.direction === 'sell' ? tr('hs.sell') : ''}
             </Text>
-            {flow.parts.map((p, i) => (
-              <Text key={i} style={[S.small, { marginTop: 6 }]}>
-                {tr('hs.partLabel', { n: String(i + 1) })}: {p.sym} — {
-                  p.step >= 4 ? '✓' : p.step === 2 ? tr('hs.waiting') : '…'
-                }
-              </Text>
-            ))}
+            <View style={S.cardBox}>
+              {flow.parts.map((p, i) => (
+                <View
+                  key={i}
+                  style={[
+                    S.row,
+                    { justifyContent: 'space-between', paddingVertical: 5 },
+                    p.step < 4 && { opacity: 0.85 },
+                  ]}
+                >
+                  <Text style={S.small}>
+                    {tr('hs.partLabel', { n: String(i + 1) })}: {p.sym}
+                  </Text>
+                  <Text
+                    style={[
+                      S.small,
+                      p.step >= 4 && { color: '#1b7a43', fontWeight: '700' },
+                    ]}
+                  >
+                    {p.step >= 4 ? '✓' : p.step === 2 ? tr('hs.waiting') : '…'}
+                  </Text>
+                </View>
+              ))}
+            </View>
             <Text style={[S.body, { marginTop: 16, fontWeight: '700' }]}>{stepLabel()}</Text>
             {step?.kind === 'pausedTarget' ? (
               <>
@@ -2018,14 +2055,30 @@ function SellSection({ onClose }: { onClose: () => void }) {
 
         {phase === 'done' ? (
           <>
-            <Text style={S.h1}>{tr('hs.doneTitle')}</Text>
-            <Text style={[S.body, { marginTop: 10 }]}>
-              {finishedWithUsdt ? tr('hs.doneUsdtDesc') : tr('hs.doneSellDesc')}
-            </Text>
-            {balLine(targetSym, target === 'bsc' ? balances?.bscNative ?? null : balances?.ethNative ?? null, 18, targetSym)}
-            {balLine('USDT', target === 'bsc' ? balances?.bscUsdt ?? null : balances?.ethUsdt ?? null, USDT_ON[target].decimals, 'USDT')}
-            {balLine('42', balances?.infNative ?? null, 18, '42')}
-            {balLine('QOM', balances?.ql1Native ?? null, 18, 'QOM')}
+            <View style={[S.cardBox, { marginTop: 16 }]}>
+              <View style={{ alignItems: 'center' }}>
+                <View
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 28,
+                    backgroundColor: '#1b7a43',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 28, fontWeight: '800' }}>✓</Text>
+                </View>
+                <Text style={[S.h1, { marginTop: 12 }]}>{tr('hs.doneTitle')}</Text>
+                <Text style={[S.body, { marginTop: 8, textAlign: 'center' }]}>
+                  {finishedWithUsdt ? tr('hs.doneUsdtDesc') : tr('hs.doneSellDesc')}
+                </Text>
+              </View>
+              {balLine(targetSym, target === 'bsc' ? balances?.bscNative ?? null : balances?.ethNative ?? null, 18, targetSym)}
+              {balLine('USDT', target === 'bsc' ? balances?.bscUsdt ?? null : balances?.ethUsdt ?? null, USDT_ON[target].decimals, 'USDT')}
+              {balLine('42', balances?.infNative ?? null, 18, '42')}
+              {balLine('QOM', balances?.ql1Native ?? null, 18, 'QOM')}
+            </View>
             <Pressable style={[S.bigBtn, { marginTop: 18 }]} onPress={onClose}>
               <Text style={S.bigBtnText}>{tr('common.close')}</Text>
             </Pressable>

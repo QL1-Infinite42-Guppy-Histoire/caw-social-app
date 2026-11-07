@@ -132,8 +132,13 @@ export default function InboxScreen({ onClose }: { onClose: () => void }) {
           renderItem={renderItem}
           contentContainerStyle={{ paddingBottom: 32 + insets.bottom }}
           ListEmptyComponent={
-            <View style={styles.center}>
-              <Text style={S.small}>{tr('inbox.empty')}</Text>
+            <View style={{ paddingHorizontal: 16 }}>
+              <View style={S.emptyCard}>
+                <Text style={{ fontSize: 26 }}>🔔</Text>
+                <Text style={[S.small, { marginTop: 8, textAlign: 'center' }]}>
+                  {tr('inbox.empty')}
+                </Text>
+              </View>
             </View>
           }
           ListFooterComponent={
@@ -201,11 +206,25 @@ function ReactionRow({
         : reaction.kind === 3
           ? '👤'
           : '👤';
+  // Kind badge (v0.3.8): a small colored circle on the avatar's
+  // corner, X-notification style — like pink, recaw green,
+  // follow blue.
+  const badgeBg =
+    reaction.kind === 1
+      ? '#e0245e'
+      : reaction.kind === 2
+        ? '#17bf63'
+        : '#1d9bf0';
   return (
     <View style={styles.row}>
-      <Pressable onPress={onActor}>
-        <Avatar nameId={reaction.actorId} size={40} />
-      </Pressable>
+      <View>
+        <Pressable onPress={onActor}>
+          <Avatar nameId={reaction.actorId} size={40} />
+        </Pressable>
+        <View style={[styles.kindBadge, { backgroundColor: badgeBg }]}>
+          <Text style={styles.kindBadgeText}>{icon}</Text>
+        </View>
+      </View>
       <View style={{ flex: 1, marginLeft: 10 }}>
         <Text style={S.body}>
           <Text style={{ fontWeight: '700' }}>{who}</Text>
@@ -215,7 +234,7 @@ function ReactionRow({
         {reaction.post ? (
           <Pressable onPress={onPost}>
             <Text style={[S.small, styles.postText]} numberOfLines={2}>
-              {icon} {reaction.post.text}
+              {reaction.post.text}
             </Text>
           </Pressable>
         ) : null}
@@ -244,4 +263,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   postText: { marginTop: 3 },
+  kindBadge: {
+    position: 'absolute',
+    right: -5,
+    bottom: -5,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  kindBadgeText: { fontSize: 10, color: '#fff', fontWeight: '700' },
 });

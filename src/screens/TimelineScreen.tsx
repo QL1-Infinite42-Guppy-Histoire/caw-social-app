@@ -13,6 +13,7 @@ import {
 import * as Clipboard from 'expo-clipboard';
 
 import {
+  AppLogo,
   Avatar,
   ConfirmSheet,
   HAIRLINE,
@@ -462,13 +463,16 @@ export default function TimelineScreen() {
                 </Text>
               </>
             ) : (
-              <Text style={S.small}>
-                {mode === 'following'
-                  ? acting
-                    ? tr('tl.followingEmpty')
-                    : tr('compose.needName')
-                  : tr('tl.empty')}
-              </Text>
+              <View style={[S.emptyCard, { marginHorizontal: 16, alignSelf: 'stretch' }]}>
+                <AppLogo size={40} />
+                <Text style={[S.small, { marginTop: 8, textAlign: 'center' }]}>
+                  {mode === 'following'
+                    ? acting
+                      ? tr('tl.followingEmpty')
+                      : tr('compose.needName')
+                    : tr('tl.empty')}
+                </Text>
+              </View>
             )}
           </View>
         }

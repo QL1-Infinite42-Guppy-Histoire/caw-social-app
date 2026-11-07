@@ -131,6 +131,39 @@ export const S = StyleSheet.create({
   },
   moreBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   disabled: { opacity: 0.45 },
+  /* Shared polish primitives (v0.3.8 design pass): one card
+   * language across the app — white surface, hairline border,
+   * radius 16 — matching the Home wallet card and the v0.3.7
+   * HuntersSwap balance cards. cardBox pads its content;
+   * cardFlush is for divider lists (rows carry their own
+   * padding, separated by rowDivider). */
+  cardBox: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 10,
+  },
+  cardFlush: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    borderRadius: 16,
+    marginTop: 10,
+    overflow: 'hidden',
+  },
+  rowDivider: { borderBottomWidth: 1, borderBottomColor: HAIRLINE },
+  emptyCard: {
+    alignItems: 'center',
+    paddingVertical: 26,
+    paddingHorizontal: 18,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    borderRadius: 16,
+    backgroundColor: '#fbfcfc',
+    marginTop: 14,
+  },
   row: { flexDirection: 'row', alignItems: 'center' },
   chip: {
     backgroundColor: '#f0f3f4',

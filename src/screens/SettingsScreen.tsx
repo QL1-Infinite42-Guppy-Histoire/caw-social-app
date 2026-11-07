@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 
-import { ConfirmSheet, S } from '../components/ui';
+import { ConfirmSheet, MONO, S } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { LANGS, tr } from '../i18n';
@@ -85,78 +85,96 @@ export default function SettingsScreen() {
     <ScrollView style={S.screen} contentContainerStyle={S.scrollPad}>
       <Text style={S.h1}>{tr('settings.title')}</Text>
 
-      {/* language */}
+      {/* language — section card with divider rows (v0.3.8) */}
       <Text style={[S.h2, { marginTop: 22 }]}>{tr('settings.language')}</Text>
-      {LANGS.map((l) => (
-        <Pressable
-          key={l.code}
-          style={[styles.langRow, app.lang === l.code && styles.langRowOn]}
-          onPress={() => app.changeLang(l.code)}
-        >
-          <Text style={[S.body, app.lang === l.code && styles.langOn]}>
-            {l.label}
-          </Text>
-          {app.lang === l.code ? <Text style={styles.check}>✓</Text> : null}
-        </Pressable>
-      ))}
+      <View style={S.cardFlush}>
+        {LANGS.map((l, i) => (
+          <Pressable
+            key={l.code}
+            style={[
+              styles.langRow,
+              i < LANGS.length - 1 && S.rowDivider,
+              app.lang === l.code && styles.langRowOn,
+            ]}
+            onPress={() => app.changeLang(l.code)}
+          >
+            <Text style={[S.body, app.lang === l.code && styles.langOn]}>
+              {l.label}
+            </Text>
+            {app.lang === l.code ? <Text style={styles.check}>✓</Text> : null}
+          </Pressable>
+        ))}
+      </View>
 
       {/* address */}
       <Text style={[S.h2, { marginTop: 24 }]}>{tr('settings.address')}</Text>
-      {app.address ? (
-        <Text style={[S.small, { marginTop: 6, fontSize: 12.5 }]}>
-          {app.address}
-        </Text>
-      ) : null}
-      <View style={[S.row, { marginTop: 10, gap: 12 }]}>
-        <Pressable style={S.ghostBtn} onPress={doCopy}>
-          <Text style={S.ghostBtnText}>{tr('settings.copy')}</Text>
-        </Pressable>
-        {copied ? <Text style={S.ok}>{tr('settings.copied')}</Text> : null}
+      <View style={S.cardBox}>
+        {app.address ? (
+          <Text style={[S.small, { fontSize: 12.5, fontFamily: MONO }]}>
+            {app.address}
+          </Text>
+        ) : null}
+        <View style={[S.row, { marginTop: 10, gap: 12 }]}>
+          <Pressable style={S.ghostBtn} onPress={doCopy}>
+            <Text style={S.ghostBtnText}>{tr('settings.copy')}</Text>
+          </Pressable>
+          {copied ? <Text style={S.ok}>{tr('settings.copied')}</Text> : null}
+        </View>
       </View>
 
       {/* backup / secret reveal (v0.3.1) */}
       <Text style={[S.h2, { marginTop: 24 }]}>{tr('settings.backup')}</Text>
-      <Pressable style={[S.ghostBtn, { marginTop: 10, alignSelf: 'flex-start' }]} onPress={() => setRevealOpen(true)}>
-        <Text style={S.ghostBtnText}>{tr('settings.backup')}</Text>
-      </Pressable>
+      <View style={S.cardBox}>
+        <Pressable style={[S.ghostBtn, { alignSelf: 'flex-start' }]} onPress={() => setRevealOpen(true)}>
+          <Text style={S.ghostBtnText}>{tr('settings.backup')}</Text>
+        </Pressable>
+      </View>
 
       {/* wallets (v0.2.0: several can live on this phone) */}
       <Text style={[S.h2, { marginTop: 24 }]}>{tr('wallets.title')}</Text>
-      {app.wallets.map((w) => {
-        const active =
-          app.address &&
-          w.address.toLowerCase() === app.address.toLowerCase();
-        return (
-          <View key={w.address} style={styles.walletRow}>
-            <Pressable
-              style={{ flex: 1 }}
-              onPress={() => {
-                if (!active) doSwitch(w);
-              }}
+      <View style={S.cardFlush}>
+        {app.wallets.map((w, i) => {
+          const active =
+            app.address &&
+            w.address.toLowerCase() === app.address.toLowerCase();
+          return (
+            <View
+              key={w.address}
+              style={[
+                styles.walletRow,
+                i < app.wallets.length - 1 && S.rowDivider,
+              ]}
             >
-              <Text style={[S.body, active && { fontWeight: '700' }]}>
-                {w.address.slice(0, 10)}…{w.address.slice(-6)}
-                {active ? '  ✓' : ''}
-              </Text>
-              <Text style={S.tiny}>
-                {w.kind === 'mnemonic'
-                  ? tr('wallets.kindWords')
-                  : tr('wallets.kindKey')}
-                {active ? ' · ' + tr('wallets.inUse') : ''}
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setDeleteOne(w)}
-              hitSlop={8}
-              style={styles.walletDel}
-            >
-              <Text style={styles.walletDelText}>
-                {tr('wallets.deleteOne')}
-              </Text>
-            </Pressable>
-          </View>
-        );
-      })}
+              <Pressable
+                style={{ flex: 1 }}
+                onPress={() => {
+                  if (!active) doSwitch(w);
+                }}
+              >
+                <Text style={[S.body, active && { fontWeight: '700' }]}>
+                  {w.address.slice(0, 10)}…{w.address.slice(-6)}
+                  {active ? '  ✓' : ''}
+                </Text>
+                <Text style={S.tiny}>
+                  {w.kind === 'mnemonic'
+                    ? tr('wallets.kindWords')
+                    : tr('wallets.kindKey')}
+                  {active ? ' · ' + tr('wallets.inUse') : ''}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setDeleteOne(w)}
+                hitSlop={8}
+                style={styles.walletDel}
+              >
+                <Text style={styles.walletDelText}>
+                  {tr('wallets.deleteOne')}
+                </Text>
+              </Pressable>
+            </View>
+          );
+        })}
+      </View>
       <Pressable
         style={[S.ghostBtn, { marginTop: 12, alignSelf: 'flex-start' }]}
         onPress={() => setAddOpen(true)}
@@ -174,11 +192,13 @@ export default function SettingsScreen() {
 
       {/* about */}
       <Text style={[S.h2, { marginTop: 26 }]}>{tr('settings.about')}</Text>
-      <Text style={[S.body, { marginTop: 6 }]}>{tr('settings.aboutBody')}</Text>
-      <Text style={[S.tiny, { marginTop: 14 }]}>
-        CAW Social v{APP_VERSION}
-      </Text>
-      <Text style={S.tiny}>one.guppyguide.cawsocial</Text>
+      <View style={S.cardBox}>
+        <Text style={S.body}>{tr('settings.aboutBody')}</Text>
+        <Text style={[S.tiny, { marginTop: 12 }]}>
+          CAW Social v{APP_VERSION}
+        </Text>
+        <Text style={S.tiny}>one.guppyguide.cawsocial</Text>
+      </View>
 
       {/* danger zone */}
       <Text style={[S.h2, { marginTop: 28, color: '#c62828' }]}>
@@ -247,12 +267,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: '#cfd9de',
-    borderRadius: 10,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    marginTop: 10,
   },
   langRowOn: { borderColor: ACCENT, backgroundColor: '#fff7f2' },
   langOn: { fontWeight: '700' },
@@ -272,12 +288,8 @@ const styles = StyleSheet.create({
   walletRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#cfd9de',
-    borderRadius: 10,
-    paddingVertical: 10,
+    paddingVertical: 11,
     paddingHorizontal: 14,
-    marginTop: 10,
     gap: 10,
   },
   walletDel: { paddingVertical: 6, paddingHorizontal: 4 },

@@ -249,15 +249,18 @@ export default function RevealSecretScreen({ onClose }: { onClose: () => void })
             {app.wallets.map((w) => (
               <Pressable
                 key={w.address}
-                style={{ borderWidth: 1, borderColor: '#e5e5e5', borderRadius: 14, padding: 14, marginTop: 10 }}
+                style={{ borderWidth: 1, borderColor: '#e5e5e5', borderRadius: 14, padding: 14, marginTop: 10, flexDirection: 'row', alignItems: 'center' }}
                 onPress={() => chooseWallet(w)}
               >
-                <Text style={[S.body, { fontWeight: '700' }]}>
-                  {w.address.slice(0, 10)}…{w.address.slice(-6)}
-                </Text>
-                <Text style={[S.small, { marginTop: 4 }]}>
-                  {w.kind === 'mnemonic' ? tr('reveal.phrase') : tr('reveal.key')}
-                </Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[S.body, { fontWeight: '700' }]}>
+                    {w.address.slice(0, 10)}…{w.address.slice(-6)}
+                  </Text>
+                  <Text style={[S.small, { marginTop: 4 }]}>
+                    {w.kind === 'mnemonic' ? tr('reveal.phrase') : tr('reveal.key')}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 17, color: '#536471' }}>›</Text>
               </Pressable>
             ))}
           </>
@@ -280,7 +283,9 @@ export default function RevealSecretScreen({ onClose }: { onClose: () => void })
         {step === 'noPhrase' ? (
           <>
             <Text style={S.h2}>{tr('reveal.noPhraseTitle')}</Text>
-            <Text style={[S.body, { marginTop: 10 }]}>{tr('reveal.noPhraseBody')}</Text>
+            <View style={S.cardBox}>
+              <Text style={S.body}>{tr('reveal.noPhraseBody')}</Text>
+            </View>
             <Pressable style={[S.bigBtn, { marginTop: 18 }]} onPress={() => chooseMode('key')}>
               <Text style={S.bigBtnText}>{tr('reveal.key')}</Text>
             </Pressable>
@@ -290,7 +295,9 @@ export default function RevealSecretScreen({ onClose }: { onClose: () => void })
         {step === 'intro' ? (
           <>
             <Text style={S.h2}>{tr('reveal.introTitle')}</Text>
-            <Text style={[S.body, { marginTop: 10, lineHeight: 22 }]}>{tr('reveal.introBody')}</Text>
+            <View style={S.cardBox}>
+              <Text style={[S.body, { lineHeight: 22 }]}>{tr('reveal.introBody')}</Text>
+            </View>
             <Pressable style={[S.bigBtn, { marginTop: 18 }]} onPress={() => setStep('quiz')}>
               <Text style={S.bigBtnText}>{tr('reveal.start')}</Text>
             </Pressable>
@@ -340,7 +347,9 @@ export default function RevealSecretScreen({ onClose }: { onClose: () => void })
         {step === 'password' ? (
           <>
             <Text style={S.h2}>{tr('reveal.pwTitle')}</Text>
-            <Text style={[S.body, { marginTop: 10, lineHeight: 22 }]}>{tr('reveal.pwBody')}</Text>
+            <View style={S.cardBox}>
+              <Text style={[S.body, { lineHeight: 22 }]}>{tr('reveal.pwBody')}</Text>
+            </View>
             <TextInput
               style={[S.input, { marginTop: 14 }]}
               value={pw}
@@ -363,7 +372,9 @@ export default function RevealSecretScreen({ onClose }: { onClose: () => void })
         {step === 'setup' ? (
           <>
             <Text style={S.h2}>{tr('reveal.setupTitle')}</Text>
-            <Text style={[S.body, { marginTop: 10, lineHeight: 22 }]}>{tr('reveal.setupBody')}</Text>
+            <View style={S.cardBox}>
+              <Text style={[S.body, { lineHeight: 22 }]}>{tr('reveal.setupBody')}</Text>
+            </View>
             <TextInput
               style={[S.input, { marginTop: 14 }]}
               value={pw}

@@ -539,26 +539,23 @@ export default function ProfileScreen({
           <Pressable
             onPress={() => openFollowList('following')}
             hitSlop={6}
-            style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+            style={({ pressed }) => [styles.countCell, pressed && { opacity: 0.6 }]}
           >
-            <Text style={S.small}>
-              <Text style={styles.countNum}>
-                {followLists ? followLists.following.length : '—'}
-              </Text>{' '}
-              {tr('followlist.following')}
+            <Text style={styles.countNum}>
+              {followLists ? followLists.following.length : '—'}
             </Text>
+            <Text style={S.tiny}>{tr('followlist.following')}</Text>
           </Pressable>
+          <View style={styles.countDivider} />
           <Pressable
             onPress={() => openFollowList('followers')}
             hitSlop={6}
-            style={({ pressed }) => [pressed && { opacity: 0.6 }]}
+            style={({ pressed }) => [styles.countCell, pressed && { opacity: 0.6 }]}
           >
-            <Text style={S.small}>
-              <Text style={styles.countNum}>
-                {followers !== null ? followers.toString() : '—'}
-              </Text>{' '}
-              {tr('followlist.followers')}
+            <Text style={styles.countNum}>
+              {followers !== null ? followers.toString() : '—'}
             </Text>
+            <Text style={S.tiny}>{tr('followlist.followers')}</Text>
           </Pressable>
         </View>
 
@@ -598,8 +595,10 @@ export default function ProfileScreen({
               </Text>
             </View>
           ) : (
-            <View style={{ padding: 24, alignItems: 'center' }}>
-              <Text style={S.small}>{tr('profile.empty')}</Text>
+            <View style={{ paddingHorizontal: 16 }}>
+              <View style={S.emptyCard}>
+                <Text style={S.small}>{tr('profile.empty')}</Text>
+              </View>
             </View>
           )
         }
@@ -913,11 +912,17 @@ const styles = StyleSheet.create({
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   countsRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 20,
-    marginTop: 12,
+    alignItems: 'stretch',
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: '#eff3f4',
+    borderRadius: 14,
+    backgroundColor: '#fff',
+    overflow: 'hidden',
   },
-  countNum: { fontSize: 14, fontWeight: '800', color: '#0f1419' },
+  countCell: { flex: 1, alignItems: 'center', paddingVertical: 10, gap: 1 },
+  countDivider: { width: 1, backgroundColor: '#eff3f4' },
+  countNum: { fontSize: 16, fontWeight: '800', color: '#0f1419' },
   listTitle: { fontSize: 16, fontWeight: '800', color: '#0f1419', marginTop: 6 },
   tabRow: {
     flexDirection: 'row',
