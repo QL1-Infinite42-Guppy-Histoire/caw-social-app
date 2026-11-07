@@ -14,9 +14,24 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.1.2** — released 2026-11-07.
+- **現在版 / Current: v0.1.3** — released 2026-11-07.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.1.2/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.1.3/caw-social.apk
+  v0.1.3 removes the last place the one-id shift could still show
+  itself. The chain's `tokenURI` metadata is shifted just like the
+  `tokens()` rows (token 190's card says "neptune", token 189's card
+  says "dreamin", while the registry `usernames(id)` says
+  "loveforqom" / "neptune"), and the avatar used to render the
+  picture from that metadata — so a name could still *look* like a
+  different one even with correct labels. The app no longer reads
+  `tokenURI` at all: every avatar is generated on-device from the
+  registry username (initial letter + a colour hashed from the
+  name), and a whole-source audit confirms no `tokenURI`-derived
+  name or picture remains in any screen (name picker, my-names
+  list, profiles, timeline, compose). A user's own off-chain
+  custom picture still wins over the generated avatar. Verified
+  with `node scripts/verify-display.mjs` (live, including ids
+  188/189/190) plus all earlier suites.
   v0.1.2 fixes the identity mix-up reported the same evening ("the
   app shows me as @loveforqom, but I am @neptune"): "my names" is no
   longer read from `CawName.tokens()` at all — not even its ids. It
@@ -73,7 +88,7 @@ longer works. This app keeps the key on your phone (Android
 Keystore-backed secure storage) and signs in-app, exactly like the
 original signers did.
 
-## Features (v0.1.2)
+## Features (v0.1.3)
 
 - Wallet: create new (secret words) or import (secret words / private
   key). QL1 only. Unlock by password or biometrics — asked when the

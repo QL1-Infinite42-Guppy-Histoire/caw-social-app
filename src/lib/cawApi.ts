@@ -3,8 +3,6 @@
  * the verified web front end. No keys are handled here; writes go
  * through src/lib/wallet.ts with the in-app signer.
  */
-import { decodeBase64, toUtf8String } from 'ethers';
-
 import { API, CAW_ACTIONS, CAW_NAME, EXPLORER, MINTER, QCAW, RPC, SEL } from '../config';
 import {
   CawAction,
@@ -171,7 +169,6 @@ export function tokensOf(owner: string): Promise<NameToken[]> {
 export function clearNameCaches(): void {
   ownerTokensCache.clear();
   nameCache.clear();
-  avatarCache.clear();
 }
 
 const nameCache = new Map<bigint, Promise<string | null>>();
@@ -250,42 +247,16 @@ export async function resolveNameId(rawName: string): Promise<ResolveResult> {
 }
 
 /* ---------- avatars ---------- */
-const avatarCache = new Map<bigint, Promise<string | null>>();
-/** Avatar image for a name id (from its picture data), cached. */
-export function avatarFor(idIn: bigint): Promise<string | null> {
-  const id = BigInt(idIn);
-  if (!avatarCache.has(id)) {
-    const p = (async (): Promise<string | null> => {
-      let result: string | null = null;
-      try {
-        const uri = await withRetry(
-          () => readStr(CAW_NAME, SEL.tokenURI + word(id)),
-          2,
-          400,
-        );
-        if (uri.startsWith('data:application/json;base64,')) {
-          const meta = JSON.parse(
-            toUtf8String(decodeBase64(uri.split(',')[1])),
-          );
-          if (meta.image) {
-            result = meta.image.startsWith('ipfs://')
-              ? 'https://ipfs.io/ipfs/' + meta.image.slice(7)
-              : meta.image;
-          }
-        } else if (uri.startsWith('http')) {
-          result = uri;
-        }
-      } catch {
-        /* no picture, or a transient failure */
-      }
-      // Same rule as names: a failure-driven null must not stick.
-      if (!result) avatarCache.delete(id);
-      return result;
-    })();
-    avatarCache.set(id, p);
-  }
-  return avatarCache.get(id)!;
-}
+/**
+ * There is deliberately NO chain-read avatar picture anymore
+ * (removed in v0.1.3). The old reader took the image out of
+ * tokenURI(id) metadata — but on QL1 that metadata is shifted by
+ * one id (token 190's card says "neptune" while usernames(190) is
+ * "loveforqom"), so the picture itself carried the wrong name.
+ * Avatars are now generated on-device from the registry username
+ * (see avatarSpec in cawCore.ts); a user's own off-chain custom
+ * picture still wins over the generated one.
+ */
 
 /* ---------- balances & counts ---------- */
 export async function walletBalances(

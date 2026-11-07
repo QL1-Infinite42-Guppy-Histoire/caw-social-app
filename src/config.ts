@@ -18,7 +18,8 @@ export const SEL = {
   usernames: '0x136dd963',
   ownerOf: '0x6352211e',
   tokenOfOwnerByIndex: '0x2f745c59',
-  tokenURI: '0xc87b56dd',
+  // No tokenURI selector on purpose (v0.1.3): its metadata is
+  // shifted by one id on QL1, so the app never reads it.
   cawBalanceOf: '0x532f3a34',
   totalSupply: '0x18160ddd',
   balanceOf: '0x70a08231',

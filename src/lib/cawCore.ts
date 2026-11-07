@@ -105,6 +105,44 @@ export function decTokensRet(hexIn: string): NameToken[] {
   return out;
 }
 
+/* ---------- generated avatars ---------- */
+/**
+ * The app's avatars are GENERATED from the registry username
+ * (usernames(id)) — never from tokenURI data. On QL1 the tokenURI
+ * metadata (both its name field and the picture it points at) is
+ * shifted by one id: token 190's card literally says "neptune"
+ * while usernames(190) is "loveforqom". Rendering that picture
+ * would keep the mix-up alive even with correct labels, so the
+ * only picture a name gets here is its initial letter on a colour
+ * derived from the registry name itself. (A user's own on-device
+ * custom picture, when set, still wins — see profileCustom.ts.)
+ */
+const AVATAR_COLORS = [
+  '#1d9bf0', '#6c4bd8', '#e0245e', '#e8590c',
+  '#00ba7c', '#0f7ae5', '#7c3aed', '#c9184a',
+  '#087f5b', '#1971c2', '#a61e4d', '#5f3dc4',
+];
+
+function avatarHash(seed: string): number {
+  // FNV-1a, 32-bit — small, deterministic on every platform.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+export function avatarSpec(
+  username: string | null | undefined,
+  id: bigint,
+): { letter: string; bg: string } {
+  const name = (username || '').trim();
+  const letter = name ? name.charAt(0).toUpperCase() : '?';
+  const seed = name ? name.toLowerCase() : 'id:' + id.toString();
+  return { letter, bg: AVATAR_COLORS[avatarHash(seed) % AVATAR_COLORS.length] };
+}
+
 /** Format an 18-decimal amount for display (up to 6 fraction digits). */
 export function fmtAmount(wei: bigint): string {
   const s = BigInt(wei).toString().padStart(19, '0');

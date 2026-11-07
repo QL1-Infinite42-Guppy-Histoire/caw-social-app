@@ -48,6 +48,7 @@ dist-web/
 scripts/.build/
 scripts/.build-fixes/
 scripts/.build-identity/
+scripts/.build-display/
 
 # local env / keys
 .env
