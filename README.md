@@ -14,9 +14,21 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.3.3** — released 2026-11-08.
+- **現在版 / Current: v0.3.4** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.3/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.4/caw-social.apk
+  v0.3.4 tidies the Home top area: the wallet info is now ONE
+  clean card (posting name's avatar + display name + @username, a
+  tappable address chip that copies the full address, then CAW
+  as the large figure and QOM as the smaller one — single-line
+  auto-shrinking numbers, so trillion-scale CAW balances never
+  overflow), and the notification bell moved into a slim sticky
+  mini header (app logo + "CAW Social" on the left, round bell
+  button on the right) that stays on screen while the timeline
+  scrolls, with an unread badge counted by the same inbox scan
+  the bell opens. The 🐦 emoji that stood in for the app logo is
+  gone: the real emblem artwork now appears in the app header,
+  the boot screen, onboarding and the unlock screen.
   v0.3.3 adds one small thing: the HuntersSwap entry screen now
   shows your **deposit address above the balances** (both buy and
   sell views) — the active wallet's own address, the same on every

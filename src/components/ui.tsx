@@ -29,6 +29,32 @@ import type { ProfileCustom } from '../lib/profileCustom';
 
 export const HAIRLINE = '#eff3f4';
 
+/**
+ * The app logo (v0.3.4): the user's emblem artwork, the same image
+ * as the launcher icon (assets/icon.png — yellow emblem on navy).
+ * Replaces the 🐦 emoji that used to stand in for the app mark in
+ * headers, onboarding and the unlock screen. Rounded corners so
+ * the navy square reads as an app icon at small sizes.
+ */
+export function AppLogo({
+  size = 28,
+  radius,
+}: {
+  size?: number;
+  radius?: number;
+}) {
+  return (
+    <Image
+      source={require('../../assets/icon.png')}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: radius ?? Math.max(4, Math.round(size * 0.26)),
+      }}
+    />
+  );
+}
+
 export const S = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#fff' },
   scrollPad: { padding: 16, paddingBottom: 32 },

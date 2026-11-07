@@ -25,7 +25,7 @@ import {
   type UnlockMethod,
   type WalletKind,
 } from '../lib/walletStore';
-import { S } from '../components/ui';
+import { AppLogo, S } from '../components/ui';
 
 type Step = 'choose' | 'showWords' | 'import' | 'unlockSetup';
 
@@ -124,7 +124,7 @@ export default function OnboardingScreen() {
     <SafeAreaView style={S.screen} edges={['top', 'bottom']}>
       <ScrollView contentContainerStyle={S.scrollPad}>
         <View style={[S.row, { justifyContent: 'space-between' }]}>
-          <Text style={{ fontSize: 34 }}>🐦</Text>
+          <AppLogo size={38} />
           <Pressable
             onPress={() => {
               const idx = LANGS.findIndex((l) => l.code === app.lang);

@@ -10,7 +10,11 @@ import {
   View,
 } from 'react-native';
 
+import * as Clipboard from 'expo-clipboard';
+
 import {
+  AppLogo,
+  Avatar,
   ConfirmSheet,
   HAIRLINE,
   LoadMoreFooter,
@@ -27,6 +31,8 @@ import {
   buildFollowIndex,
   refinedFollowListsOf,
 } from '../lib/followIndex';
+import { loadSeen, scanReactions } from '../lib/inbox';
+import { storeKV } from '../lib/stores';
 import InboxScreen from './InboxScreen';
 import SearchScreen from './SearchScreen';
 
@@ -247,13 +253,155 @@ export default function TimelineScreen() {
     }
   }, [app, pending]);
 
-  const shortAddress = address
-    ? address.slice(0, 10) + '…' + address.slice(-6)
+  /* ---------- sticky mini header: unread badge (v0.3.4) ----------
+   * The bell moved out of the scrolling list header into a slim
+   * bar that stays on screen. Its badge is the count of reactions
+   * newer than the inbox read position — the exact same scan the
+   * Inbox screen itself runs (loadSeen + scanReactions), so the
+   * number always matches what opening the bell will show. After
+   * the inbox closes (it marks everything seen), the count is
+   * refreshed and drops to zero. */
+  const [unread, setUnread] = useState(0);
+  const badgeBusyRef = React.useRef(false);
+  const refreshBadge = useCallback(async () => {
+    if (!address || myTokens.length === 0) {
+      setUnread(0);
+      return;
+    }
+    if (badgeBusyRef.current) return;
+    badgeBusyRef.current = true;
+    try {
+      const myIds = new Set(myTokens.map((t) => t.id.toString()));
+      const seen = await loadSeen(storeKV, address);
+      const r = await scanReactions(myIds, seen);
+      setUnread(r.items.length);
+    } catch {
+      /* keep the last count; the next refresh retries */
+    } finally {
+      badgeBusyRef.current = false;
+    }
+  }, [address, myTokens]);
+
+  useEffect(() => {
+    refreshBadge();
+  }, [refreshBadge]);
+
+  const wasInboxOpenRef = React.useRef(false);
+  useEffect(() => {
+    if (wasInboxOpenRef.current && !inboxOpen) refreshBadge();
+    wasInboxOpenRef.current = inboxOpen;
+  }, [inboxOpen, refreshBadge]);
+
+  /* ---------- wallet card identity + address chip (v0.3.4) ---------- */
+  const actingCustom = acting ? app.customFor(acting.id) : undefined;
+  const displayName = acting
+    ? actingCustom?.displayName
+      ? actingCustom.displayName
+      : '@' + acting.username
     : '—';
+  const subName =
+    acting && actingCustom?.displayName ? '@' + acting.username : null;
+  const chipAddress = address
+    ? address.slice(0, 6) + '…' + address.slice(-4)
+    : '—';
+  const [addrCopied, setAddrCopied] = useState(false);
+  const copyAddr = useCallback(async () => {
+    if (!address) return;
+    await Clipboard.setStringAsync(address);
+    setAddrCopied(true);
+    setTimeout(() => setAddrCopied(false), 2000);
+  }, [address]);
+
+  const miniHeader = (
+    <View style={styles.miniHeader}>
+      <View style={styles.miniBrand}>
+        <AppLogo size={26} />
+        <Text style={styles.miniBrandText}>{tr('app.name')}</Text>
+      </View>
+      <Pressable
+        onPress={() => setInboxOpen(true)}
+        hitSlop={8}
+        style={({ pressed }) => [
+          styles.bellBtn,
+          pressed && { backgroundColor: '#e3e8ea' },
+        ]}
+        accessibilityLabel={tr('inbox.title')}
+      >
+        <Text style={{ fontSize: 19 }}>🔔</Text>
+        {unread > 0 ? (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>
+              {unread > 99 ? '99+' : String(unread)}
+            </Text>
+          </View>
+        ) : null}
+      </Pressable>
+    </View>
+  );
 
   const header = (
     <View>
-      <View style={styles.topRow}>
+      <View style={styles.walletCard}>
+        <View style={[S.row, { alignItems: 'center', gap: 10 }]}>
+          {acting ? (
+            <Avatar
+              nameId={acting.id}
+              size={42}
+              customUri={actingCustom?.avatarPath}
+            />
+          ) : null}
+          <View style={{ flex: 1 }}>
+            <Text
+              style={[S.body, { fontWeight: '800' }]}
+              numberOfLines={1}
+            >
+              {displayName}
+            </Text>
+            {subName ? (
+              <Text style={S.small} numberOfLines={1}>
+                {subName}
+              </Text>
+            ) : null}
+          </View>
+          <Pressable
+            style={({ pressed }) => [
+              styles.chip,
+              pressed && { backgroundColor: '#e3e8ea' },
+            ]}
+            onPress={copyAddr}
+            accessibilityLabel={tr('hs.depositAddress')}
+          >
+            <Text style={styles.chipText}>
+              {addrCopied ? tr('hs.addressCopied') : chipAddress}
+            </Text>
+          </Pressable>
+        </View>
+        <View style={[S.row, { marginTop: 14, gap: 16 }]}>
+          <View style={{ flex: 1.35 }}>
+            <Text style={styles.statLabel}>{tr('home.qcaw')}</Text>
+            <Text
+              style={styles.statBig}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.45}
+            >
+              {qcaw !== null ? fmtAmount(qcaw) : '—'} CAW
+            </Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.statLabel}>{tr('home.qom')}</Text>
+            <Text
+              style={styles.statSmall}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.45}
+            >
+              {qom !== null ? fmtAmount(qom) : '—'} QOM
+            </Text>
+          </View>
+        </View>
+      </View>
+      <View style={styles.searchRow}>
         <Pressable
           style={({ pressed }) => [
             styles.searchPill,
@@ -264,43 +412,6 @@ export default function TimelineScreen() {
         >
           <Text style={styles.searchPillText}>🔍 {tr('search.ph')}</Text>
         </Pressable>
-        <Pressable
-          onPress={() => setInboxOpen(true)}
-          hitSlop={10}
-          style={({ pressed }) => [
-            styles.bellBtn,
-            pressed && { backgroundColor: '#e3e8ea' },
-          ]}
-          accessibilityLabel={tr('inbox.title')}
-        >
-          <Text style={{ fontSize: 19 }}>🔔</Text>
-        </Pressable>
-      </View>
-      <View style={styles.walletCard}>
-        <Text style={styles.walletAddr}>{shortAddress}</Text>
-      <View style={[S.row, { marginTop: 8, flexWrap: 'wrap', gap: 16 }]}>
-        <Text style={S.body}>
-          {qom !== null ? fmtAmount(qom) : '—'} QOM
-        </Text>
-        <Text style={S.small}>{tr('home.qom')}</Text>
-      </View>
-      <View style={[S.row, { marginTop: 4, flexWrap: 'wrap', gap: 16 }]}>
-        <Text style={S.body}>
-          {qcaw !== null ? fmtAmount(qcaw) : '—'} CAW
-        </Text>
-        <Text style={S.small}>{tr('home.qcaw')}</Text>
-      </View>
-        <View style={[S.row, { marginTop: 8, flexWrap: 'wrap', gap: 8 }]}>
-          <Text style={S.small}>{tr('home.postAs')}</Text>
-          <Text style={[S.body, { fontWeight: '700' }]}>
-            {acting
-              ? app.customFor(acting.id) &&
-                app.customFor(acting.id)!.displayName
-                ? app.customFor(acting.id)!.displayName
-                : '@' + acting.username
-              : '—'}
-          </Text>
-        </View>
       </View>
       <View style={styles.segRow}>
         <Pressable
@@ -333,6 +444,7 @@ export default function TimelineScreen() {
   if (mode === 'latest' && loading && items.length === 0) {
     return (
       <View style={S.screen}>
+        {miniHeader}
         {header}
         <View style={styles.center}>
           <ActivityIndicator color={ACCENT} />
@@ -345,6 +457,7 @@ export default function TimelineScreen() {
   if (mode === 'latest' && loadFailed && items.length === 0) {
     return (
       <View style={S.screen}>
+        {miniHeader}
         {header}
         <View style={styles.center}>
           <Text style={S.err}>{tr('tl.loadFail')}</Text>
@@ -376,6 +489,7 @@ export default function TimelineScreen() {
 
   return (
     <View style={S.screen}>
+      {miniHeader}
       <FlatList
         data={shownItems}
         keyExtractor={(item, idx) => item.hash + ':' + idx}
@@ -481,20 +595,78 @@ export default function TimelineScreen() {
 }
 
 const styles = StyleSheet.create({
-  topRow: {
+  /* Sticky mini header (v0.3.4): rendered OUTSIDE the FlatList, so
+     the bell (and its unread badge) is reachable at any scroll
+     position. */
+  miniHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingRight: 12,
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: HAIRLINE,
   },
+  miniBrand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  miniBrandText: { fontSize: 15.5, fontWeight: '800', color: '#0f1419' },
   bellBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 12,
-    marginLeft: 6,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    backgroundColor: '#f7f9f9',
   },
+  badge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    minWidth: 19,
+    height: 19,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    backgroundColor: ACCENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  badgeText: { fontSize: 10.5, fontWeight: '800', color: '#fff' },
+  /* Wallet card (v0.3.4): one clean card — identity + copyable
+     address chip on row 1, CAW (large) and QOM (smaller) stats on
+     row 2. Numbers are single-line with adjustsFontSizeToFit so
+     trillion-scale CAW amounts shrink instead of overflowing. */
+  chip: {
+    backgroundColor: '#eff3f4',
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  chipText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0f1419',
+    fontFamily: 'monospace',
+  },
+  statLabel: { fontSize: 12.5, color: '#536471', fontWeight: '600' },
+  statBig: {
+    fontSize: 21,
+    fontWeight: '800',
+    color: '#0f1419',
+    marginTop: 2,
+    fontVariant: ['tabular-nums'],
+  },
+  statSmall: {
+    fontSize: 16.5,
+    fontWeight: '700',
+    color: '#0f1419',
+    marginTop: 3,
+    fontVariant: ['tabular-nums'],
+  },
+  searchRow: { paddingHorizontal: 16, paddingTop: 12 },
   segRow: {
     flexDirection: 'row',
     borderBottomWidth: 1,
@@ -512,9 +684,6 @@ const styles = StyleSheet.create({
   segText: { fontSize: 14.5, color: '#536471', fontWeight: '600' },
   segTextOn: { color: '#0f1419', fontWeight: '800' },
   searchPill: {
-    marginLeft: 16,
-    marginRight: 4,
-    marginTop: 12,
     backgroundColor: '#eff3f4',
     borderRadius: 999,
     paddingHorizontal: 14,
@@ -522,12 +691,19 @@ const styles = StyleSheet.create({
   },
   searchPillText: { fontSize: 14.5, color: '#536471' },
   walletCard: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: HAIRLINE,
+    marginHorizontal: 12,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    borderRadius: 16,
     backgroundColor: '#fff',
+    shadowColor: '#0f1419',
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
-  walletAddr: { fontSize: 13, color: '#536471', fontWeight: '600' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
 });

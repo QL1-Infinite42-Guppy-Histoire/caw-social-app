@@ -17,7 +17,7 @@ import {
 import { ACCENT } from './src/config';
 import { AppProvider, useApp } from './src/context/AppContext';
 import { LANGS, tr } from './src/i18n';
-import { PasswordPrompt, S } from './src/components/ui';
+import { AppLogo, PasswordPrompt, S } from './src/components/ui';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import UnlockScreen from './src/screens/UnlockScreen';
 import TimelineScreen from './src/screens/TimelineScreen';
@@ -51,9 +51,12 @@ function LangToggle() {
 function Header() {
   return (
     <View style={styles.header}>
-      <View>
-        <Text style={styles.brand}>🐦 {tr('app.name')}</Text>
-        <Text style={S.tiny}>{tr('app.tagline')}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
+        <AppLogo size={34} />
+        <View>
+          <Text style={styles.brand}>{tr('app.name')}</Text>
+          <Text style={S.tiny}>{tr('app.tagline')}</Text>
+        </View>
       </View>
       <LangToggle />
     </View>
@@ -223,7 +226,7 @@ function Shell() {
   if (!app.ready) {
     content = (
       <SafeAreaView style={[S.screen, styles.center]}>
-        <Text style={{ fontSize: 44 }}>🐦</Text>
+        <AppLogo size={56} />
         <Text style={S.h1}>{tr('app.name')}</Text>
         <Text style={S.small}>{tr('common.loading')}</Text>
       </SafeAreaView>

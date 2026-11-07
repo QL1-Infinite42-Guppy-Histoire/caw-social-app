@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
-import { S } from '../components/ui';
+import { AppLogo, S } from '../components/ui';
 
 export default function UnlockScreen() {
   const app = useApp();
@@ -30,7 +30,7 @@ export default function UnlockScreen() {
       style={[S.screen, { alignItems: 'center', justifyContent: 'center', padding: 24 }]}
       edges={['top', 'bottom']}
     >
-      <Text style={{ fontSize: 48 }}>🐦</Text>
+      <AppLogo size={60} />
       <Text style={[S.h1, { marginTop: 10 }]}>{tr('app.name')}</Text>
       <Text style={[S.body, { marginTop: 6 }]}>{tr('unlock.title')}</Text>
       {app.address ? (
