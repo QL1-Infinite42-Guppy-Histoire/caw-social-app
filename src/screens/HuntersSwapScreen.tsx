@@ -27,7 +27,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatUnits, parseUnits } from 'ethers';
 import * as Clipboard from 'expo-clipboard';
 
-import { ConfirmSheet, MONO, S } from '../components/ui';
+import { AppLogo, ConfirmSheet, HAIRLINE, MONO, S } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
@@ -112,6 +112,8 @@ const fmtUsd = (n: number) =>
 const fmtTok = (raw: bigint, dec: number) =>
   dec === 18 ? fmtAmount(raw) : formatUnits(raw, dec);
 
+/** Plain label/value row — used by the plan/fee breakdown views
+ *  (cost lines, not coin balances, so no badge treatment there). */
 function balLine(label: string, raw: bigint | null, dec: number, sym: string) {
   return (
     <View style={[S.row, { justifyContent: 'space-between', marginTop: 6 }]}>
@@ -119,6 +121,133 @@ function balLine(label: string, raw: bigint | null, dec: number, sym: string) {
       <Text style={[S.body, { fontWeight: '600' }]}>
         {raw === null ? '—' : fmtTok(raw, dec) + ' ' + sym}
       </Text>
+    </View>
+  );
+}
+
+/* Balance list styling (v0.3.7): the plain text rows became one
+ * rounded card (same language as the Home wallet card) with a
+ * circular coin badge per row, the chain name under the token
+ * name, the amount bold on the right and — only where the app
+ * already has a price (BNB/ETH spot, USDT = $1) — a small USD
+ * line under it. Zero-balance rows are dimmed so real holdings
+ * stand out. Display only: values and formatting are unchanged. */
+const COIN_BADGE: Record<string, { bg: string; fg: string }> = {
+  BNB: { bg: '#F0B90B', fg: '#1F2329' },
+  ETH: { bg: '#627EEA', fg: '#FFFFFF' },
+  USDT: { bg: '#26A17B', fg: '#FFFFFF' },
+  '42': { bg: '#151426', fg: '#F5C542' },
+  QOM: { bg: '#8E44AD', fg: '#FFFFFF' },
+};
+
+function CoinBadge({ sym }: { sym: string }) {
+  if (sym === 'CAW') {
+    return (
+      <View
+        style={{
+          width: 38,
+          height: 38,
+          borderRadius: 19,
+          overflow: 'hidden',
+          backgroundColor: '#151426',
+        }}
+      >
+        <AppLogo size={38} />
+      </View>
+    );
+  }
+  const c = COIN_BADGE[sym] ?? { bg: '#868E96', fg: '#FFFFFF' };
+  return (
+    <View
+      style={{
+        width: 38,
+        height: 38,
+        borderRadius: 19,
+        backgroundColor: c.bg,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <Text
+        style={{
+          color: c.fg,
+          fontWeight: '800',
+          fontSize: sym.length > 3 ? 9.5 : sym.length > 2 ? 11 : 14,
+        }}
+      >
+        {sym}
+      </Text>
+    </View>
+  );
+}
+
+function CoinRow({
+  name,
+  chain,
+  raw,
+  dec,
+  sym,
+  usd,
+  last,
+}: {
+  name: string;
+  chain: string;
+  raw: bigint | null;
+  dec: number;
+  sym: string;
+  usd?: number | null;
+  last?: boolean;
+}) {
+  const zero = raw !== null && raw === 0n;
+  return (
+    <View
+      style={[
+        {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 11,
+          paddingVertical: 10,
+          paddingHorizontal: 13,
+        },
+        !last && { borderBottomWidth: 1, borderBottomColor: HAIRLINE },
+        zero && { opacity: 0.45 },
+      ]}
+    >
+      <CoinBadge sym={sym} />
+      <View style={{ flex: 1 }}>
+        <Text style={[S.body, { fontWeight: '600' }]}>{name}</Text>
+        <Text style={S.tiny}>{chain}</Text>
+      </View>
+      <View style={{ alignItems: 'flex-end', flexShrink: 1 }}>
+        <Text
+          style={[S.body, { fontWeight: '700', fontVariant: ['tabular-nums'] }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.6}
+        >
+          {raw === null ? '—' : fmtTok(raw, dec) + ' ' + sym}
+        </Text>
+        {usd !== null && usd !== undefined ? (
+          <Text style={S.tiny}>≈ {fmtUsd(usd)}</Text>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function CoinCard({ children }: { children: React.ReactNode }) {
+  return (
+    <View
+      style={{
+        backgroundColor: '#fff',
+        borderWidth: 1,
+        borderColor: HAIRLINE,
+        borderRadius: 16,
+        marginTop: 10,
+        overflow: 'hidden',
+      }}
+    >
+      {children}
     </View>
   );
 }
@@ -772,14 +901,21 @@ function BuySection({ onClose }: { onClose: () => void }) {
             <Text style={S.body}>{tr('hs.intro')}</Text>
             <DepositAddressRow address={address} />
             <Text style={[S.h2, { marginTop: 18 }]}>{tr('hs.yourCoins')}</Text>
-            {balLine('BNB (BSC)', balances?.bscNative ?? null, 18, 'BNB')}
-            {balLine('USDT (BSC)', balances?.bscUsdt ?? null, 18, 'USDT')}
-            {balLine('ETH (Ethereum)', balances?.ethNative ?? null, 18, 'ETH')}
-            {balLine('USDT (Ethereum)', balances?.ethUsdt ?? null, 6, 'USDT')}
-            {balLine('42', balances?.infNative ?? null, 18, '42')}
-            {balLine('USDT (42 Chain)', balances?.infUsdt ?? null, 18, 'USDT')}
-            {balLine('QOM (QL1)', balances?.ql1Native ?? null, 18, 'QOM')}
-            {balLine('CAW (QL1)', balances?.ql1Qcaw ?? null, 18, 'CAW')}
+            <CoinCard>
+              <CoinRow name="BNB" chain="BSC" raw={balances?.bscNative ?? null} dec={18} sym="BNB"
+                usd={balances?.bscNative != null && bnbUsd ? Number(formatUnits(balances.bscNative, 18)) * bnbUsd : null} />
+              <CoinRow name="USDT" chain="BSC" raw={balances?.bscUsdt ?? null} dec={18} sym="USDT"
+                usd={balances?.bscUsdt != null ? Number(formatUnits(balances.bscUsdt, 18)) : null} />
+              <CoinRow name="ETH" chain="Ethereum" raw={balances?.ethNative ?? null} dec={18} sym="ETH"
+                usd={balances?.ethNative != null && ethUsd ? Number(formatUnits(balances.ethNative, 18)) * ethUsd : null} />
+              <CoinRow name="USDT" chain="Ethereum" raw={balances?.ethUsdt ?? null} dec={6} sym="USDT"
+                usd={balances?.ethUsdt != null ? Number(formatUnits(balances.ethUsdt, 6)) : null} />
+              <CoinRow name="42" chain="42 Chain" raw={balances?.infNative ?? null} dec={18} sym="42" />
+              <CoinRow name="USDT" chain="42 Chain" raw={balances?.infUsdt ?? null} dec={18} sym="USDT"
+                usd={balances?.infUsdt != null ? Number(formatUnits(balances.infUsdt, 18)) : null} />
+              <CoinRow name="QOM" chain="QL1" raw={balances?.ql1Native ?? null} dec={18} sym="QOM" />
+              <CoinRow name="CAW" chain="QL1" raw={balances?.ql1Qcaw ?? null} dec={18} sym="CAW" last />
+            </CoinCard>
 
             <Text style={[S.h2, { marginTop: 18 }]}>{tr('hs.amountTitle')}</Text>
             {(['bsc', 'ethereum'] as EntryKey[]).map((e) => (
@@ -794,13 +930,18 @@ function BuySection({ onClose }: { onClose: () => void }) {
                   marginTop: 10,
                 }}
               >
-                <Text style={[S.body, { fontWeight: '700' }]}>
-                  {tr(e === 'bsc' ? 'hs.fromBsc' : 'hs.fromEth')}
-                </Text>
-                <Text style={S.small}>
-                  {fmtTok(nativeBalance(e), 18)} {e === 'bsc' ? 'BNB' : 'ETH'}
-                  {nativePrice(e) ? ' · ' + fmtUsd(Number(formatUnits(nativeBalance(e), 18)) * (nativePrice(e) ?? 0)) : ''}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+                  <CoinBadge sym={e === 'bsc' ? 'BNB' : 'ETH'} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[S.body, { fontWeight: '700' }]}>
+                      {tr(e === 'bsc' ? 'hs.fromBsc' : 'hs.fromEth')}
+                    </Text>
+                    <Text style={S.small}>
+                      {fmtTok(nativeBalance(e), 18)} {e === 'bsc' ? 'BNB' : 'ETH'}
+                      {nativePrice(e) ? ' · ' + fmtUsd(Number(formatUnits(nativeBalance(e), 18)) * (nativePrice(e) ?? 0)) : ''}
+                    </Text>
+                  </View>
+                </View>
               </Pressable>
             ))}
             {gasUsd !== null ? (
@@ -1659,25 +1800,43 @@ function SellSection({ onClose }: { onClose: () => void }) {
                 <Text style={[S.body, { fontWeight: '700' }]}>
                   {k === 'bsc' ? 'BNB (BSC)' : 'ETH (Ethereum)'}
                 </Text>
-                {balLine(
-                  k === 'bsc' ? 'BNB' : 'ETH',
-                  k === 'bsc' ? balances?.bscNative ?? null : balances?.ethNative ?? null,
-                  18,
-                  k === 'bsc' ? 'BNB' : 'ETH',
-                )}
-                {balLine(
-                  'USDT',
-                  k === 'bsc' ? balances?.bscUsdt ?? null : balances?.ethUsdt ?? null,
-                  USDT_ON[k].decimals,
-                  'USDT',
-                )}
+                <CoinRow
+                  name={k === 'bsc' ? 'BNB' : 'ETH'}
+                  chain={k === 'bsc' ? 'BSC' : 'Ethereum'}
+                  raw={k === 'bsc' ? balances?.bscNative ?? null : balances?.ethNative ?? null}
+                  dec={18}
+                  sym={k === 'bsc' ? 'BNB' : 'ETH'}
+                  usd={
+                    (k === 'bsc' ? balances?.bscNative : balances?.ethNative) != null &&
+                    (k === 'bsc' ? bnbUsd : ethUsd)
+                      ? Number(formatUnits((k === 'bsc' ? balances?.bscNative : balances?.ethNative)!, 18)) *
+                        ((k === 'bsc' ? bnbUsd : ethUsd) ?? 0)
+                      : null
+                  }
+                />
+                <CoinRow
+                  name="USDT"
+                  chain={k === 'bsc' ? 'BSC' : 'Ethereum'}
+                  raw={k === 'bsc' ? balances?.bscUsdt ?? null : balances?.ethUsdt ?? null}
+                  dec={USDT_ON[k].decimals}
+                  sym="USDT"
+                  usd={
+                    (k === 'bsc' ? balances?.bscUsdt : balances?.ethUsdt) != null
+                      ? Number(formatUnits((k === 'bsc' ? balances?.bscUsdt : balances?.ethUsdt)!, USDT_ON[k].decimals))
+                      : null
+                  }
+                  last
+                />
               </Pressable>
             ))}
             <Text style={[S.h2, { marginTop: 18 }]}>{tr('hs.yourCoins')}</Text>
-            {balLine('CAW', balances?.ql1Qcaw ?? null, 18, 'CAW')}
-            {balLine('QOM', balances?.ql1Native ?? null, 18, 'QOM')}
-            {balLine('USDT (42 Chain)', balances?.infUsdt ?? null, 18, 'USDT')}
-            {balLine('42', balances?.infNative ?? null, 18, '42')}
+            <CoinCard>
+              <CoinRow name="CAW" chain="QL1" raw={balances?.ql1Qcaw ?? null} dec={18} sym="CAW" />
+              <CoinRow name="QOM" chain="QL1" raw={balances?.ql1Native ?? null} dec={18} sym="QOM" />
+              <CoinRow name="USDT" chain="42 Chain" raw={balances?.infUsdt ?? null} dec={18} sym="USDT"
+                usd={balances?.infUsdt != null ? Number(formatUnits(balances.infUsdt, 18)) : null} />
+              <CoinRow name="42" chain="42 Chain" raw={balances?.infNative ?? null} dec={18} sym="42" last />
+            </CoinCard>
             {noGas42 ? (
               <Text style={[S.err, { marginTop: 12 }]}>{tr('hs.gasWarn42')}</Text>
             ) : null}

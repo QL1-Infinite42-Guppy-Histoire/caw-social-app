@@ -28,7 +28,16 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
   buttons, the confirm dialog, timeline attribution lines,
   inbox lines and the "Recawed by" header all use the chain
   action's own name. (No OS share-sheet exists in the app, so
-  no genuine share label was touched.)
+  no genuine share label was touched.) The HuntersSwap
+  「あなたのコイン」 balance lists (buy + sell entry views) are
+  restyled: one rounded card with hairline dividers, a circular
+  coin badge per row (brand colors; CAW uses the app logo),
+  token name + small chain name on the left, bold amount + a
+  small USD line on the right where a price already exists in
+  the app (BNB/ETH spot, USDT at $1; 42/QOM/CAW show no USD
+  line rather than a made-up figure), zero-balance rows dimmed
+  to 45%. The entry-picker cards carry the same badges.
+  Display only — no value or logic changes.
   v0.3.6 is a HOTFIX on top of everything in v0.3.4 (the v0.3.5
   build was superseded before release and folded in here): it
   fixes the critical bug that made EVERY HuntersSwap buy/sell
