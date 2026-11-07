@@ -415,6 +415,9 @@ export interface BackHalfQuote {
   split: {
     parts: any[];
     totalOut: bigint;
+    /** Split output after the extra bridge fees, in qCAW:
+     *  best single output + the net verdict's net gain. */
+    netOut: bigint;
     netGainPct: number;
   } | null;
   /** Live 42->QL1 bridge message fee per leg, in [42] raw. */
@@ -439,6 +442,7 @@ export async function quoteBackHalf(usdt42Raw: bigint): Promise<BackHalfQuote> {
       split = {
         parts: xs.best.parts,
         totalOut: xs.best.totalOut,
+        netOut: bestSingle.finalOut + (net.netGain ?? 0n),
         netGainPct: net.netPct ?? 0,
       };
     }

@@ -22,6 +22,7 @@ import {
   type NameToken,
 } from '../lib/cawCore';
 import { sendCalldata, signerFor } from '../lib/wallet';
+import { HuntersSwapModal } from './HuntersSwapScreen';
 
 type PendingAction = 'deposit' | 'withdraw';
 
@@ -254,6 +255,7 @@ function NameCard({ token }: { token: NameToken }) {
 export default function MyNamesScreen() {
   const app = useApp();
   const [refreshing, setRefreshing] = useState(false);
+  const [hsOpen, setHsOpen] = useState(false);
 
   useEffect(() => {
     app.refreshMyTokens();
@@ -279,6 +281,18 @@ export default function MyNamesScreen() {
       }
     >
       <Text style={S.h1}>{tr('mine.title')}</Text>
+      <View style={styles.card}>
+        <Text style={S.body}>
+          qCAW: <Text style={{ fontWeight: '700' }}>{app.qcaw !== null ? fmtAmount(app.qcaw) : '…'}</Text>
+        </Text>
+        <Pressable
+          style={[S.bigBtn, { marginTop: 12 }]}
+          onPress={() => setHsOpen(true)}
+        >
+          <Text style={S.bigBtnText}>{tr('hs.buy')}</Text>
+        </Pressable>
+      </View>
+      <HuntersSwapModal visible={hsOpen} onClose={() => setHsOpen(false)} />
       {app.myTokens.length === 0 ? (
         <Text style={[S.body, { marginTop: 14 }]}>{tr('mine.none')}</Text>
       ) : (

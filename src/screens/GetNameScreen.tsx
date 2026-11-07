@@ -19,6 +19,7 @@ import {
   qcawBalance,
 } from '../lib/cawApi';
 import { encAddr, encStr, fmtAmount, word } from '../lib/cawCore';
+import { HuntersSwapModal } from './HuntersSwapScreen';
 import { sendCalldata, signerFor } from '../lib/wallet';
 
 type CheckState =
@@ -43,6 +44,7 @@ export default function GetNameScreen() {
   const [status, setStatus] = useState<Status | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<'approve' | 'mint' | null>(null);
+  const [hsOpen, setHsOpen] = useState(false);
 
   const cost = check && check.kind === 'available' ? check.cost : null;
   // Freshly read balance wins; fall back to the context balance.
@@ -235,7 +237,15 @@ export default function GetNameScreen() {
           </Text>
 
           {notEnough ? (
-            <Text style={[S.err, { marginTop: 10 }]}>{tr('get.notEnough')}</Text>
+            <View style={{ marginTop: 10 }}>
+              <Text style={S.err}>{tr('get.notEnough')}</Text>
+              <Pressable
+                style={[S.bigBtn, { marginTop: 12 }]}
+                onPress={() => setHsOpen(true)}
+              >
+                <Text style={S.bigBtnText}>{tr('hs.buy')}</Text>
+              </Pressable>
+            </View>
           ) : needsApprove ? (
             <View style={{ marginTop: 12 }}>
               <Text style={S.body}>{tr('get.step1')}</Text>
@@ -288,6 +298,7 @@ export default function GetNameScreen() {
         }}
         busy={busy}
       />
+      <HuntersSwapModal visible={hsOpen} onClose={() => setHsOpen(false)} />
     </ScrollView>
   );
 }

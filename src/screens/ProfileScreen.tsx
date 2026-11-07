@@ -36,8 +36,11 @@ import {
 } from '../lib/cawApi';
 import {
   buildFollowIndex,
+  followIndexProgress,
   followIndexReady,
+  followListsOf,
   refinedFollowListsOf,
+  subscribeFollowIndex,
   type FollowLists,
 } from '../lib/followIndex';
 import { performAction } from '../lib/actionFlow';
@@ -98,6 +101,11 @@ export default function ProfileScreen({
   );
   const [listLoading, setListLoading] = useState(false);
   const [listFail, setListFail] = useState(false);
+  const [followProgress, setFollowProgress] = useState<number | null>(null);
+  /** True once the balance refinement has been applied for the
+   *  current profile — progressive (unrefined) updates stop
+   *  overwriting the lists after that. */
+  const refinedRef = React.useRef(false);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState('');
@@ -176,11 +184,19 @@ export default function ProfileScreen({
   }, [app, profileId]);
 
   /** Build (or refresh) the follow index and refine this name's
-   *  lists. Runs in the background: the header counts appear when
-   *  it is done; opening a list awaits the same promise. */
+   *  lists. Progressive (v0.3.0): whatever the index already holds
+   *  is shown immediately and updated as each page lands; the
+   *  balance refinement is applied only when it is ready, so it
+   *  never blocks the first paint. */
   const loadFollowLists = useCallback(async (id: bigint) => {
-    await buildFollowIndex();
+    if (!refinedRef.current) setFollowLists(followListsOf(id));
+    await buildFollowIndex((pages) => {
+      setFollowProgress(pages);
+      if (!refinedRef.current) setFollowLists(followListsOf(id));
+    });
+    setFollowProgress(null);
     const lists = await refinedFollowListsOf(id);
+    refinedRef.current = true;
     setFollowLists(lists);
     return lists;
   }, []);
@@ -188,15 +204,34 @@ export default function ProfileScreen({
   const openFollowList = useCallback(
     (which: 'following' | 'followers') => {
       setListOpen(which);
-      if (followLists || profileId === null) return;
-      setListLoading(true);
+      if (profileId === null) return;
+      // Render instantly from whatever the index already holds;
+      // the build keeps updating the list while it runs.
+      if (!refinedRef.current) setFollowLists(followListsOf(profileId));
+      if (followLists) return;
+      setListLoading(!followIndexReady());
       setListFail(false);
       loadFollowLists(profileId)
-        .catch(() => setListFail(true))
+        .catch(() => {
+          if (!followIndexReady()) setListFail(true);
+        })
         .finally(() => setListLoading(false));
     },
     [followLists, profileId, loadFollowLists],
   );
+
+  // Live-update the open list as the index build merges pages.
+  useEffect(() => {
+    const unsub = subscribeFollowIndex(() => {
+      if (profileId !== null && !refinedRef.current) {
+        setFollowLists(followListsOf(profileId));
+        if (followIndexReady()) setListLoading(false);
+      }
+      const p = followIndexProgress();
+      setFollowProgress(p.building ? p.pages : null);
+    });
+    return unsub;
+  }, [profileId]);
 
   const loadProfile = useCallback(async () => {
     setLoadState('loading');
@@ -205,6 +240,7 @@ export default function ProfileScreen({
     setMintDate(null);
     setOwner(null);
     setFollowLists(null);
+    refinedRef.current = false;
     setListOpen(null);
     setPosts([]);
     setNext(null);
@@ -657,7 +693,8 @@ export default function ProfileScreen({
               </Pressable>
             ))}
           </View>
-          {listLoading || (followLists === null && !listFail) ? (
+          {(followLists === null && !listFail) ||
+          (listLoading && !followIndexReady() && followLists === null) ? (
             <View style={styles.center}>
               <ActivityIndicator color={ACCENT} />
               <Text style={[S.small, { marginTop: 10 }]}>
@@ -705,6 +742,17 @@ export default function ProfileScreen({
                   }}
                 />
               )}
+              ListHeaderComponent={
+                followProgress !== null ? (
+                  <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
+                    <Text style={S.tiny}>
+                      {tr('followlist.building', {
+                        pages: String(followProgress),
+                      })}
+                    </Text>
+                  </View>
+                ) : undefined
+              }
               ListEmptyComponent={
                 <View style={{ padding: 24, alignItems: 'center' }}>
                   <Text style={S.small}>{tr('followlist.empty')}</Text>

@@ -57,6 +57,10 @@ export interface HuntersFlow {
   phase: FlowPhase;
   /** Entry USDT balance (source chain) before the entry swap. */
   entryUsdtBefore?: string;
+  /** USDT the entry swap actually made (measured by balance). */
+  entryUsdtActual?: string;
+  /** USDT actually arrived on 42 Chain (measured by balance). */
+  usdt42Actual?: string;
   /** 42 Chain USDT balance before the entry bridge send. */
   usdt42Before?: string;
   /** True once the [42] carve-out swap has run (or was unneeded). */
@@ -84,6 +88,7 @@ export type NextStep =
   | { kind: 'entrySwap' }
   | { kind: 'entryBridge' }
   | { kind: 'wait42' }
+  | { kind: 'requote' }
   | { kind: 'carve' }
   | { kind: 'part'; partIdx: number; step: PartStep }
   | { kind: 'done' };
@@ -99,6 +104,9 @@ export function nextStep(flow: HuntersFlow): NextStep {
     case 'done':
       return { kind: 'done' };
     case 'back': {
+      // No parts yet: the back half still has to be (re)quoted and
+      // the user must accept the fresh numbers before anything runs.
+      if (flow.parts.length === 0) return { kind: 'requote' };
       if (!flow.carveDone) return { kind: 'carve' };
       for (let i = 0; i < flow.parts.length; i++) {
         if (flow.parts[i].step < 4) return { kind: 'part', partIdx: i, step: flow.parts[i].step };
@@ -113,6 +121,7 @@ export function flowComplete(flow: HuntersFlow): boolean {
     flow.phase === 'done' ||
     (flow.phase === 'back' &&
       flow.carveDone &&
+      flow.parts.length > 0 &&
       flow.parts.every((p) => p.step >= 4))
   );
 }
