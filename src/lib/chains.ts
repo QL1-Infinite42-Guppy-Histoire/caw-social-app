@@ -104,7 +104,7 @@ export const USDT_ON: Record<HsChainKey, TokenDef> = {
     decimals: 18,
     symbol: 'USDT',
   },
-  // QL1 has no plain USDT in this flow; the back half ends in qCAW.
+  // QL1 has no plain USDT in this flow; the back half ends in CAW.
   ql1: {
     address: '0xc276b91c0e8d10260af7b67009d2683bb7776308',
     decimals: 6,

@@ -89,7 +89,7 @@ function NameCard({ token }: { token: NameToken }) {
       const sec = app.getSecret();
       if (!sec) throw new Error('no secret');
       const signer = signerFor(sec.kind, sec.secret);
-      // The name contract pulls qCAW in, so it needs an allowance first.
+      // The name contract pulls CAW in, so it needs an allowance first.
       if (app.address) {
         const allow = await qcawAllowance(app.address, CAW_NAME);
         if (allow < amt) {
@@ -181,7 +181,7 @@ function NameCard({ token }: { token: NameToken }) {
       <Text style={[S.body, { marginTop: 12 }]}>
         {tr('mine.inName')}:{' '}
         <Text style={{ fontWeight: '700' }}>{fmtAmount(token.balance)}</Text>{' '}
-        qCAW
+        CAW
       </Text>
 
       <TextInput
@@ -281,11 +281,11 @@ export default function MyNamesScreen() {
       <Text style={S.h1}>{tr('mine.title')}</Text>
       <View style={styles.card}>
         <Text style={S.body}>
-          qCAW: <Text style={{ fontWeight: '700' }}>{app.qcaw !== null ? fmtAmount(app.qcaw) : '…'}</Text>
+          CAW: <Text style={{ fontWeight: '700' }}>{app.qcaw !== null ? fmtAmount(app.qcaw) : '…'}</Text>
         </Text>
         {/* v0.3.2: the big buy button is gone — HuntersSwap now
             opens from the orange button in the middle of the tab
-            bar. The qCAW balance line above stays. */}
+            bar. The CAW balance line above stays. */}
       </View>
       {app.myTokens.length === 0 ? (
         <Text style={[S.body, { marginTop: 14 }]}>{tr('mine.none')}</Text>

@@ -48,7 +48,7 @@ export interface HuntersFlow {
   v: 1;
   id: string;
   address: string;
-  /** 'buy' = BNB/ETH -> qCAW; 'sell' = qCAW -> BNB/ETH. */
+  /** 'buy' = BNB/ETH -> CAW; 'sell' = CAW -> BNB/ETH. */
   direction?: 'buy' | 'sell';
   entry: 'bsc' | 'ethereum';
   /** Sell only: the chain the USDT finally lands on / swaps on. */
@@ -68,7 +68,7 @@ export interface HuntersFlow {
   entryUsdtExpected: string;
   /** USDT expected on 42 Chain after the -2 bridge deduction. */
   usdt42Expected: string;
-  /** qCAW the user confirmed on the confirm screen (string). */
+  /** CAW the user confirmed on the confirm screen (string). */
   confirmedOut: string;
   choice: 'single' | 'split';
   phase: FlowPhase;

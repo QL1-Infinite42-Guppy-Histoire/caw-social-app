@@ -286,7 +286,7 @@ export default function TimelineScreen() {
       </View>
       <View style={[S.row, { marginTop: 4, flexWrap: 'wrap', gap: 16 }]}>
         <Text style={S.body}>
-          {qcaw !== null ? fmtAmount(qcaw) : '—'} qCAW
+          {qcaw !== null ? fmtAmount(qcaw) : '—'} CAW
         </Text>
         <Text style={S.small}>{tr('home.qcaw')}</Text>
       </View>

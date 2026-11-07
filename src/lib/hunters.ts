@@ -7,7 +7,7 @@
  *    swaps and Zaphod/Hyperlane bridge sends to 42 Chain, ported
  *    from GuppyWallet (lib/bscSwap.ts, lib/zaphod.ts
  *    bridgeInboundSendJob / fetchBridgeQuote / truncateToDstDecimals).
- *  - Back half (42 USDT -> QL1 qCAW): quotes come from the ported
+ *  - Back half (42 USDT -> QL1 CAW): quotes come from the ported
  *    aggregator engine (lib/aggEngine.ts); this module adds the
  *    [42] carve-out math and the entry-side rules.
  *
@@ -461,7 +461,7 @@ export function amountGate(amount: bigint, usable: bigint): AmountGate {
   return { ok: !insufficient, insufficient };
 }
 
-/* ---------------- back half: 42 USDT -> QL1 qCAW --------------- */
+/* ---------------- back half: 42 USDT -> QL1 CAW --------------- */
 
 export interface BackHalfQuote {
   /** All enabled cross candidates (engine objects, opaque here). */
@@ -472,7 +472,7 @@ export interface BackHalfQuote {
   split: {
     parts: any[];
     totalOut: bigint;
-    /** Split output after the extra bridge fees, in qCAW:
+    /** Split output after the extra bridge fees, in CAW:
      *  best single output + the net verdict's net gain. */
     netOut: bigint;
     netGainPct: number;
@@ -509,7 +509,7 @@ export async function quoteBackHalf(usdt42Raw: bigint): Promise<BackHalfQuote> {
     .slice()
     .sort((a: any, b: any) => (b.finalOut > a.finalOut ? 1 : -1))[0];
   let split: BackHalfQuote['split'] = null;
-  // The output is qCAW, which this app deliberately never prices in
+  // The output is CAW, which this app deliberately never prices in
   // USD; the input IS USDT, and the output's value tracks it, so the
   // input amount is the rough size gauge for the split search.
   if (usdOfUsdt18(usdt42Raw) >= SPLIT_MIN_USD) {
@@ -777,15 +777,15 @@ export { formatUnits, parseUnits };
 
 
 /* ------------------------------------------------------------------ */
-/* Reverse direction (sell): qCAW -> QOM -> 42 USDT -> target chain   */
+/* Reverse direction (sell): CAW -> QOM -> 42 USDT -> target chain   */
 /* ------------------------------------------------------------------ */
-/* Reverse direction (sell): qCAW -> QOM -> 42 USDT -> target chain   */
+/* Reverse direction (sell): CAW -> QOM -> 42 USDT -> target chain   */
 /* ------------------------------------------------------------------ */
 
 /**
- * Sell back half: qCAW on QL1 -> USDT on 42 Chain, best route via
+ * Sell back half: CAW on QL1 -> USDT on 42 Chain, best route via
  * the ported engine (quoteCrossPlan works QL1 -> infinite; live
- * verified 2026-11-08: 75B qCAW -> ~81.8 USDT via QOM, QL1-side
+ * verified 2026-11-08: 75B CAW -> ~81.8 USDT via QOM, QL1-side
  * bridge legs carry nativeFee 0 — the QL1 warp routers expose no
  * quote functions and real sends go out with value 0).
  */

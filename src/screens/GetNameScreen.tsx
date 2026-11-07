@@ -229,11 +229,11 @@ export default function GetNameScreen() {
           <Text style={S.ok}>{tr('get.available')}</Text>
           <Text style={[S.body, { marginTop: 6 }]}>
             {tr('get.price')}: <Text style={{ fontWeight: '700' }}>{fmtAmount(cost)}</Text>{' '}
-            qCAW
+            CAW
           </Text>
           <Text style={[S.small, { marginTop: 10 }]}>
             {tr('get.yourQcaw')}:{' '}
-            {shownBalance !== null ? fmtAmount(shownBalance) : '…'} qCAW
+            {shownBalance !== null ? fmtAmount(shownBalance) : '…'} CAW
           </Text>
 
           {notEnough ? (
@@ -268,7 +268,7 @@ export default function GetNameScreen() {
                 onPress={() => setConfirm('approve')}
               >
                 <Text style={S.bigBtnText}>
-                  {tr('get.approveBtn')} ({fmtAmount(cost)} qCAW)
+                  {tr('get.approveBtn')} ({fmtAmount(cost)} CAW)
                 </Text>
               </Pressable>
             </View>

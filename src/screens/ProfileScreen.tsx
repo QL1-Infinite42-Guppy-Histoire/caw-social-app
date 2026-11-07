@@ -518,7 +518,7 @@ export default function ProfileScreen({
           {balance !== null ? (
             <View style={S.chip}>
               <Text style={S.chipText}>
-                {tr('profile.inName')} {fmtAmount(balance)} qCAW
+                {tr('profile.inName')} {fmtAmount(balance)} CAW
               </Text>
             </View>
           ) : null}

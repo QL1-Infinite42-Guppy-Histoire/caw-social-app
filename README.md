@@ -39,7 +39,10 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
   HuntersSwap entry to a **raised orange button in the center of
   the tab bar** (an action, not a tab; the big buy button on My
   Names is gone, the Get-Name shortfall prompt is now a link, and
-  the modal header reads "Buy / sell qCAW" in both directions).
+  the modal header reads "Buy / sell CAW" in both directions).
+  v0.3.2 also unifies the token's DISPLAY name: every screen now
+  says **CAW**, never qCAW (display layer only — token ids,
+  addresses and storage are unchanged).
   Verification: `scripts/verify-huntersswap.mjs` 44 checks incl.
   injected-fault runs (first QL1 calls throw; one route family
   always throws) and the exact reported amount timed live.

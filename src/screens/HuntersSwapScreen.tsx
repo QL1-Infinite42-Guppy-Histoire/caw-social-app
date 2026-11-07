@@ -1,10 +1,10 @@
 /**
- * HuntersSwap (v0.3.0) — buy qCAW starting from BNB (BSC) or ETH
+ * HuntersSwap (v0.3.0) — buy CAW starting from BNB (BSC) or ETH
  * (Ethereum), guided one step at a time, all inside the app:
  *
  *   entry swap (PancakeSwap / Uniswap) -> bridge to 42 Chain
  *   -> best route to QL1 (aggregator engine, fees counted,
- *      [42] fee set aside from the flow itself) -> qCAW
+ *      [42] fee set aside from the flow itself) -> CAW
  *
  * Every send follows the app's pattern: ConfirmSheet, then
  * app.requireAuth(), then the secret from memory, then send.
@@ -733,7 +733,7 @@ function BuySection({ onClose }: { onClose: () => void }) {
             {balLine('42', balances?.infNative ?? null, 18, '42')}
             {balLine('USDT (42 Chain)', balances?.infUsdt ?? null, 18, 'USDT')}
             {balLine('QOM (QL1)', balances?.ql1Native ?? null, 18, 'QOM')}
-            {balLine('qCAW (QL1)', balances?.ql1Qcaw ?? null, 18, 'qCAW')}
+            {balLine('CAW (QL1)', balances?.ql1Qcaw ?? null, 18, 'CAW')}
 
             <Text style={[S.h2, { marginTop: 18 }]}>{tr('hs.amountTitle')}</Text>
             {(['bsc', 'ethereum'] as EntryKey[]).map((e) => (
@@ -863,7 +863,7 @@ function BuySection({ onClose }: { onClose: () => void }) {
               : null}
             <View style={{ marginTop: 16 }}>
               <Text style={S.small}>{tr('hs.youGet')}</Text>
-              <Text style={[S.h1, { color: ACCENT }]}>{fmtTok(plan.expectedOut, 18)} qCAW</Text>
+              <Text style={[S.h1, { color: ACCENT }]}>{fmtTok(plan.expectedOut, 18)} CAW</Text>
             </View>
             {plan.back.split ? (
               <View style={{ borderWidth: 1, borderColor: '#eff3f4', borderRadius: 14, padding: 14, marginTop: 14 }}>
@@ -950,7 +950,7 @@ function BuySection({ onClose }: { onClose: () => void }) {
             <Text style={[S.body, { marginTop: 10 }]}>{tr('hs.doneDesc')}</Text>
             {balances?.ql1Qcaw !== null && balances?.ql1Qcaw !== undefined ? (
               <Text style={[S.body, { marginTop: 8 }]}>
-                {fmtTok(balances.ql1Qcaw, 18)} qCAW
+                {fmtTok(balances.ql1Qcaw, 18)} CAW
               </Text>
             ) : null}
             {balLine('42', balances?.infNative ?? null, 18, '42')}
@@ -985,7 +985,7 @@ function BuySection({ onClose }: { onClose: () => void }) {
 }
 
 /* ================================================================== */
-/* Sell direction: qCAW (QL1) -> QOM -> best route -> USDT (42)       */
+/* Sell direction: CAW (QL1) -> QOM -> best route -> USDT (42)       */
 /*   -> bridge to BSC / Ethereum -> BNB / ETH.                        */
 /* Mirrors the buy architecture: fresh quote before every send,       */
 /* per-tx signing confirmation, arrival watching, persisted flow.     */
@@ -1627,7 +1627,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
               </Pressable>
             ))}
             <Text style={[S.h2, { marginTop: 18 }]}>{tr('hs.yourCoins')}</Text>
-            {balLine('qCAW', balances?.ql1Qcaw ?? null, 18, 'qCAW')}
+            {balLine('CAW', balances?.ql1Qcaw ?? null, 18, 'CAW')}
             {balLine('QOM', balances?.ql1Native ?? null, 18, 'QOM')}
             {balLine('USDT (42 Chain)', balances?.infUsdt ?? null, 18, 'USDT')}
             {balLine('42', balances?.infNative ?? null, 18, '42')}
@@ -1652,7 +1652,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
         {phase === 'amount' ? (
           <>
             <Text style={S.h2}>{tr('hs.amountSellTitle')}</Text>
-            {balLine('qCAW', balances?.ql1Qcaw ?? null, 18, 'qCAW')}
+            {balLine('CAW', balances?.ql1Qcaw ?? null, 18, 'CAW')}
             <TextInput
               style={[S.input, { marginTop: 12 }]}
               value={amountText}
@@ -1685,7 +1685,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
         {phase === 'confirm' && plan ? (
           <>
             <Text style={S.h2}>{tr('hs.confirmTitle')}</Text>
-            {balLine('qCAW', plan.qcawAmount, 18, 'qCAW')}
+            {balLine('CAW', plan.qcawAmount, 18, 'CAW')}
             {balLine('USDT (42 Chain)', plan.usdt42, 18, 'USDT')}
             <View style={[S.row, { justifyContent: 'space-between', marginTop: 6 }]}>
               <Text style={S.small}>{tr('hs.feeBridgeOut')}</Text>

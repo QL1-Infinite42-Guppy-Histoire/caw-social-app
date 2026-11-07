@@ -15,7 +15,7 @@
  *    them (as every earlier version did, the decoder dropped type 4
  *    entirely) leaves stale follows in the lists.
  *  - Some follows never registered on-chain: the sender name held
- *    no qCAW in its name balance. (Measured on name #10: its two
+ *    no CAW in its name balance. (Measured on name #10: its two
  *    non-registering follows were exactly the ones from names with
  *    a zero name balance, and adding a zero-balance exclusion to
  *    the state rule raised exact followerCount matches from 52/73
@@ -263,7 +263,7 @@ export function isFollowingIndexed(sender: bigint, receiver: bigint): boolean {
 
 /**
  * Check one pair's registration: true when the sender name holds
- * qCAW in its name balance (current balance — see the header note
+ * CAW in its name balance (current balance — see the header note
  * on why the follow-time balance cannot be re-read). Verdicts are
  * cached for the session only, since balances change. Fail-open
  * (true) on read errors.

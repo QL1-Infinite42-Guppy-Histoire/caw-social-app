@@ -316,8 +316,8 @@ for (const usd of [100, 500]) {
       appSrc.includes('<HuntersSwapModal visible={hsOpen}'));
   check('(e) center action opens HuntersSwap and never switches tabs',
     block.includes('setHsOpen(true)') && !block.includes('setTab'));
-  check('(e) MyNames: big buy button removed, qCAW balance line kept',
-    !mineSrc.includes("tr('hs.buy')") && mineSrc.includes('qCAW:'));
+  check('(e) MyNames: big buy button removed, CAW balance line kept',
+    !mineSrc.includes("tr('hs.buy')") && mineSrc.includes('CAW:') && !mineSrc.includes('qCAW'));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
