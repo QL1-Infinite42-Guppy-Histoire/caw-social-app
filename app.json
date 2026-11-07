@@ -1,1 +1,52 @@
-{"expo":{"android":{"adaptiveIcon":{"backgroundColor":"#FFFFFF","backgroundImage":"./assets/android-icon-background.png","foregroundImage":"./assets/android-icon-foreground.png","monochromeImage":"./assets/android-icon-monochrome.png"},"package":"one.guppyguide.cawsocial","permissions":["android.permission.USE_BIOMETRIC","android.permission.USE_FINGERPRINT"]},"extra":{"warning":"Community app, not operated by the official CAW team."},"icon":"./assets/icon.png","ios":{"bundleIdentifier":"one.guppyguide.cawsocial","supportsTablet":false},"name":"CAW Social","orientation":"portrait","owner":"guppy9180s-team","plugins":["expo-secure-store",["expo-local-authentication",{"faceIDPermission":"Use biometrics to unlock CAW Social."}]],"scheme":"cawsocial","slug":"caw-social-app","splash":{"backgroundColor":"#FFFFFF","image":"./assets/splash-icon.png","resizeMode":"contain"},"userInterfaceStyle":"light","version":"0.1.0","web":{"favicon":"./assets/icon.png"}}}
+{
+  "expo": {
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "package": "one.guppyguide.cawsocial",
+      "permissions": [
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
+      ]
+    },
+    "extra": {
+      "warning": "Community app, not operated by the official CAW team.",
+      "eas": {
+        "projectId": "b94174e0-cf59-4910-b81b-7e2ffa168e11"
+      }
+    },
+    "icon": "./assets/icon.png",
+    "ios": {
+      "bundleIdentifier": "one.guppyguide.cawsocial",
+      "supportsTablet": false
+    },
+    "name": "CAW Social",
+    "orientation": "portrait",
+    "owner": "guppy9180s-team",
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Use biometrics to unlock CAW Social."
+        }
+      ]
+    ],
+    "scheme": "cawsocial",
+    "slug": "caw-social-app",
+    "splash": {
+      "backgroundColor": "#FFFFFF",
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain"
+    },
+    "userInterfaceStyle": "light",
+    "version": "0.1.0",
+    "web": {
+      "favicon": "./assets/icon.png"
+    }
+  }
+}
