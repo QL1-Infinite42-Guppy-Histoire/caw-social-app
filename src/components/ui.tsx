@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import Svg, { Path, Polyline } from 'react-native-svg';
 import { SvgXml } from 'react-native-svg';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ACCENT } from '../config';
 import { tr } from '../i18n';
@@ -80,6 +81,16 @@ export const S = StyleSheet.create({
     backgroundColor: '#fff',
   },
   ghostBtnText: { color: '#0f1419', fontSize: 15, fontWeight: '600' },
+  moreBtn: {
+    backgroundColor: '#0f1419',
+    borderRadius: 999,
+    paddingVertical: 15,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 52,
+  },
+  moreBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   disabled: { opacity: 0.45 },
   row: { flexDirection: 'row', alignItems: 'center' },
   chip: {
@@ -225,6 +236,53 @@ export function formatTime(tsSec: number, lang: string): string {
   } catch {
     return new Date(tsSec * 1000).toISOString();
   }
+}
+
+/**
+ * Full-width "load more" footer for the lists (timeline / profile).
+ * v0.1.4 fix: the old footer was a small low-contrast ghost button
+ * sitting at the very bottom edge of the screen — on the profile
+ * (shown in a Modal, no SafeAreaView of its own) it ended up half
+ * hidden under the gesture area and was hard to tap. This footer is
+ * a large dark high-contrast button (52px+ tall, full width) with
+ * generous bottom padding that includes the device safe-area inset,
+ * so it always scrolls fully clear of the tab bar / gesture area.
+ */
+export function LoadMoreFooter({
+  loading,
+  onPress,
+  label,
+}: {
+  loading: boolean;
+  onPress: () => void;
+  label: string;
+}) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      style={{
+        paddingHorizontal: 16,
+        paddingTop: 20,
+        paddingBottom: 28 + insets.bottom,
+      }}
+    >
+      {loading ? (
+        <View style={{ minHeight: 52, justifyContent: 'center' }}>
+          <ActivityIndicator color={ACCENT} />
+        </View>
+      ) : (
+        <Pressable
+          style={({ pressed }) => [
+            S.moreBtn,
+            pressed && { opacity: 0.85 },
+          ]}
+          onPress={onPress}
+        >
+          <Text style={S.moreBtnText}>{label}</Text>
+        </Pressable>
+      )}
+    </View>
+  );
 }
 
 const LIKE_ON = '#e0245e';

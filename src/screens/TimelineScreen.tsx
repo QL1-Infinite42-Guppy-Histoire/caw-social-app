@@ -9,7 +9,13 @@ import {
   View,
 } from 'react-native';
 
-import { ConfirmSheet, HAIRLINE, PostCard, S } from '../components/ui';
+import {
+  ConfirmSheet,
+  HAIRLINE,
+  LoadMoreFooter,
+  PostCard,
+  S,
+} from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
@@ -213,15 +219,11 @@ export default function TimelineScreen() {
         }
         ListFooterComponent={
           next ? (
-            <View style={{ padding: 16, alignItems: 'center' }}>
-              {loadingMore ? (
-                <ActivityIndicator color={ACCENT} />
-              ) : (
-                <Pressable style={S.ghostBtn} onPress={loadMore}>
-                  <Text style={S.ghostBtnText}>{tr('tl.more')}</Text>
-                </Pressable>
-              )}
-            </View>
+            <LoadMoreFooter
+              loading={loadingMore}
+              onPress={loadMore}
+              label={tr('tl.more')}
+            />
           ) : undefined
         }
       />

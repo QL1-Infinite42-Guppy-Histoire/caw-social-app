@@ -12,7 +12,13 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
-import { Avatar, ConfirmSheet, PostCard, S } from '../components/ui';
+import {
+  Avatar,
+  ConfirmSheet,
+  LoadMoreFooter,
+  PostCard,
+  S,
+} from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
@@ -481,15 +487,11 @@ export default function ProfileScreen({
         }
         ListFooterComponent={
           !done && posts.length > 0 ? (
-            <View style={{ padding: 16, alignItems: 'center' }}>
-              {loadingMore ? (
-                <ActivityIndicator color={ACCENT} />
-              ) : (
-                <Pressable style={S.ghostBtn} onPress={loadMorePosts}>
-                  <Text style={S.ghostBtnText}>{tr('profile.more')}</Text>
-                </Pressable>
-              )}
-            </View>
+            <LoadMoreFooter
+              loading={loadingMore}
+              onPress={loadMorePosts}
+              label={tr('profile.more')}
+            />
           ) : undefined
         }
       />

@@ -14,9 +14,27 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.1.3** — released 2026-11-07.
+- **現在版 / Current: v0.1.4** — released 2026-11-07.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.1.3/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.1.4/caw-social.apk
+  v0.1.4 fixes three things reported from real-device use the same
+  evening: (1) the Settings "about" line still showed a hardcoded
+  "v0.1.0" — the version is now read from app.json at runtime via
+  expo-constants (`src/lib/appVersion.ts`), so it cannot go stale
+  again; (2) the "load more" buttons at the end of the timeline and
+  of profile post lists were small, pale ghost buttons at the very
+  bottom edge of the screen (on profiles, half under the gesture
+  area) — they are now a shared full-width dark button, 52px+ tall,
+  in a footer with bottom padding that includes the safe-area
+  inset (`LoadMoreFooter` in `src/components/ui.tsx`); (3) on the
+  compose screen the on-screen keyboard hid the text input,
+  especially for accounts holding many names (the name-picker chip
+  grid alone took ~11 rows / ~450px) — the compose screen now sits
+  in a KeyboardAvoidingView, the chip grid is capped at 118px with
+  its own scrolling, and the composer block scrolls into view on
+  focus and whenever the keyboard appears, so the input and what
+  you are typing are always visible above the keyboard.
+  Previous release: v0.1.3 (2026-11-07) —
   v0.1.3 corrects the name source — with an apology: v0.1.2 (and a
   first v0.1.3 draft) had the one-id shift backwards. The mint
   transactions settle it: `Minter.mint("dreamin")` created token
@@ -91,7 +109,7 @@ longer works. This app keeps the key on your phone (Android
 Keystore-backed secure storage) and signs in-app, exactly like the
 original signers did.
 
-## Features (v0.1.3)
+## Features (v0.1.4)
 
 - Wallet: create new (secret words) or import (secret words / private
   key). QL1 only. Unlock by password or biometrics — asked when the

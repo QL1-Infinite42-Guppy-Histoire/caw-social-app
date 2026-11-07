@@ -12,6 +12,7 @@ import { ConfirmSheet, S } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
+import { APP_VERSION } from '../lib/appVersion';
 import { deleteWallet } from '../lib/walletStore';
 
 export default function SettingsScreen() {
@@ -84,7 +85,9 @@ export default function SettingsScreen() {
       {/* about */}
       <Text style={[S.h2, { marginTop: 26 }]}>{tr('settings.about')}</Text>
       <Text style={[S.body, { marginTop: 6 }]}>{tr('settings.aboutBody')}</Text>
-      <Text style={[S.tiny, { marginTop: 14 }]}>CAW Social v0.1.0</Text>
+      <Text style={[S.tiny, { marginTop: 14 }]}>
+        CAW Social v{APP_VERSION}
+      </Text>
       <Text style={S.tiny}>one.guppyguide.cawsocial</Text>
 
       {/* danger zone */}

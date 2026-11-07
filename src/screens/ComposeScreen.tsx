@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -26,10 +29,28 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
   const [status, setStatus] = useState('');
   const [statusOk, setStatusOk] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const scrollRef = useRef<any>(null);
+
+  // Keep the composer (input + counter + post button) visible above
+  // the keyboard: whenever the keyboard appears — on focus it is the
+  // last block of the scroll content, so scrolling to the end pins it
+  // right above the keyboard. (v0.1.4 fix: with many names the chip
+  // grid pushed the input below the keyboard and nothing scrolled.)
+  const scrollComposerIntoView = useRef(() => {
+    setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 60);
+  }).current;
 
   useEffect(() => {
     app.refreshMyTokens().catch(() => {});
+    const sub = Keyboard.addListener(
+      'keyboardDidShow',
+      scrollComposerIntoView,
+    );
     return () => {
+      sub.remove();
       if (timerRef.current) clearTimeout(timerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -83,7 +104,10 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <View style={S.screen}>
+    <KeyboardAvoidingView
+      style={S.screen}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+    >
       <View style={styles.headerRow}>
         <Text style={S.h1}>{tr('compose.title')}</Text>
         <Pressable onPress={onClose} hitSlop={8}>
@@ -91,34 +115,44 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={S.scrollPad}>
+      <ScrollView ref={scrollRef} contentContainerStyle={S.scrollPad}>
         {!acting ? (
           <Text style={S.body}>{tr('compose.needName')}</Text>
         ) : (
           <>
             {myTokens.length > 1 ? (
-              <View style={styles.chipRow}>
-                {myTokens.map((t) => {
-                  const selected = acting.id === t.id;
-                  const c = app.customFor(t.id);
-                  return (
-                    <Pressable
-                      key={t.id.toString()}
-                      onPress={() => chooseActing(t.id)}
-                      style={[styles.chip, selected && styles.chipOn]}
-                    >
-                      <Text
-                        style={[
-                          S.chipText,
-                          selected && styles.chipTextOn,
-                        ]}
+              <>
+                <Text style={S.small}>{tr('compose.postAs')}</Text>
+                <ScrollView
+                  style={styles.chipScroll}
+                  contentContainerStyle={styles.chipRow}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator
+                >
+                  {myTokens.map((t) => {
+                    const selected = acting.id === t.id;
+                    const c = app.customFor(t.id);
+                    return (
+                      <Pressable
+                        key={t.id.toString()}
+                        onPress={() => chooseActing(t.id)}
+                        style={[styles.chip, selected && styles.chipOn]}
                       >
-                        {c && c.displayName ? c.displayName : '@' + t.username}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+                        <Text
+                          style={[
+                            S.chipText,
+                            selected && styles.chipTextOn,
+                          ]}
+                        >
+                          {c && c.displayName
+                            ? c.displayName
+                            : '@' + t.username}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </>
             ) : (
               <View style={S.row}>
                 <Avatar
@@ -146,6 +180,7 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
               autoFocus
               value={text}
               onChangeText={setText}
+              onFocus={scrollComposerIntoView}
               placeholder={tr('compose.ph')}
               placeholderTextColor="#536471"
             />
@@ -203,7 +238,7 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
         onCancel={() => setConfirmOpen(false)}
         busy={sending}
       />
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -219,6 +254,18 @@ const styles = StyleSheet.create({
   },
   closeText: { fontSize: 15, color: ACCENT, fontWeight: '600' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  // The name picker gets a capped viewport (about 3 rows of chips)
+  // with its own scrolling, so an account holding many names (30+)
+  // can never push the text input off the visible area — the input
+  // always wins the space. (v0.1.4 fix)
+  chipScroll: {
+    maxHeight: 118,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#eff3f4',
+    borderRadius: 10,
+    padding: 8,
+  },
   chip: {
     borderWidth: 1,
     borderColor: '#cfd9de',

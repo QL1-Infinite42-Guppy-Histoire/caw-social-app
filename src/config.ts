@@ -1,6 +1,11 @@
 /**
  * CAW Social (QL1) — chain constants.
  * QL1 only: this app is fixed to the QL1 chain (EVM chain id 766).
+ *
+ * NOTE: keep this module free of Expo-runtime imports — the Node
+ * verification harness (scripts/verify-*.mjs) compiles and loads it
+ * outside React Native. The app version lives in lib/appVersion.ts
+ * for the same reason.
  */
 export const RPC = 'https://evm-rpc-ql1.mschihuahua.org';
 export const API = 'https://scan.qom.network/api/v2';
