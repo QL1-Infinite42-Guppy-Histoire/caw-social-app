@@ -27,6 +27,7 @@ import SettingsScreen from './src/screens/SettingsScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ComposeScreen from './src/screens/ComposeScreen';
 import PostDetailScreen from './src/screens/PostDetailScreen';
+import { HuntersSwapModal } from './src/screens/HuntersSwapScreen';
 
 function LangToggle() {
   const { lang, changeLang } = useApp();
@@ -66,6 +67,9 @@ const TAB_BAR_HEIGHT = 42;
 function Main() {
   const app = useApp();
   const insets = useSafeAreaInsets();
+  // HuntersSwap opens from the tab bar's center action button. It is
+  // an ACTION, not a tab: opening/closing it never changes `tab`.
+  const [hsOpen, setHsOpen] = React.useState(false);
   const {
     tab,
     setTab,
@@ -79,6 +83,10 @@ function Main() {
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (hsOpen) {
+        setHsOpen(false);
+        return true;
+      }
       if (composeOpen) {
         setComposeOpen(false);
         return true;
@@ -94,7 +102,7 @@ function Main() {
       return false;
     });
     return () => sub.remove();
-  }, [composeOpen, profileName, postDetail, setComposeOpen, closeProfile, closePost]);
+  }, [hsOpen, composeOpen, profileName, postDetail, setComposeOpen, closeProfile, closePost]);
 
   const tabs: { key: typeof tab; label: string }[] = [
     { key: 'home', label: tr('nav.home') },
@@ -130,7 +138,38 @@ function Main() {
         </Pressable>
       )}
       <View style={styles.bottomNav}>
-        {tabs.map((t) => (
+        {tabs.slice(0, 2).map((t) => (
+          <Pressable
+            key={t.key}
+            style={styles.navItem}
+            onPress={() => setTab(t.key)}
+          >
+            <Text
+              style={[
+                styles.navLabel,
+                tab === t.key && styles.navLabelOn,
+              ]}
+            >
+              {t.label}
+            </Text>
+          </Pressable>
+        ))}
+        {/* Center action (v0.3.2): a raised orange circle that opens
+            HuntersSwap. It only opens the modal — the selected tab
+            underneath does not change. The circle rises ABOVE the
+            bar (negative margin), so it never collides with the
+            Android system navigation below the bar. */}
+        <View style={styles.navItem}>
+          <Pressable
+            accessibilityLabel={tr('hs.trade')}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.tradeBtn, pressed && { opacity: 0.75 }]}
+            onPress={() => setHsOpen(true)}
+          >
+            <Text style={styles.tradeBtnText}>⇄</Text>
+          </Pressable>
+        </View>
+        {tabs.slice(2).map((t) => (
           <Pressable
             key={t.key}
             style={styles.navItem}
@@ -147,6 +186,7 @@ function Main() {
           </Pressable>
         ))}
       </View>
+      <HuntersSwapModal visible={hsOpen} onClose={() => setHsOpen(false)} />
 
       <Modal
         visible={!!profileName}
@@ -243,6 +283,31 @@ const styles = StyleSheet.create({
   navItem: { flex: 1, alignItems: 'center', paddingVertical: 12 },
   navLabel: { fontSize: 12.5, color: '#536471', fontWeight: '600' },
   navLabelOn: { color: ACCENT, fontWeight: '800' },
+  tradeBtn: {
+    // Absolutely positioned inside its (normal-height) tab slot, so
+    // the bar keeps its usual height (TAB_BAR_HEIGHT stays valid
+    // and the compose FAB offset is untouched) while the circle
+    // floats above the bar: top -22 -> spans y -22..34 of the 42px
+    // bar, never reaching the system navigation underneath.
+    position: 'absolute',
+    top: -22,
+    left: '50%',
+    marginLeft: -28,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: ACCENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: '#fff',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOpacity: 0.22,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  tradeBtnText: { color: '#fff', fontSize: 25, lineHeight: 28, fontWeight: '800' },
   fab: {
     position: 'absolute',
     right: 18,

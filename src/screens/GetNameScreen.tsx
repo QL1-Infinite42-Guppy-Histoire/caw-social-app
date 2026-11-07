@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 
 import { ConfirmSheet, S } from '../components/ui';
-import { MINTER, QCAW, SEL } from '../config';
+import { ACCENT, MINTER, QCAW, SEL } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
 import {
@@ -239,11 +239,24 @@ export default function GetNameScreen() {
           {notEnough ? (
             <View style={{ marginTop: 10 }}>
               <Text style={S.err}>{tr('get.notEnough')}</Text>
+              {/* v0.3.2: link-style opener (the big button moved to
+                  the tab bar's center); still opens the same modal
+                  right here for anyone who landed in this prompt. */}
               <Pressable
-                style={[S.bigBtn, { marginTop: 12 }]}
                 onPress={() => setHsOpen(true)}
+                hitSlop={10}
+                style={{ marginTop: 8, alignSelf: 'flex-start' }}
               >
-                <Text style={S.bigBtnText}>{tr('hs.buy')}</Text>
+                <Text
+                  style={{
+                    color: ACCENT,
+                    fontWeight: '700',
+                    fontSize: 15.5,
+                    textDecorationLine: 'underline',
+                  }}
+                >
+                  {tr('hs.buy')} →
+                </Text>
               </Pressable>
             </View>
           ) : needsApprove ? (

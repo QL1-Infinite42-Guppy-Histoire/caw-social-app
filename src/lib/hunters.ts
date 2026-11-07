@@ -100,6 +100,40 @@ export function signerForChain(privateKey: string, key: HsChainKey): Wallet {
   return new Wallet(privateKey, providerFor(key));
 }
 
+/* ---------------- transient-failure retry (v0.3.2) ---------------- */
+
+const sleepMs = (ms: number) =>
+  new Promise((r) => setTimeout(r, ms));
+
+/** True for transport-level failures (network down, timeout, 5xx,
+ *  rate limit). Reverts (CALL_EXCEPTION) are NOT network-ish: they
+ *  are answers, and retrying them would just waste time. */
+export function isNetworkishError(e: unknown): boolean {
+  const err = e as { code?: string; message?: string } | null;
+  if (err?.code === 'CALL_EXCEPTION') return false;
+  if (err?.code === 'NETWORK_ERROR' || err?.code === 'TIMEOUT') return true;
+  const m = String(err?.message ?? e ?? '');
+  return /fetch failed|network|timeout|timed out|socket|econn|enotfound|eai_again|http 5\d\d|status 5\d\d|rate limit|too many requests/i.test(
+    m,
+  );
+}
+
+/** Run a read-only call with 2 retries (short backoff) when it
+ *  fails with a network-ish error. Anything else throws at once. */
+export async function withRpcRetry<T>(fn: () => Promise<T>): Promise<T> {
+  let last: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      if (!isNetworkishError(e) || attempt === 2) throw e;
+      await sleepMs(300 * (attempt + 1));
+    }
+  }
+  throw last;
+}
+
 export interface TxReq {
   to: string;
   data: string;
@@ -114,7 +148,7 @@ export async function erc20Balance(
   owner: string,
 ): Promise<bigint> {
   const c = new Contract(token, ERC20_ABI, providerFor(chain)) as any;
-  return BigInt(await c.balanceOf(owner));
+  return BigInt(await withRpcRetry(() => c.balanceOf(owner)));
 }
 
 export async function erc20Allowance(
@@ -124,7 +158,7 @@ export async function erc20Allowance(
   spender: string,
 ): Promise<bigint> {
   const c = new Contract(token, ERC20_ABI, providerFor(chain)) as any;
-  return BigInt(await c.allowance(owner, spender));
+  return BigInt(await withRpcRetry(() => c.allowance(owner, spender)));
 }
 
 export function buildApproveTx(token: string, spender: string, amount: bigint): TxReq {
@@ -212,9 +246,11 @@ function dexRouter(entry: EntryKey): any {
  *  live V2 pair (getAmountsOut of exactly 1 coin). */
 export async function nativeUsdPrice(entry: EntryKey): Promise<number> {
   const dex = ENTRY_DEX[entry];
-  const amounts: bigint[] = await dexRouter(entry).getAmountsOut(
-    parseUnits('1', 18),
-    [dex.wrapped, dex.usdt],
+  const amounts: bigint[] = await withRpcRetry(() =>
+    dexRouter(entry).getAmountsOut(parseUnits('1', 18), [
+      dex.wrapped,
+      dex.usdt,
+    ]),
   );
   return Number(formatUnits(amounts[amounts.length - 1], dex.usdtDecimals));
 }
@@ -225,10 +261,9 @@ export async function quoteEntrySwap(
   amountIn: bigint,
 ): Promise<bigint> {
   const dex = ENTRY_DEX[entry];
-  const amounts: bigint[] = await dexRouter(entry).getAmountsOut(amountIn, [
-    dex.wrapped,
-    dex.usdt,
-  ]);
+  const amounts: bigint[] = await withRpcRetry(() =>
+    dexRouter(entry).getAmountsOut(amountIn, [dex.wrapped, dex.usdt]),
+  );
   return amounts[amounts.length - 1];
 }
 
@@ -349,7 +384,7 @@ export async function quoteBridgeIn(
     BRIDGE_ROUTER_ABI as unknown as string[],
     providerFor(entry),
   ) as any;
-  const qb = await router.quoteBridge(amount);
+  const qb: any = await withRpcRetry(() => router.quoteBridge(amount));
   let totalNative = 0n;
   let nativeQuoteOk = false;
   try {
@@ -406,6 +441,26 @@ export function expected42Usdt(sourceUsdtRaw: bigint, sourceDecimals: number): b
   return in42 > fee ? in42 - fee : 0n;
 }
 
+/* ---------------- execution gate (quote-only mode) -------------- */
+
+/**
+ * Quote-only mode (v0.3.2): the QUOTE path never looks at balances —
+ * any well-formed positive amount gets an estimate, even above what
+ * the wallet holds. The balance gate lives HERE, at execution time:
+ * the confirm screen asks this helper and disables the start action
+ * (with a plain "estimate only" note) when the amount exceeds the
+ * usable balance. Send-time validation is unchanged.
+ */
+export interface AmountGate {
+  ok: boolean;
+  insufficient: boolean;
+}
+
+export function amountGate(amount: bigint, usable: bigint): AmountGate {
+  const insufficient = amount > usable;
+  return { ok: !insufficient, insufficient };
+}
+
 /* ---------------- back half: 42 USDT -> QL1 qCAW --------------- */
 
 export interface BackHalfQuote {
@@ -429,6 +484,20 @@ export interface BackHalfQuote {
   at: number;
 }
 
+/**
+ * Split evaluation costs many extra quotes and, in the QL1 -> 42
+ * direction (leg fees 0), can "win" by dust on tiny outputs — the
+ * 0.658-USDT sell that took 26 s in v0.3.1. Rule (v0.3.2): the best
+ * SINGLE route is always computed first, and the split search runs
+ * ONLY when the trade is worth roughly this many USD or more.
+ * Below the threshold `split` stays null. A split failure never
+ * fails the quote (best-effort try/catch, as before).
+ */
+export const SPLIT_MIN_USD = 50;
+
+/** Rough USD value of an 18-decimal USDT amount (USDT ≈ $1). */
+const usdOfUsdt18 = (raw: bigint): number => Number(formatUnits(raw, 18));
+
 export async function quoteBackHalf(usdt42Raw: bigint): Promise<BackHalfQuote> {
   const usdt = tokenById('infinite', 'usdt');
   const qcaw = tokenById('ql1', 'qcaw');
@@ -440,19 +509,24 @@ export async function quoteBackHalf(usdt42Raw: bigint): Promise<BackHalfQuote> {
     .slice()
     .sort((a: any, b: any) => (b.finalOut > a.finalOut ? 1 : -1))[0];
   let split: BackHalfQuote['split'] = null;
-  try {
-    const xs = await evaluateCrossSplit('infinite', 'ql1', usdt42Raw, cands);
-    const net = await evaluateCrossSplitNet('infinite', 'ql1', qcaw, xs);
-    if (net && net.shown && xs.best) {
-      split = {
-        parts: xs.best.parts,
-        totalOut: xs.best.totalOut,
-        netOut: bestSingle.finalOut + (net.netGain ?? 0n),
-        netGainPct: net.netPct ?? 0,
-      };
+  // The output is qCAW, which this app deliberately never prices in
+  // USD; the input IS USDT, and the output's value tracks it, so the
+  // input amount is the rough size gauge for the split search.
+  if (usdOfUsdt18(usdt42Raw) >= SPLIT_MIN_USD) {
+    try {
+      const xs = await evaluateCrossSplit('infinite', 'ql1', usdt42Raw, cands);
+      const net = await evaluateCrossSplitNet('infinite', 'ql1', qcaw, xs);
+      if (net && net.shown && xs.best) {
+        split = {
+          parts: xs.best.parts,
+          totalOut: xs.best.totalOut,
+          netOut: bestSingle.finalOut + (net.netGain ?? 0n),
+          netGainPct: net.netPct ?? 0,
+        };
+      }
+    } catch {
+      split = null; // split evaluation is best-effort; single still works
     }
-  } catch {
-    split = null; // split evaluation is best-effort; single still works
   }
   // The engine quotes quoteNative per pair, live — take the BEST
   // route's pair fee (all pairs price the same mailbox today).
@@ -728,19 +802,24 @@ export async function quoteBackHalfReverse(
     .slice()
     .sort((a: any, b: any) => (b.finalOut > a.finalOut ? 1 : -1))[0];
   let split: BackHalfQuote['split'] = null;
-  try {
-    const xs = await evaluateCrossSplit('ql1', 'infinite', qcawRaw, cands);
-    const net = await evaluateCrossSplitNet('ql1', 'infinite', usdt, xs);
-    if (net && net.shown && xs.best) {
-      split = {
-        parts: xs.best.parts,
-        totalOut: xs.best.totalOut,
-        netOut: bestSingle.finalOut + (net.netGain ?? 0n),
-        netGainPct: net.netPct ?? 0,
-      };
+  // Split search only when the single-route OUTPUT is worth roughly
+  // $50+ (the output here is USDT itself, so this is exact, not a
+  // proxy). Below that the search is skipped entirely — split=null.
+  if (usdOfUsdt18(bestSingle.finalOut as bigint) >= SPLIT_MIN_USD) {
+    try {
+      const xs = await evaluateCrossSplit('ql1', 'infinite', qcawRaw, cands);
+      const net = await evaluateCrossSplitNet('ql1', 'infinite', usdt, xs);
+      if (net && net.shown && xs.best) {
+        split = {
+          parts: xs.best.parts,
+          totalOut: xs.best.totalOut,
+          netOut: bestSingle.finalOut + (net.netGain ?? 0n),
+          netGainPct: net.netPct ?? 0,
+        };
+      }
+    } catch {
+      split = null;
     }
-  } catch {
-    split = null;
   }
   return { candidates: cands, bestSingle, split, feePerLeg42: 0n, at: Date.now() };
 }
@@ -765,7 +844,9 @@ export async function quoteBridgeOut42(
 ): Promise<BridgeOutQuote> {
   const provider = providerFor('infinite');
   const data = BRIDGE_OUT_IFACE.encodeFunctionData('quoteBridge', [amountRaw]);
-  const res = await provider.call({ to: BRIDGE_OUT_USDT_42.router, data });
+  const res = await withRpcRetry(() =>
+    provider.call({ to: BRIDGE_OUT_USDT_42.router, data }),
+  );
   const [forward, tokenFee, totalRequired] =
     BRIDGE_OUT_IFACE.decodeFunctionResult('quoteBridge', res) as unknown as [
       bigint,
@@ -776,7 +857,9 @@ export async function quoteBridgeOut42(
     TARGET_DOMAIN[target],
     '0x',
   ]);
-  const nRes = await provider.call({ to: BRIDGE_OUT_USDT_42.router, data: nData });
+  const nRes = await withRpcRetry(() =>
+    provider.call({ to: BRIDGE_OUT_USDT_42.router, data: nData }),
+  );
   const [, , totalNative] = BRIDGE_OUT_IFACE.decodeFunctionResult(
     'quoteNative',
     nRes,
@@ -811,10 +894,9 @@ export async function quoteFinalSwap(
 ): Promise<bigint> {
   const dex = ENTRY_DEX[target];
   const c = new Contract(dex.router, FINAL_SWAP_ABI, providerFor(target));
-  const amounts = (await c.getAmountsOut(usdtRaw, [
-    dex.usdt,
-    dex.wrapped,
-  ])) as bigint[];
+  const amounts = (await withRpcRetry(() =>
+    c.getAmountsOut(usdtRaw, [dex.usdt, dex.wrapped]),
+  )) as bigint[];
   return amounts[amounts.length - 1];
 }
 

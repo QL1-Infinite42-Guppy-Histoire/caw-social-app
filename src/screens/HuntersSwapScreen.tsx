@@ -46,6 +46,7 @@ import {
   type HuntersFlow,
 } from '../lib/flows';
 import {
+  amountGate,
   applySlippage,
   arrivalBalance,
   buildAggApprove,
@@ -143,6 +144,24 @@ function BuySection({ onClose }: { onClose: () => void }) {
   const [allowanceTick, setAllowanceTick] = useState(0);
   const flowRef = useRef<HuntersFlow | null>(null);
   flowRef.current = flow;
+  /* Slow-quote reassurance (v0.3.2): if a quote search runs past
+     ~15 s, say so in plain words instead of leaving a silent spinner. */
+  const [slowQuote, setSlowQuote] = useState(false);
+  const slowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const beginQuote = () => {
+    setQuoting(true);
+    setSlowQuote(false);
+    if (slowTimer.current) clearTimeout(slowTimer.current);
+    slowTimer.current = setTimeout(() => setSlowQuote(true), 15000);
+  };
+  const endQuote = () => {
+    setQuoting(false);
+    setSlowQuote(false);
+    if (slowTimer.current) {
+      clearTimeout(slowTimer.current);
+      slowTimer.current = null;
+    }
+  };
 
   /* ---------- loading balances / prices / saved flow ---------- */
   const loadBasics = useCallback(async () => {
@@ -209,7 +228,7 @@ function BuySection({ onClose }: { onClose: () => void }) {
   const buildPlan = async (choice: 'single' | 'split') => {
     const amt = parsedAmount(entry);
     if (amt === null || amt <= 0n) return;
-    setQuoting(true);
+    beginQuote();
     setStatus(null);
     try {
       const entryUsdt = await quoteEntrySwap(entry, amt);
@@ -228,10 +247,13 @@ function BuySection({ onClose }: { onClose: () => void }) {
       const expectedOut = netHeadline(rawOut, usdt42, carveCost);
       setPlan({ entryAmount: amt, entryUsdt, usdt42, back, carve, carveCost, choice, expectedOut });
       setPhase('confirm');
-    } catch {
-      setStatus({ text: tr('hs.failed'), err: true });
+    } catch (e) {
+      setStatus({
+        text: tr(e instanceof Error && e.message === 'no-route' ? 'hs.noRoute' : 'hs.netFailed'),
+        err: true,
+      });
     } finally {
-      setQuoting(false);
+      endQuote();
     }
   };
 
@@ -673,6 +695,14 @@ function BuySection({ onClose }: { onClose: () => void }) {
     amt !== null && nativePrice(entry) ? Number(formatUnits(amt, 18)) * (nativePrice(entry) ?? 0) : null;
   const ethBlocked = entry === 'ethereum' && amt !== null && amt > 0n && ethUsd !== null && !ethEntryAllowed(amt, ethUsd);
   const overSpendable = amt !== null && amt > spendable(entry);
+  /* Quote-only gate (v0.3.2): quoting works for ANY amount, but
+     STARTING the flow is blocked when the plan's amount is over the
+     usable balance (after the gas-keep rules) or under the ETH
+     entry minimum. The send path itself is unchanged. */
+  const planGate = plan ? amountGate(plan.entryAmount, spendable(entry)) : null;
+  const planEthMinBlocked =
+    !!plan && entry === 'ethereum' && ethUsd !== null && !ethEntryAllowed(plan.entryAmount, ethUsd);
+  const startBlocked = !!planGate?.insufficient || planEthMinBlocked;
 
   return (
     <View style={{ flex: 1 }}>
@@ -778,8 +808,8 @@ function BuySection({ onClose }: { onClose: () => void }) {
             {ethBlocked ? <Text style={[S.err, { marginTop: 8 }]}>{tr('hs.ethMin')}</Text> : null}
             {overSpendable ? <Text style={[S.err, { marginTop: 8 }]}>{tr('hs.notEnough')}</Text> : null}
             <Pressable
-              style={[S.bigBtn, { marginTop: 18 }, (quoting || amt === null || amt <= 0n || ethBlocked || overSpendable) && S.disabled]}
-              disabled={quoting || amt === null || amt <= 0n || ethBlocked || overSpendable}
+              style={[S.bigBtn, { marginTop: 18 }, (quoting || amt === null || amt <= 0n) && S.disabled]}
+              disabled={quoting || amt === null || amt <= 0n}
               onPress={() => buildPlan('single')}
             >
               <Text style={S.bigBtnText}>{quoting ? tr('hs.checking') : tr('hs.next')}</Text>
@@ -861,7 +891,16 @@ function BuySection({ onClose }: { onClose: () => void }) {
             ) : null}
             <Text style={[S.small, { marginTop: 14 }]}>{tr('hs.fixedFeeNote')}</Text>
             <Text style={[S.small, { marginTop: 6 }]}>{tr('hs.firstTimeNote')}</Text>
-            <Pressable style={[S.bigBtn, { marginTop: 18 }]} onPress={startFlow}>
+            {startBlocked ? (
+              <Text style={[S.err, { marginTop: 14 }]}>
+                {planGate?.insufficient ? tr('hs.quoteOnly') : tr('hs.ethMin')}
+              </Text>
+            ) : null}
+            <Pressable
+              style={[S.bigBtn, { marginTop: 18 }, startBlocked && { opacity: 0.4 }]}
+              disabled={startBlocked}
+              onPress={startFlow}
+            >
               <Text style={S.bigBtnText}>{tr('hs.start')}</Text>
             </Pressable>
             <Pressable style={[S.ghostBtn, { marginTop: 10 }]} onPress={() => setPhase('amount')}>
@@ -925,6 +964,9 @@ function BuySection({ onClose }: { onClose: () => void }) {
         {status ? (
           <Text style={[status.err ? S.err : S.small, { marginTop: 14 }]}>{status.text}</Text>
         ) : null}
+        {quoting && slowQuote ? (
+          <Text style={[S.small, { marginTop: 10 }]}>{tr('hs.stillWorking')}</Text>
+        ) : null}
       </ScrollView>
 
       <ConfirmSheet
@@ -987,6 +1029,25 @@ function SellSection({ onClose }: { onClose: () => void }) {
   const flowRef = useRef<HuntersFlow | null>(null);
   flowRef.current = flow;
 
+  /* Slow-quote reassurance (v0.3.2): if a quote search runs past
+     ~15 s, say so in plain words instead of leaving a silent spinner. */
+  const [slowQuote, setSlowQuote] = useState(false);
+  const slowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const beginQuote = () => {
+    setQuoting(true);
+    setSlowQuote(false);
+    if (slowTimer.current) clearTimeout(slowTimer.current);
+    slowTimer.current = setTimeout(() => setSlowQuote(true), 15000);
+  };
+  const endQuote = () => {
+    setQuoting(false);
+    setSlowQuote(false);
+    if (slowTimer.current) {
+      clearTimeout(slowTimer.current);
+      slowTimer.current = null;
+    }
+  };
+
   const loadBasics = useCallback(async () => {
     if (!address) return;
     const [b, pb, pe] = await Promise.all([
@@ -1042,7 +1103,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
   const buildSellPlan = async (choice: 'single' | 'split') => {
     const amt = parsedQcaw();
     if (amt === null || amt <= 0n) return;
-    setQuoting(true);
+    beginQuote();
     setStatus(null);
     try {
       const back = await quoteBackHalfReverse(amt);
@@ -1053,10 +1114,13 @@ function SellSection({ onClose }: { onClose: () => void }) {
       const nativeOut = await quoteFinalSwap(target, forwardTarget);
       setPlan({ qcawAmount: amt, back, choice, usdt42, forwardTarget, nativeOut });
       setPhase('confirm');
-    } catch {
-      setStatus({ text: tr('hs.failed'), err: true });
+    } catch (e) {
+      setStatus({
+        text: tr(e instanceof Error && e.message === 'no-route' ? 'hs.noRoute' : 'hs.netFailed'),
+        err: true,
+      });
     } finally {
-      setQuoting(false);
+      endQuote();
     }
   };
 
@@ -1508,6 +1572,9 @@ function SellSection({ onClose }: { onClose: () => void }) {
   const qcawBal = balances?.ql1Qcaw ?? 0n;
   const amt = parsedQcaw();
   const overBal = amt !== null && amt > qcawBal;
+  /* Quote-only gate (v0.3.2): quoting works for ANY amount; the
+     start action is blocked when the plan sells more than held. */
+  const sellGate = plan ? amountGate(plan.qcawAmount, qcawBal) : null;
 
   return (
     <View style={{ flex: 1 }}>
@@ -1606,8 +1673,8 @@ function SellSection({ onClose }: { onClose: () => void }) {
             </View>
             {overBal ? <Text style={[S.err, { marginTop: 10 }]}>{tr('hs.notEnough')}</Text> : null}
             <Pressable
-              style={[S.bigBtn, { marginTop: 20 }, (amt === null || amt <= 0n || overBal) && { opacity: 0.4 }]}
-              disabled={amt === null || amt <= 0n || overBal || quoting}
+              style={[S.bigBtn, { marginTop: 20 }, (amt === null || amt <= 0n) && { opacity: 0.4 }]}
+              disabled={amt === null || amt <= 0n || quoting}
               onPress={() => buildSellPlan('single')}
             >
               <Text style={S.bigBtnText}>{quoting ? tr('hs.checking') : tr('hs.next')}</Text>
@@ -1676,7 +1743,14 @@ function SellSection({ onClose }: { onClose: () => void }) {
               <Text style={[S.err, { marginTop: 8 }]}>{tr('hs.gasWarnTarget', { sym: targetSym })}</Text>
             ) : null}
             <Text style={[S.tiny, { marginTop: 12 }]}>{tr('hs.firstTimeNote')}</Text>
-            <Pressable style={[S.bigBtn, { marginTop: 16 }]} onPress={startSellFlow}>
+            {sellGate?.insufficient ? (
+              <Text style={[S.err, { marginTop: 12 }]}>{tr('hs.quoteOnly')}</Text>
+            ) : null}
+            <Pressable
+              style={[S.bigBtn, { marginTop: 16 }, sellGate?.insufficient && { opacity: 0.4 }]}
+              disabled={!!sellGate?.insufficient}
+              onPress={startSellFlow}
+            >
               <Text style={S.bigBtnText}>{tr('hs.start')}</Text>
             </Pressable>
           </>
@@ -1739,6 +1813,9 @@ function SellSection({ onClose }: { onClose: () => void }) {
 
         {status ? (
           <Text style={[status.err ? S.err : S.small, { marginTop: 14 }]}>{status.text}</Text>
+        ) : null}
+        {quoting && slowQuote ? (
+          <Text style={[S.small, { marginTop: 10 }]}>{tr('hs.stillWorking')}</Text>
         ) : null}
       </ScrollView>
 

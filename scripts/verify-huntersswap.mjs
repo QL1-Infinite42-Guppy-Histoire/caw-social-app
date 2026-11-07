@@ -1,7 +1,11 @@
-/* Verification for HuntersSwap (v0.3.0). Run:
- *   node scripts/verify-huntersswap.mjs
+/* Verification for HuntersSwap (v0.3.0; v0.3.2 sections added).
+ * Run: node scripts/verify-huntersswap.mjs
  *
  * LIVE read-only quotes + pure logic. No keys, no sends.
+ * v0.3.2: sell-quote robustness — RPC retry, per-candidate
+ * isolation under injected faults, bounded-concurrency quoting,
+ * split search only >= $50, quote-only mode for above-balance
+ * amounts, and the tab-bar center trade button (source checks).
  *
  * BUY:  $100 / $500 from BSC and $100 from Ethereum -> qCAW
  *       end-to-end via the ported aggregator engine; split must
@@ -215,6 +219,105 @@ for (const usd of [100, 500]) {
     if (flows.nextStep({ ...f, phase: ph }).kind !== ph) okAll = false;
   }
   check('flow machine: sell phases map to their step kinds', okAll);
+}
+
+/* ---------------- v0.3.2: sell-quote robustness -------------- */
+{
+  const EXACT = 532110641315686598335238476n; // the bug-report amount (25% chip)
+  const QL1_HOST = 'evm-rpc-ql1.mschihuahua.org';
+  const BABY_QL1 = '4667fc0a4b996e0f997313a49de48036b584ef22';
+  const realFetch = globalThis.fetch;
+
+  // (a1) The first QL1 requests throw outright (transient mobile
+  // failure). Call-level retry must absorb them; the quote completes.
+  let ql1Calls = 0;
+  globalThis.fetch = async (url, opts) => {
+    if (String(url).includes(QL1_HOST)) {
+      ql1Calls++;
+      if (ql1Calls <= 2) throw new Error('injected transient failure');
+    }
+    return realFetch(url, opts);
+  };
+  const backA = await H.quoteBackHalfReverse(EXACT);
+  check('(a) sell quote completes when the first QL1 calls throw (retry)',
+    backA.bestSingle.finalOut > 0n, `via ${backA.bestSingle.pair.sym}`);
+
+  // (a2) Every QL1 call touching the BABY route family throws,
+  // forever. Per-candidate isolation: the plan still returns, with
+  // no enabled BABY candidate in it.
+  globalThis.fetch = async (url, opts) => {
+    const body = typeof opts?.body === 'string' ? opts.body.toLowerCase() : '';
+    if (String(url).includes(QL1_HOST) && body.includes(BABY_QL1)) {
+      throw new Error('injected route failure');
+    }
+    return realFetch(url, opts);
+  };
+  const backB = await H.quoteBackHalfReverse(EXACT);
+  globalThis.fetch = realFetch;
+  check('(a) plan returns with one route family knocked out (isolation)',
+    backB.bestSingle.finalOut > 0n &&
+      backB.candidates.every((c) => !c.enabled || c.pair.sym !== 'BABY'),
+    `best via ${backB.bestSingle.pair.sym}`);
+
+  // (b)+(c) Clean run at the exact bug-report amount: timing
+  // printout + the split search must be SKIPPED (output ~$0.66,
+  // far below the $50 threshold). v0.3.1 baseline: 26,063 ms and a
+  // dust-winning split was offered.
+  const t0 = Date.now();
+  const backExact = await H.quoteBackHalfReverse(EXACT);
+  const msExact = Date.now() - t0;
+  console.log(
+    `  SELL exact 532,110,641.3156 qCAW -> ${fmt(backExact.bestSingle.finalOut)} USDT via ${backExact.bestSingle.pair.sym} in ${msExact}ms (v0.3.1: 26,063ms)`,
+  );
+  check('(b) sell quote at the bug-report amount completes in the measured ballpark',
+    backExact.bestSingle.finalOut > parseUnits('0.4', 18) &&
+      backExact.bestSingle.finalOut < parseUnits('0.9', 18),
+    `${msExact}ms`);
+  check('(c) split skipped below the $50 output threshold',
+    backExact.split === null && H.SPLIT_MIN_USD === 50);
+}
+
+/* ---------------- v0.3.2: quote-only mode -------------------- */
+{
+  // Amounts far above any balance: the QUOTE path never consults
+  // balances, so estimates still come back; the execution gate is
+  // what reports insufficient funds.
+  const huge = 10n ** 33n; // 10^15 qCAW
+  const backHuge = await H.quoteBackHalfReverse(huge);
+  check('(d) sell quote far above balance still returns an estimate',
+    backHuge.bestSingle.finalOut > 0n, `out=${fmt(backHuge.bestSingle.finalOut)} USDT`);
+  check('(d) execution gate flags the huge sell as insufficient',
+    H.amountGate(huge, 75n * 10n ** 9n * 10n ** 18n).insufficient === true);
+  const bigBuy = parseUnits('1000000', 18);
+  const backBig = await H.quoteBackHalf(bigBuy);
+  check('(d) buy quote far above balance still returns an estimate',
+    backBig.bestSingle.finalOut > 0n, `out=${fmt(backBig.bestSingle.finalOut)} qCAW`);
+  check('(d) execution gate: 1M vs 100 usable -> insufficient; 50 vs 100 -> ok',
+    H.amountGate(bigBuy, parseUnits('100', 18)).insufficient === true &&
+      H.amountGate(parseUnits('50', 18), parseUnits('100', 18)).ok === true);
+}
+
+/* ---------------- v0.3.2: tab-bar center button -------------- */
+{
+  // UI structure is asserted at source level (RN cannot run here):
+  // 4 tabs + a center ACTION that opens HuntersSwap without ever
+  // calling setTab; MyNames lost its big buy button but kept the
+  // qCAW balance line.
+  const appSrc = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+  const mineSrc = readFileSync(
+    new URL('../src/screens/MyNamesScreen.tsx', import.meta.url),
+    'utf8',
+  );
+  const i = appSrc.indexOf("accessibilityLabel={tr('hs.trade')}");
+  const block = i >= 0 ? appSrc.slice(i, i + 300) : '';
+  check('(e) tab bar: 4 tabs + center trade action present',
+    i >= 0 &&
+      (appSrc.match(/key: '(home|get|mine|settings)'/g) || []).length === 4 &&
+      appSrc.includes('<HuntersSwapModal visible={hsOpen}'));
+  check('(e) center action opens HuntersSwap and never switches tabs',
+    block.includes('setHsOpen(true)') && !block.includes('setTab'));
+  check('(e) MyNames: big buy button removed, qCAW balance line kept',
+    !mineSrc.includes("tr('hs.buy')") && mineSrc.includes('qCAW:'));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

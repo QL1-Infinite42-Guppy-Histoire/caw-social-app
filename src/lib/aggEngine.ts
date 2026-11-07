@@ -247,12 +247,37 @@ function encLegsTail(legs) {
 
 /* ---------- RPC (public, read-only) ---------- */
 let rpcId = 0;
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+/* v0.3.2 robustness: a single stalled/failed call on mobile data used
+   to kill the whole quote. Transport failures (fetch rejection, HTTP
+   error, bad body, abort) now RETRY — 2 retries with short backoff —
+   and every attempt is time-boxed so a hang becomes a failure the
+   retry/fallback logic can route around. Per-call JSON-RPC errors
+   (reverts) are NOT throws here: they come back as null results and
+   are never retried. */
+const RPC_RETRIES = 2;
+const RPC_TIMEOUT_MS = 20000;
+async function fetchJson(url, body) {
+  let ctrl = null, timer = null;
+  try {
+    if (typeof AbortController !== "undefined") {
+      ctrl = new AbortController();
+      timer = setTimeout(() => { try { ctrl.abort(); } catch (e) { /* noop */ } }, RPC_TIMEOUT_MS);
+    }
+    const res = await fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body,
+      ...(ctrl ? { signal: ctrl.signal } : {}),
+    });
+    if (!res.ok) throw new Error("RPC HTTP " + res.status);
+    return await res.json();
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 async function rpcBatchOnce(url, calls) {
   const start = rpcId;
   const payload = calls.map(([to, data]) => ({ jsonrpc: "2.0", id: ++rpcId, method: "eth_call", params: [{ to, data }, "latest"] }));
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-  if (!res.ok) throw new Error("RPC HTTP " + res.status);
-  const out = await res.json();
+  const out = await fetchJson(url, JSON.stringify(payload));
   if (!Array.isArray(out)) throw new Error("RPC bad response");
   const byId = {};
   for (const x of out) byId[x.id] = x.error ? null : (x.result || null);
@@ -261,7 +286,12 @@ async function rpcBatchOnce(url, calls) {
 async function rpcBatch(chainObj, calls) {
   let lastErr = null;
   for (const url of chainObj.rpcs) {
-    try { return await rpcBatchOnce(url, calls); } catch (e) { lastErr = e; }
+    for (let attempt = 0; attempt <= RPC_RETRIES; attempt++) {
+      try { return await rpcBatchOnce(url, calls); } catch (e) {
+        lastErr = e;
+        if (attempt < RPC_RETRIES) await sleepMs(300 * (attempt + 1));
+      }
+    }
   }
   throw lastErr || new Error("RPC unreachable");
 }
@@ -269,14 +299,62 @@ async function rpcOne(chainObj, to, data) { return (await rpcBatch(chainObj, [[t
 async function rpcMethod(chainObj, method, params) {
   let lastErr = null;
   for (const url of chainObj.rpcs) {
-    try {
-      const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }) });
-      const j = await res.json();
-      if (j.error) throw new Error(j.error.message || "RPC error");
-      return j.result;
-    } catch (e) { lastErr = e; }
+    for (let attempt = 0; attempt <= RPC_RETRIES; attempt++) {
+      try {
+        const j = await fetchJson(url, JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }));
+        if (j.error) throw new Error(j.error.message || "RPC error");
+        return j.result;
+      } catch (e) {
+        lastErr = e;
+        if (attempt < RPC_RETRIES) await sleepMs(300 * (attempt + 1));
+      }
+    }
   }
   throw lastErr || new Error("RPC unreachable");
+}
+/* Run fn over items with at most `limit` promises in flight; the
+   result array keeps the input order, so callers stay deterministic. */
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const n = Math.max(1, Math.min(limit, items.length));
+  const workers = [];
+  for (let w = 0; w < n; w++) {
+    workers.push((async () => {
+      while (true) {
+        const i = next++;
+        if (i >= items.length) return;
+        out[i] = await fn(items[i], i);
+      }
+    })());
+  }
+  await Promise.all(workers);
+  return out;
+}
+/* Quote getAmountsOut for many paths of one (from -> to) pair.
+   Fast path: ONE batched call. If the batch itself fails at
+   transport level, fall back to quoting paths one by one (bounded
+   concurrency): a path that still fails comes back null — only that
+   route disappears, never the whole plan (v0.3.2 per-candidate
+   isolation). Returns hex results aligned with `paths`; never throws. */
+async function quoteAmountsOutByPath(chainObj, amountIn, paths) {
+  const calls = paths.map((p) => [chainObj.router, encodeGetAmountsOut(amountIn, p)]);
+  try {
+    return await rpcBatch(chainObj, calls);
+  } catch (e) {
+    let consecutiveFails = 0;
+    return mapLimit(calls, 4, async (c) => {
+      if (consecutiveFails >= 4) return null; // endpoint looks down; stop burning time
+      try {
+        const r = (await rpcBatch(chainObj, [c]))[0];
+        consecutiveFails = 0;
+        return r || null;
+      } catch (e2) {
+        consecutiveFails++;
+        return null;
+      }
+    });
+  }
 }
 
 /* ---------- route enumeration ---------- */
@@ -425,8 +503,12 @@ async function evaluateSplits(chainObj, routes, amountIn) {
     }
     for (let s = 0; s < missing.length; s += CHUNK) {
       const chunk = missing.slice(s, s + CHUNK);
-      const res = await rpcBatch(chainObj, chunk.map((m) => [chainObj.router, encodeGetAmountsOut(m.leg.amountIn, m.leg.route.path)]));
-      chunk.forEach((m, k) => { const amts = decodeAmountsOut(res[k]); cache.set(m.key, amts && amts.length ? amts[amts.length - 1] : null); });
+      try {
+        const res = await rpcBatch(chainObj, chunk.map((m) => [chainObj.router, encodeGetAmountsOut(m.leg.amountIn, m.leg.route.path)]));
+        chunk.forEach((m, k) => { const amts = decodeAmountsOut(res[k]); cache.set(m.key, amts && amts.length ? amts[amts.length - 1] : null); });
+      } catch (e) {
+        chunk.forEach((m) => cache.set(m.key, null));
+      }
     }
   }
   const scoreFromCache = (alloc) => {
@@ -475,7 +557,7 @@ async function fetchQuotesForTokens(chainObj, fromTok, toTok, amountIn) {
   if (fromTok.address.toLowerCase() === toTok.address.toLowerCase()) throw new Error(t("errSameToken"));
   if (amountIn <= 0n) throw new Error(t("errAmountPositive"));
   const paths = buildCandidatePaths(chainObj, fromTok, toTok);
-  const results = await rpcBatch(chainObj, paths.map((p) => [chainObj.router, encodeGetAmountsOut(amountIn, p)]));
+  const results = await quoteAmountsOutByPath(chainObj, amountIn, paths);
   const routes = [];
   results.forEach((hex, i) => {
     const amounts = decodeAmountsOut(hex);
@@ -611,7 +693,7 @@ async function fetchBestRoute(chainObj, fromTok, toTok, amountIn) {
   if (fromTok.address.toLowerCase() === toTok.address.toLowerCase()) return null;
   if (amountIn <= 0n) return null;
   const paths = buildCandidatePaths(chainObj, fromTok, toTok);
-  const results = await rpcBatch(chainObj, paths.map((p) => [chainObj.router, encodeGetAmountsOut(amountIn, p)]));
+  const results = await quoteAmountsOutByPath(chainObj, amountIn, paths);
   let best = null;
   results.forEach((hex, i) => {
     const amounts = decodeAmountsOut(hex);
@@ -636,7 +718,7 @@ async function fetchRoutesOnly(chainObj, fromTok, toTok, amountIn) {
   if (fromTok.address.toLowerCase() === toTok.address.toLowerCase()) return [];
   if (amountIn <= 0n) return [];
   const paths = buildCandidatePaths(chainObj, fromTok, toTok);
-  const results = await rpcBatch(chainObj, paths.map((p) => [chainObj.router, encodeGetAmountsOut(amountIn, p)]));
+  const results = await quoteAmountsOutByPath(chainObj, amountIn, paths);
   const routes = [];
   results.forEach((hex, i) => {
     const amounts = decodeAmountsOut(hex);
@@ -719,63 +801,91 @@ function extractMessageId(receipt) {
 const X_MAX_ROUTES_PER_T = 4, X_MAX_ROUTES_TOTAL = 24, X_LEG_VARIANTS = 3;
 async function quoteCrossPlan(srcKey, fromTok, dstKey, toTok, amountIn) {
   const src = CHAINS[srcKey], dst = CHAINS[dstKey];
+  /* v0.3.2: bridge pairs are quoted CONCURRENTLY (max 4 in flight)
+     and ISOLATED: a transport failure inside one pair disables that
+     pair (listed as a disabled candidate) instead of throwing the
+     whole plan. Results are assembled in BRIDGE_PAIRS order and the
+     leg-2 combinations are still built sequentially per pair, so
+     for the same chain state the output is identical to the old
+     sequential version — just faster and failure-tolerant. */
+  const processPair = async (pair) => {
+    const tSrc = tokenById(srcKey, srcKey === "infinite" ? pair.infId : pair.ql1Id);
+    const tDst = tokenById(dstKey, dstKey === "infinite" ? pair.infId : pair.ql1Id);
+    if (!tSrc || !tDst) return { skip: true };
+    const enabledDir = srcKey === "ql1" ? pair.enabledFromQl1 : pair.enabledFromInf;
+    if (!enabledDir) return { disabled: { pair, tSrc, tDst, enabled: false, reason: t("xDisabledOsak") } };
+    if (srcKey === "ql1" && fromTok.id === "native" && pair.sym === "QOM") return { disabled: { pair, tSrc, tDst, enabled: false, reason: t("xDisabledWrap") } };
+    try {
+      // --- leg 1 variants: source -> bridge token (top distinct paths) ---
+      let leg1Vars; // [{route|null, out}]
+      if (fromTok.address.toLowerCase() === tSrc.address.toLowerCase()) {
+        leg1Vars = [{ route: null, out: amountIn }];
+      } else {
+        const all = await fetchRoutesOnly(src, fromTok, tSrc, amountIn);
+        if (!all.length) return { skip: true };
+        leg1Vars = all.slice(0, X_LEG_VARIANTS).map((r) => ({ route: r, out: r.amountOut }));
+      }
+      const minT = 10n ** BigInt(tSrc.decimals);
+      leg1Vars = leg1Vars.filter((v) => v.out >= minT);
+      if (!leg1Vars.length) return { disabled: { pair, tSrc, tDst, enabled: false, reason: t("xTooSmall") } };
+      // --- leg 2 combinations (bridge fee 0, 1:1 — verified by sampling + quoteBridge) ---
+      const leg2Identity = tDst.address.toLowerCase() === toTok.address.toLowerCase();
+      // leg-2 routes for every variant are fetched concurrently
+      // (order preserved); combos are assembled in variant order.
+      const leg2All = leg2Identity
+        ? null
+        : await mapLimit(leg1Vars, 3, async (v) => {
+            try { return await fetchRoutesOnly(dst, tDst, toTok, v.out); } catch (e) { return []; }
+          });
+      const combos = new Map();
+      const addCombo = (v, r2, finalOut) => {
+        const key = (v.route ? v.route.path.join(",") : "-") + "|" + (r2 ? r2.path.join(",") : "-");
+        if (combos.has(key)) return;
+        combos.set(key, {
+          pair, tSrc, tDst, enabled: true,
+          swap1Route: v.route, swap1Out: v.out, bridgeOut: v.out,
+          swap2Route: r2, finalOut,
+          leg1Path: v.route ? v.route.path.slice() : null,
+          leg2Path: r2 ? r2.path.slice() : null,
+          nativeFee: 0n, vsBenchDiff: null, vsBenchPct: null, isBenchmark: false,
+        });
+      };
+      let leg2TopForBest = null;
+      for (let vi = 0; vi < leg1Vars.length; vi++) {
+        const v = leg1Vars[vi];
+        if (leg2Identity) { addCombo(v, null, v.out); continue; }
+        const all2 = leg2All[vi];
+        if (!all2.length) continue;
+        if (vi === 0) leg2TopForBest = all2.slice(0, X_LEG_VARIANTS);
+        addCombo(v, all2[0], all2[0].amountOut);
+      }
+      if (leg2TopForBest) for (let i = 1; i < leg2TopForBest.length; i++) addCombo(leg1Vars[0], leg2TopForBest[i], leg2TopForBest[i].amountOut);
+      let routes = [...combos.values()];
+      if (!routes.length) return { skip: true };
+      routes.sort((a, b) => (b.finalOut > a.finalOut ? 1 : b.finalOut < a.finalOut ? -1 : 0));
+      routes = routes.slice(0, X_MAX_ROUTES_PER_T);
+      if (srcKey === "infinite") { try { const q = await fetchBridgeNativeQuote(pair); const fee = q ? q.totalNative : 0n; for (const r of routes) r.nativeFee = fee; } catch (e) { /* shown as approx */ } }
+      const impactSrc = [], impactDst = [];
+      for (const r of routes) {
+        if (r.swap1Route) impactSrc.push({ route: r.swap1Route, amountIn });
+        if (r.swap2Route) impactDst.push({ route: r.swap2Route, amountIn: r.bridgeOut });
+      }
+      return { entry: { pair, routes }, impactSrc, impactDst };
+    } catch (e) {
+      // Per-candidate isolation: this pair is out, the plan goes on.
+      return { disabled: { pair, tSrc, tDst, enabled: false, reason: t("xNetError") } };
+    }
+  };
+  const pairResults = await mapLimit(BRIDGE_PAIRS, 4, processPair);
   const disabled = [];
   const perPair = []; // [{pair, routes:[fullRoute...]}]
   const impactItems = { [srcKey]: [], [dstKey]: [] };
-  for (const pair of BRIDGE_PAIRS) {
-    const tSrc = tokenById(srcKey, srcKey === "infinite" ? pair.infId : pair.ql1Id);
-    const tDst = tokenById(dstKey, dstKey === "infinite" ? pair.infId : pair.ql1Id);
-    if (!tSrc || !tDst) continue;
-    const enabledDir = srcKey === "ql1" ? pair.enabledFromQl1 : pair.enabledFromInf;
-    if (!enabledDir) { disabled.push({ pair, tSrc, tDst, enabled: false, reason: t("xDisabledOsak") }); continue; }
-    if (srcKey === "ql1" && fromTok.id === "native" && pair.sym === "QOM") { disabled.push({ pair, tSrc, tDst, enabled: false, reason: t("xDisabledWrap") }); continue; }
-    // --- leg 1 variants: source -> bridge token (top distinct paths) ---
-    let leg1Vars; // [{route|null, out}]
-    if (fromTok.address.toLowerCase() === tSrc.address.toLowerCase()) {
-      leg1Vars = [{ route: null, out: amountIn }];
-    } else {
-      const all = await fetchRoutesOnly(src, fromTok, tSrc, amountIn);
-      if (!all.length) continue;
-      leg1Vars = all.slice(0, X_LEG_VARIANTS).map((r) => ({ route: r, out: r.amountOut }));
-    }
-    const minT = 10n ** BigInt(tSrc.decimals);
-    leg1Vars = leg1Vars.filter((v) => v.out >= minT);
-    if (!leg1Vars.length) { disabled.push({ pair, tSrc, tDst, enabled: false, reason: t("xTooSmall") }); continue; }
-    // --- leg 2 combinations (bridge fee 0, 1:1 — verified by sampling + quoteBridge) ---
-    const leg2Identity = tDst.address.toLowerCase() === toTok.address.toLowerCase();
-    const combos = new Map();
-    const addCombo = (v, r2, finalOut) => {
-      const key = (v.route ? v.route.path.join(",") : "-") + "|" + (r2 ? r2.path.join(",") : "-");
-      if (combos.has(key)) return;
-      combos.set(key, {
-        pair, tSrc, tDst, enabled: true,
-        swap1Route: v.route, swap1Out: v.out, bridgeOut: v.out,
-        swap2Route: r2, finalOut,
-        leg1Path: v.route ? v.route.path.slice() : null,
-        leg2Path: r2 ? r2.path.slice() : null,
-        nativeFee: 0n, vsBenchDiff: null, vsBenchPct: null, isBenchmark: false,
-      });
-    };
-    let leg2TopForBest = null;
-    for (let vi = 0; vi < leg1Vars.length; vi++) {
-      const v = leg1Vars[vi];
-      if (leg2Identity) { addCombo(v, null, v.out); continue; }
-      const all2 = await fetchRoutesOnly(dst, tDst, toTok, v.out);
-      if (!all2.length) continue;
-      if (vi === 0) leg2TopForBest = all2.slice(0, X_LEG_VARIANTS);
-      addCombo(v, all2[0], all2[0].amountOut);
-    }
-    if (leg2TopForBest) for (let i = 1; i < leg2TopForBest.length; i++) addCombo(leg1Vars[0], leg2TopForBest[i], leg2TopForBest[i].amountOut);
-    let routes = [...combos.values()];
-    if (!routes.length) continue;
-    routes.sort((a, b) => (b.finalOut > a.finalOut ? 1 : b.finalOut < a.finalOut ? -1 : 0));
-    routes = routes.slice(0, X_MAX_ROUTES_PER_T);
-    if (srcKey === "infinite") { try { const q = await fetchBridgeNativeQuote(pair); const fee = q ? q.totalNative : 0n; for (const r of routes) r.nativeFee = fee; } catch (e) { /* shown as approx */ } }
-    perPair.push({ pair, routes });
-    for (const r of routes) {
-      if (r.swap1Route) impactItems[srcKey].push({ route: r.swap1Route, amountIn });
-      if (r.swap2Route) impactItems[dstKey].push({ route: r.swap2Route, amountIn: r.bridgeOut });
-    }
+  for (const r of pairResults) {
+    if (!r || r.skip) continue;
+    if (r.disabled) { disabled.push(r.disabled); continue; }
+    perPair.push(r.entry);
+    impactItems[srcKey].push(...r.impactSrc);
+    impactItems[dstKey].push(...r.impactDst);
   }
   /* v4 benchmark: the "obvious" route — via QOM, or bridging the source token
      itself when that is possible. The better of the two intermediates' best
@@ -908,17 +1018,21 @@ async function requoteSplitPart(srcKey, dstKey, cand, amount) {
   let o1 = null;
   if (!cand.leg1Path) o1 = amount;
   else {
-    const res = await rpcBatch(CHAINS[srcKey], [[CHAINS[srcKey].router, encodeGetAmountsOut(amount, cand.leg1Path)]]);
-    const amts = decodeAmountsOut(res[0]);
-    o1 = amts && amts.length ? amts[amts.length - 1] : null;
+    try {
+      const res = await rpcBatch(CHAINS[srcKey], [[CHAINS[srcKey].router, encodeGetAmountsOut(amount, cand.leg1Path)]]);
+      const amts = decodeAmountsOut(res[0]);
+      o1 = amts && amts.length ? amts[amts.length - 1] : null;
+    } catch (e) { return null; } // transport failure = this part unquotable, not a crash
   }
   if (o1 == null || o1 <= 0n) return null;
   if (o1 < (10n ** BigInt(cand.tSrc.decimals))) return null;
   if (!cand.leg2Path) return { leg1Out: o1, finalOut: o1 };
-  const res2 = await rpcBatch(CHAINS[dstKey], [[CHAINS[dstKey].router, encodeGetAmountsOut(o1, cand.leg2Path)]]);
-  const amts2 = decodeAmountsOut(res2[0]);
-  const v = amts2 && amts2.length ? amts2[amts2.length - 1] : null;
-  return v != null && v > 0n ? { leg1Out: o1, finalOut: v } : null;
+  try {
+    const res2 = await rpcBatch(CHAINS[dstKey], [[CHAINS[dstKey].router, encodeGetAmountsOut(o1, cand.leg2Path)]]);
+    const amts2 = decodeAmountsOut(res2[0]);
+    const v = amts2 && amts2.length ? amts2[amts2.length - 1] : null;
+    return v != null && v > 0n ? { leg1Out: o1, finalOut: v } : null;
+  } catch (e) { return null; }
 }
 /* ---------- v6.2/v6.4: cross-split quoter ----------
    交換1 は (候補ルート, 金額) 単位でキャッシュする。交換2 は v6.4 から
@@ -940,8 +1054,12 @@ function makeCrossSplitQuoter(srcKey, dstKey, candIdx) {
       const key = leg1Key(j.cand, j.amount);
       if (!leg1Cache.has(key) && !seen.has(key)) { seen.add(key); missing.push({ key, cand: j.cand, amount: j.amount }); }
     }
-    for (let s = 0; s < missing.length; s += CHUNK) {
-      const chunk = missing.slice(s, s + CHUNK);
+    const chunks = [];
+    for (let s = 0; s < missing.length; s += CHUNK) chunks.push(missing.slice(s, s + CHUNK));
+    // chunks run with bounded concurrency; a chunk whose batch fails
+    // at transport level marks ONLY its own keys unquotable (null) —
+    // the split search degrades, it never takes the quote down.
+    await mapLimit(chunks, 4, async (chunk) => {
       stats.partQuotes += chunk.length;
       const calls = [], keys = [];
       for (const m of chunk) {
@@ -950,10 +1068,14 @@ function makeCrossSplitQuoter(srcKey, dstKey, candIdx) {
       }
       if (calls.length) {
         stats.batches++;
-        const res = await rpcBatch(CHAINS[srcKey], calls);
-        keys.forEach((key, k) => { const amts = decodeAmountsOut(res[k]); leg1Cache.set(key, amts && amts.length ? amts[amts.length - 1] : null); });
+        try {
+          const res = await rpcBatch(CHAINS[srcKey], calls);
+          keys.forEach((key, k) => { const amts = decodeAmountsOut(res[k]); leg1Cache.set(key, amts && amts.length ? amts[amts.length - 1] : null); });
+        } catch (e) {
+          keys.forEach((key) => leg1Cache.set(key, null));
+        }
       }
-    }
+    });
   }
   async function ensureLeg2(jobs) {
     // jobs: [{key (groupKey|totalIn), path, totalIn}]
@@ -963,17 +1085,22 @@ function makeCrossSplitQuoter(srcKey, dstKey, candIdx) {
       if (!j || j.totalIn == null || j.totalIn <= 0n) continue;
       if (!leg2Cache.has(j.key) && !seen.has(j.key)) { seen.add(j.key); missing.push(j); }
     }
-    for (let s = 0; s < missing.length; s += CHUNK) {
-      const chunk = missing.slice(s, s + CHUNK);
+    const chunks = [];
+    for (let s = 0; s < missing.length; s += CHUNK) chunks.push(missing.slice(s, s + CHUNK));
+    await mapLimit(chunks, 4, async (chunk) => {
       stats.leg2Quotes += chunk.length;
       stats.batches++;
-      const res = await rpcBatch(CHAINS[dstKey], chunk.map((m) => [CHAINS[dstKey].router, encodeGetAmountsOut(m.totalIn, m.path)]));
-      chunk.forEach((m, k) => {
-        const amts = decodeAmountsOut(res[k]);
-        const v = amts && amts.length ? amts[amts.length - 1] : null;
-        leg2Cache.set(m.key, v != null && v > 0n ? v : null);
-      });
-    }
+      try {
+        const res = await rpcBatch(CHAINS[dstKey], chunk.map((m) => [CHAINS[dstKey].router, encodeGetAmountsOut(m.totalIn, m.path)]));
+        chunk.forEach((m, k) => {
+          const amts = decodeAmountsOut(res[k]);
+          const v = amts && amts.length ? amts[amts.length - 1] : null;
+          leg2Cache.set(m.key, v != null && v > 0n ? v : null);
+        });
+      } catch (e) {
+        chunk.forEach((m) => leg2Cache.set(m.key, null));
+      }
+    });
   }
   return {
     ensureLeg1, ensureLeg2, stats,
