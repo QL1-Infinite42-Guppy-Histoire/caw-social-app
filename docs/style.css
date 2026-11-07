@@ -17,6 +17,18 @@ body {
 }
 .wrap { max-width: 640px; margin: 0 auto; padding: 0 20px 48px; }
 
+/* Guppy's Guide brand bar */
+.brandbar { background: #fff7ed; border-bottom: 1px solid var(--line); }
+.brandbar-inner { max-width: 640px; margin: 0 auto; padding: 10px 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.brandbar-name { color: var(--ink); font-weight: 800; text-decoration: none; }
+.brandbar-sub { color: var(--sub); font-weight: 600; font-size: .85rem; }
+.brandbar-tag { color: var(--sub); font-size: .82rem; }
+.brandbar-more {
+  margin-left: auto; color: var(--accent); font-weight: 700; font-size: .85rem;
+  text-decoration: none; border: 1.5px solid var(--accent); border-radius: 999px;
+  padding: 4px 12px; white-space: nowrap; background: #fff;
+}
+
 /* header */
 .topbar { border-bottom: 1px solid var(--line); margin: 0 -20px; padding: 0 20px; }
 .topbar-inner { max-width: 640px; margin: 0 auto; display: flex; align-items: center; gap: 12px; padding: 12px 0; }
@@ -73,3 +85,10 @@ ul.feats li::before { content: "✓"; position: absolute; left: 4px; color: var(
 a { color: var(--accent); }
 footer { border-top: 1px solid var(--line); margin-top: 28px; padding-top: 18px; color: var(--sub); font-size: .9rem; }
 footer p { margin: 0 0 8px; }
+footer .foot-brand { font-size: 1rem; font-weight: 800; color: var(--ink); margin-bottom: 2px; }
+footer .foot-brand a { color: var(--ink); text-decoration: none; }
+footer .foot-tag { margin-bottom: 14px; }
+a.more-btn {
+  display: inline-block; color: var(--accent); font-weight: 700; text-decoration: none;
+  border: 1.5px solid var(--accent); border-radius: 999px; padding: 8px 18px; background: #fff;
+}
