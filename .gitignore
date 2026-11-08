@@ -62,3 +62,4 @@ scripts/.build-hunters/
 scripts/.build-reveal/
 scripts/.build-send/
 scripts/.build-threads/
+scripts/.build-resume/

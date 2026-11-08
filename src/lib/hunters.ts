@@ -56,6 +56,7 @@ import {
   quoteCrossPlan,
   tokenById,
 } from './aggEngine';
+import type { HuntersFlow } from './flows';
 
 export const ROUTER_ABI = [
   'function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)',
@@ -138,6 +139,421 @@ export interface TxReq {
   to: string;
   data: string;
   value: bigint;
+}
+
+/* ---------------- robust tx confirmation (v0.4.1) ---------------
+ * The v0.4.0 send path confirmed a broadcast with ethers'
+ * tx.wait() on ONE RPC endpoint. When that endpoint hiccuped
+ * during polling, wait() threw even though the transaction had
+ * already been mined — the step was reported as a failure while
+ * the swap had actually succeeded (user incident 2026-11-08:
+ * BSC swap 0x7b5ac1… landed, app showed 「うまくいきませんでした」).
+ * The replacement below polls getTransactionReceipt across ALL
+ * of the chain's endpoints with backoff for a generous window,
+ * and separates the three outcomes: confirmed / reverted /
+ * unconfirmed. An unconfirmed tx is NEVER reported as a plain
+ * failure — it may well have succeeded on-chain. */
+
+const rpcProviders = new Map<string, JsonRpcProvider>();
+
+/** Provider for one specific RPC endpoint of a chain (cached). */
+export function providerForRpc(key: HsChainKey, url: string): JsonRpcProvider {
+  const id = key + '|' + url;
+  let p = rpcProviders.get(id);
+  if (!p) {
+    p = new JsonRpcProvider(url, HS_CHAINS[key].chainId, {
+      staticNetwork: true,
+    });
+    rpcProviders.set(id, p);
+  }
+  return p;
+}
+
+/** One provider per configured endpoint of the chain. */
+export function providersFor(key: HsChainKey): JsonRpcProvider[] {
+  return HS_CHAINS[key].rpcs.map((u) => providerForRpc(key, u));
+}
+
+/** The HuntersSwap chain a provider belongs to, when it is the
+ *  shared providerFor() instance (null for any other provider). */
+export function chainOfProvider(p: unknown): HsChainKey | null {
+  for (const k of Object.keys(HS_CHAINS) as HsChainKey[]) {
+    if (providerFor(k) === p) return k;
+  }
+  return null;
+}
+
+export interface ReceiptLike {
+  status: number;
+}
+
+export interface ConfirmOpts {
+  /** Total polling window before giving up (default 90 s). */
+  windowMs?: number;
+  /** First pause between sweeps; grows x1.5 up to maxDelayMs. */
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}
+
+/**
+ * Poll receipt fetchers (one per RPC endpoint) until one returns
+ * a receipt. A fetcher throwing is an endpoint hiccup, never a
+ * verdict — the sweep moves on to the next endpoint. Returns
+ * null when the whole window passes with no receipt anywhere.
+ */
+export async function confirmReceipt(
+  fetchers: Array<() => Promise<ReceiptLike | null>>,
+  opts: ConfirmOpts = {},
+): Promise<ReceiptLike | null> {
+  const windowMs = opts.windowMs ?? 90000;
+  const sleep = opts.sleep ?? sleepMs;
+  const now = opts.now ?? Date.now;
+  const start = now();
+  let delay = opts.initialDelayMs ?? 1500;
+  const maxDelay = opts.maxDelayMs ?? 6000;
+  for (;;) {
+    for (const f of fetchers) {
+      try {
+        const r = await f();
+        if (r) return r;
+      } catch {
+        /* endpoint hiccup: try the next one */
+      }
+    }
+    if (now() - start >= windowMs) return null;
+    await sleep(delay);
+    delay = Math.min(maxDelay, Math.round(delay * 1.5));
+    if (now() - start >= windowMs) return null;
+  }
+}
+
+/** Receipt wait with RPC failover across the chain's endpoints. */
+export async function waitForReceiptRobust(
+  chain: HsChainKey,
+  hash: string,
+  opts: ConfirmOpts = {},
+): Promise<ReceiptLike | null> {
+  const fetchers = providersFor(chain).map(
+    (p) => async (): Promise<ReceiptLike | null> => {
+      const r = await p.getTransactionReceipt(hash);
+      return r && r.status != null ? { status: Number(r.status) } : null;
+    },
+  );
+  return confirmReceipt(fetchers, opts);
+}
+
+/** The tx was broadcast (we hold its hash) but no receipt could
+ *  be obtained inside the window. It MAY have succeeded — the
+ *  UI must say exactly that, never the plain failure text. */
+export class TxUnconfirmedError extends Error {
+  readonly hash: string;
+  constructor(hash: string) {
+    super('tx-unconfirmed');
+    this.name = 'TxUnconfirmedError';
+    this.hash = hash;
+  }
+}
+
+/** The tx was mined and reverted (receipt status 0). */
+export class TxRevertedError extends Error {
+  readonly hash: string;
+  constructor(hash: string) {
+    super('tx-reverted');
+    this.name = 'TxRevertedError';
+    this.hash = hash;
+  }
+}
+
+export interface StepSendDeps {
+  /** Broadcast the request; resolves with the tx hash. */
+  broadcast: () => Promise<string>;
+  /** Confirm a broadcast tx; resolves null when unconfirmable. */
+  confirm: (hash: string) => Promise<ReceiptLike | null>;
+}
+
+/**
+ * The one composition every guided-flow send goes through:
+ * broadcast, then confirm. Resolves with the hash ONLY on a
+ * status-1 receipt; throws TxUnconfirmedError when no receipt
+ * could be obtained and TxRevertedError on a status-0 receipt.
+ * Nothing here can turn a mined success into a reported failure.
+ */
+export async function executeStepSend(deps: StepSendDeps): Promise<string> {
+  const hash = await deps.broadcast();
+  const receipt = await deps.confirm(hash);
+  if (!receipt) throw new TxUnconfirmedError(hash);
+  if (receipt.status !== 1) throw new TxRevertedError(hash);
+  return hash;
+}
+
+/* ---------------- execution error taxonomy (v0.4.1) --------------
+ * Standing policy: insufficient balance / network-RPC / no-route
+ * / price-moved / unconfirmed are DIFFERENT user-facing messages.
+ * sendStep classifies whatever a step threw through here. */
+
+export type StepErrorKind =
+  | 'price-moved'
+  | 'no-route'
+  | 'insufficient'
+  | 'unconfirmed'
+  | 'reverted'
+  | 'network'
+  | 'failed';
+
+export function classifyStepError(e: unknown): StepErrorKind {
+  const err = e as { code?: string; message?: string } | null;
+  const msg = err?.message ?? '';
+  if (msg === 'price-moved') return 'price-moved';
+  if (msg === 'no-route') return 'no-route';
+  if (msg === 'insufficient') return 'insufficient';
+  if (msg === 'tx-unconfirmed' || e instanceof TxUnconfirmedError) {
+    return 'unconfirmed';
+  }
+  if (
+    msg === 'tx-reverted' ||
+    e instanceof TxRevertedError ||
+    msg.startsWith('transaction failed on chain')
+  ) {
+    return 'reverted';
+  }
+  if (err?.code === 'INSUFFICIENT_FUNDS' || /insufficient funds/i.test(msg)) {
+    return 'insufficient';
+  }
+  if (isNetworkishError(e)) return 'network';
+  return 'failed';
+}
+
+/** i18n key for a classified step error. 'reverted' keeps the
+ *  plain failure text — a revert really did fail and the coins
+ *  (minus gas) stayed put, which is what hs.failed says. */
+export function stepErrorKey(kind: StepErrorKind): string {
+  switch (kind) {
+    case 'price-moved':
+      return 'hs.priceMoved';
+    case 'no-route':
+      return 'hs.noRoute';
+    case 'insufficient':
+      return 'hs.notEnough';
+    case 'unconfirmed':
+      return 'hs.unconfirmed';
+    case 'network':
+      return 'hs.netFailed';
+    default:
+      return 'hs.failed';
+  }
+}
+
+/* ---------------- resume / step-data logic (v0.4.1) --------------
+ * The resume bug (user report 2026-11-08): a saved buy flow
+ * pointed at the entry-swap step even though that swap had
+ * already succeeded on-chain, and the step screen offered a
+ * bare title + enabled Next with nothing rebuilt — pressing
+ * Next re-ran the swap against a gas-keep-only balance and
+ * died in the generic error. The decisions below are pure and
+ * value-driven so the harness can walk the exact user journey;
+ * the screen feeds them FRESH balance reads, never saved ones. */
+
+export interface EntryFlowLike {
+  phase: string;
+  /** Native amount the entry swap sends (string, 18 dec). */
+  entryAmountRaw: string;
+  /** USDT the entry swap was expected to make (string). */
+  entryUsdtExpected: string;
+  /** Entry-chain USDT balance before the entry swap (string). */
+  entryUsdtBefore?: string;
+}
+
+function safeBig(v: string | undefined): bigint {
+  try {
+    return BigInt(v ?? '0');
+  } catch {
+    return 0n;
+  }
+}
+
+/**
+ * Evidence that the entry swap already landed: the entry chain's
+ * USDT balance grew by (nearly) the expected swap output since
+ * the flow started. The send path price-checks the fresh quote
+ * against the confirmed expectation at 1%, so a real execution
+ * lands within a few percent of expected; 80% is a line quote
+ * drift cannot cross, while a partial/absent swap cannot reach
+ * it. Measured from ACTUAL balances at resume time.
+ */
+export function entrySwapArrived(
+  flow: EntryFlowLike,
+  usdtNow: bigint,
+): boolean {
+  const arrived = usdtNow - safeBig(flow.entryUsdtBefore);
+  if (arrived <= 0n) return false;
+  const expected = safeBig(flow.entryUsdtExpected);
+  if (expected <= 0n) return true;
+  return arrived * 100n >= expected * 80n;
+}
+
+export type EntrySwapGuard = 'proceed' | 'already-done' | 'insufficient';
+
+/**
+ * Execution-time guard for the entry swap (defense in depth —
+ * the same decision runs at resume and again right before any
+ * broadcast): when the balance evidence says the swap already
+ * ran, the answer is 'already-done' and NO second swap may be
+ * attempted; when the native balance cannot fund the amount,
+ * the answer is the typed 'insufficient', not a send that dies
+ * inside ethers with the generic error.
+ */
+export function entrySwapGuard(
+  flow: EntryFlowLike,
+  nativeNow: bigint,
+  usdtNow: bigint,
+): EntrySwapGuard {
+  if (entrySwapArrived(flow, usdtNow)) return 'already-done';
+  const amt = safeBig(flow.entryAmountRaw);
+  if (amt <= 0n) return 'insufficient';
+  if (nativeNow < amt) return 'insufficient';
+  return 'proceed';
+}
+
+/**
+ * The step's data is valid and its Next may be enabled: a real
+ * amount AND a live quote fetched for this step. A step holding
+ * neither must never offer an enabled Next.
+ */
+export function entryStepReady(
+  flow: EntryFlowLike,
+  quoteOut: bigint | null,
+): boolean {
+  return safeBig(flow.entryAmountRaw) > 0n && quoteOut !== null && quoteOut > 0n;
+}
+
+/**
+ * Resume decision for a saved buy flow sitting on its entry
+ * swap: when the balance evidence says the swap already landed,
+ * the resumed flow is the SAME flow advanced to the bridge step
+ * (whose amounts prepareEntryBridge measures from the actual
+ * USDT balance) — "where the user stopped" IS the next step.
+ * Returns null when the swap still has to run.
+ */
+export function resumeEntryAdvance(
+  flow: HuntersFlow,
+  usdtNow: bigint,
+): HuntersFlow | null {
+  if (flow.phase !== 'entrySwap') return null;
+  if (!entrySwapArrived(flow, usdtNow)) return null;
+  return { ...flow, phase: 'entryBridge' };
+}
+
+/* ---------------- USDT start / arrival coin (v0.4.1) -------------
+ * Buy flows may start from USDT the user already holds on the
+ * entry chain (skipping the native->USDT swap entirely), and
+ * sell flows may end with the USDT as-is instead of converting
+ * it to the native coin. Both directions spend the native coin
+ * ONLY as gas, so a missing gas coin is a pre-flight fact with
+ * its own plain message — checked before any execution. */
+
+/** Gas units budgeted for a USDT-start entry: an approve
+ *  (~50k, only when needed) plus the bridge send (~200k on
+ *  these routers), with margin. */
+export const USDT_START_GAS_UNITS = 300000n;
+
+/** Pure pre-flight: can this native balance pay the gas a
+ *  USDT start needs at this gas price? */
+export function usdtStartGasOk(
+  nativeNow: bigint,
+  gasPriceWei: bigint,
+): boolean {
+  if (nativeNow <= 0n) return false;
+  if (gasPriceWei <= 0n) return true;
+  return nativeNow >= gasPriceWei * USDT_START_GAS_UNITS;
+}
+
+/** Live pre-flight for a USDT start; null when the fee data
+ *  cannot be read (unknown — execution then surfaces the real
+ *  error through the step taxonomy instead of a guessed gate). */
+export async function fetchUsdtStartGasOk(
+  entry: EntryKey,
+  owner: string,
+): Promise<boolean | null> {
+  try {
+    const [bal, fee] = await Promise.all([
+      arrivalBalance(entry, null, owner),
+      providerFor(entry).getFeeData(),
+    ]);
+    const gp = fee.maxFeePerGas ?? fee.gasPrice;
+    if (gp === null || gp === undefined) return null;
+    return usdtStartGasOk(bal, BigInt(gp));
+  } catch {
+    return null;
+  }
+}
+
+/* ---------------- QL1 gas reality (v0.4.1) -----------------------
+ * QL1 steps are paid in NATIVE QOM. QOM that arrived over the
+ * bridge is WQOM — an ERC-20 — and WQOM does NOT pay gas, so a
+ * user can "have QOM" and still be unable to move anything.
+ * When the native balance cannot cover the step's gas (the
+ * same measured per-swap figure the confirm screens estimate
+ * with), the step must stop BEFORE any send with the dedicated
+ * faucet guidance — never the generic failure text. */
+
+/** Pure check: is this native QOM balance short for one QL1
+ *  swap at the measured per-swap gas? */
+export function ql1GasShort(
+  nativeQom: bigint,
+  gasQomPerSwap: bigint,
+): boolean {
+  return nativeQom < gasQomPerSwap;
+}
+
+/** Live check; null when the balance or the gas estimate
+ *  cannot be read (unknown — the step then proceeds and any
+ *  real failure surfaces through the step taxonomy). */
+export async function fetchQl1GasShort(owner: string): Promise<boolean | null> {
+  try {
+    const [bal, est] = await Promise.all([
+      arrivalBalance('ql1', null, owner),
+      quoteGasEstimates(),
+    ]);
+    if (!est) return null;
+    return ql1GasShort(bal, est.gasQomPerSwap);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Goal recommendation for the HuntersDEX entry cards
+ * (v0.4.1): the direction whose continuation the user's
+ * current position suggests. Holding CAW is the one clear
+ * signal — the natural next move for a CAW holder is toward
+ * cashing out; intermediate balances (entry USDT, 42 USDT)
+ * continue toward BOTH goals, so they do not distinguish,
+ * and the default goal is buying CAW.
+ */
+export function recommendedGoal(ql1Qcaw: bigint): 'buy' | 'sell' {
+  return ql1Qcaw > 0n ? 'sell' : 'buy';
+}
+
+export type ArrivalAction = 'done-usdt' | 'final-swap' | 'paused-usdt';
+
+/**
+ * What happens when a sell flow's exit-bridge USDT lands on the
+ * target chain. The user's chosen arrival coin decides: USDT
+ * as-is finishes the flow right there; converting to the native
+ * coin proceeds to the final swap ONLY when the target chain
+ * holds roughly $1+ of the native coin for gas — otherwise the
+ * flow pauses AT the USDT with the plain gas message (the
+ * existing behavior; no refuel tricks are invented here).
+ * Flows saved before v0.4.1 have no endCoin: they mean 'native'.
+ */
+export function arrivalAction(
+  endCoin: 'usdt' | 'native' | undefined,
+  targetNativeUsd: number,
+): ArrivalAction {
+  if (endCoin === 'usdt') return 'done-usdt';
+  return targetNativeUsd >= 1 ? 'final-swap' : 'paused-usdt';
 }
 
 /* ---------------- generic ERC20 reads ---------------- */

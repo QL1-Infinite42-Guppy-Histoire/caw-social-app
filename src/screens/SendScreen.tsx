@@ -41,6 +41,7 @@ import {
   chipAmount,
   fetchHsBalances,
   providerFor,
+  TxUnconfirmedError,
   type HsBalances,
 } from '../lib/hunters';
 import {
@@ -56,7 +57,7 @@ import {
 import { addressBookStore, storeKV } from '../lib/stores';
 import { sendTxReq, signerForHsChain } from '../lib/wallet';
 
-type Phase = 'pick' | 'form' | 'book' | 'confirm' | 'done' | 'failed';
+type Phase = 'pick' | 'form' | 'book' | 'confirm' | 'done' | 'failed' | 'unconfirmed';
 
 /** Fallback gas prices (wei) if the live fee read fails — only
  *  used for the MAX reserve and the fee estimate, never sent. */
@@ -221,8 +222,16 @@ export default function SendScreen({ onClose }: { onClose: () => void }) {
       if (address) {
         fetchHsBalances(address).then(setBalances).catch(() => {});
       }
-    } catch {
-      setPhase('failed');
+    } catch (e) {
+      /* A broadcast whose receipt could not be obtained is NOT a
+       * failure (v0.4.1): it may have gone through. Show the
+       * unconfirmed state with the hash instead of send.failed. */
+      if (e instanceof TxUnconfirmedError) {
+        setTxHash(e.hash);
+        setPhase('unconfirmed');
+      } else {
+        setPhase('failed');
+      }
     } finally {
       setSending(false);
     }
@@ -744,6 +753,33 @@ export default function SendScreen({ onClose }: { onClose: () => void }) {
               onPress={() => setPhase('form')}
             >
               <Text style={S.bigBtnText}>{tr('common.back')}</Text>
+            </Pressable>
+          </>
+        ) : null}
+
+        {phase === 'unconfirmed' ? (
+          <>
+            <Text style={S.body}>{tr('hs.unconfirmed')}</Text>
+            {txHash ? (
+              <Text
+                selectable
+                style={{
+                  fontFamily: MONO,
+                  fontSize: 12,
+                  color: '#536471',
+                  marginTop: 10,
+                  writingDirection: 'ltr',
+                  textAlign: 'left',
+                }}
+              >
+                {txHash}
+              </Text>
+            ) : null}
+            <Pressable
+              style={[S.bigBtn, { marginTop: 20 }]}
+              onPress={onClose}
+            >
+              <Text style={S.bigBtnText}>{tr('common.close')}</Text>
             </Pressable>
           </>
         ) : null}

@@ -40,6 +40,8 @@ import {
 } from '../lib/followIndex';
 import SearchScreen from './SearchScreen';
 import SendScreen from './SendScreen';
+import { FaucetButton } from './FaucetScreen';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type PendingAction = { kind: 1 | 2; item: TimelineItem };
 
@@ -55,6 +57,7 @@ let feedCache: {
 } | null = null;
 
 export default function TimelineScreen() {
+  const insets = useSafeAreaInsets();
   const app = useApp();
   const { lang, address, qom, qcaw, myTokens, actingId } = app;
 
@@ -415,12 +418,17 @@ export default function TimelineScreen() {
             </Text>
           </View>
         </View>
-        <Pressable
-          style={[S.ghostBtn, { marginTop: 12 }]}
-          onPress={() => setSendOpen(true)}
-        >
-          <Text style={S.ghostBtnText}>{tr('send.title')}</Text>
-        </Pressable>
+        <View style={[S.row, { gap: 10, marginTop: 12 }]}>
+          <Pressable
+            style={[S.ghostBtn, { flex: 1 }]}
+            onPress={() => setSendOpen(true)}
+          >
+            <Text style={S.ghostBtnText}>{tr('send.title')}</Text>
+          </Pressable>
+          <View style={{ flex: 1 }}>
+            <FaucetButton label={tr('faucet.title')} />
+          </View>
+        </View>
       </View>
       <View style={styles.searchRow}>
         <Pressable
@@ -605,7 +613,7 @@ export default function TimelineScreen() {
         onRequestClose={() => setRecawChoice(null)}
       >
         <View style={styles.choiceBackdrop}>
-          <View style={styles.choiceSheet}>
+          <View style={[styles.choiceSheet, { paddingBottom: 30 + insets.bottom }]}>
             <Text style={S.h2}>{tr('act.recawChoiceTitle')}</Text>
             <View style={{ height: 16 }} />
             <Pressable
@@ -741,6 +749,6 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
     padding: 20,
-    paddingBottom: 34,
+    paddingBottom: 30,
   },
 });

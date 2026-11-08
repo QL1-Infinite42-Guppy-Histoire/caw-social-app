@@ -17,7 +17,15 @@ import {
 import { CAW_ACTIONS, CHAIN_ID, RPC } from '../config';
 import { nameOwner } from './cawApi';
 import type { HsChainKey } from './chains';
-import { providerFor, type TxReq } from './hunters';
+import {
+  chainOfProvider,
+  confirmReceipt,
+  executeStepSend,
+  providerFor,
+  waitForReceiptRobust,
+  type ReceiptLike,
+  type TxReq,
+} from './hunters';
 import {
   CawAction,
   CawSignature,
@@ -103,32 +111,66 @@ export function signAction(privateKey: string, action: CawAction): CawSignature 
   return { v: sig.v, r: sig.r, s: sig.s };
 }
 
-/** Send one HuntersSwap tx request and wait; throws on revert. */
-export async function sendTxReq(signer: Wallet, req: TxReq): Promise<string> {
-  const tx = await signer.sendTransaction({
-    to: req.to,
-    data: req.data,
-    value: req.value,
-  });
-  const receipt = await tx.wait();
-  if (!receipt || receipt.status !== 1) {
-    throw new Error('transaction failed on chain (tx ' + tx.hash + ')');
-  }
-  return tx.hash;
+/**
+ * Receipt confirmation for a broadcast tx (v0.4.1). HuntersSwap
+ * chains confirm across ALL their RPC endpoints with a generous
+ * polling window; any other provider confirms against itself
+ * with the same retry tolerance. This replaces the old
+ * single-endpoint receipt wait: a polling hiccup there used to
+ * throw AFTER the tx had already been mined, so a successful
+ * swap was reported to the user as a failure.
+ */
+async function confirmForSigner(
+  signer: Wallet,
+  hash: string,
+): Promise<ReceiptLike | null> {
+  const provider = signer.provider as JsonRpcProvider | null;
+  if (!provider) return null;
+  const chain = chainOfProvider(provider);
+  if (chain) return waitForReceiptRobust(chain, hash);
+  return confirmReceipt([
+    async () => {
+      const r = await provider.getTransactionReceipt(hash);
+      return r && r.status != null ? { status: Number(r.status) } : null;
+    },
+  ]);
 }
 
-/** Send raw calldata and wait for the receipt; throws when it reverts. */
+/**
+ * Send one HuntersSwap tx request and confirm it. Resolves with
+ * the hash ONLY on a status-1 receipt; throws TxRevertedError
+ * on a mined revert and TxUnconfirmedError when no receipt
+ * could be obtained (the tx may still have succeeded — callers
+ * must not present that as a plain failure).
+ */
+export async function sendTxReq(signer: Wallet, req: TxReq): Promise<string> {
+  return executeStepSend({
+    broadcast: async () => {
+      const tx = await signer.sendTransaction({
+        to: req.to,
+        data: req.data,
+        value: req.value,
+      });
+      return tx.hash;
+    },
+    confirm: (hash) => confirmForSigner(signer, hash),
+  });
+}
+
+/** Send raw calldata and confirm the receipt (same contract as
+ *  sendTxReq: TxRevertedError / TxUnconfirmedError). */
 export async function sendCalldata(
   signer: Wallet,
   to: string,
   data: string,
 ): Promise<string> {
-  const tx = await signer.sendTransaction({ to, data });
-  const receipt = await tx.wait();
-  if (!receipt || receipt.status !== 1) {
-    throw new Error('transaction failed on chain (tx ' + tx.hash + ')');
-  }
-  return tx.hash;
+  return executeStepSend({
+    broadcast: async () => {
+      const tx = await signer.sendTransaction({ to, data });
+      return tx.hash;
+    },
+    confirm: (hash) => confirmForSigner(signer, hash),
+  });
 }
 
 /**

@@ -30,7 +30,7 @@ import * as Clipboard from 'expo-clipboard';
 import { AppLogo, ConfirmSheet, HAIRLINE, MONO, S } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
-import { tr } from '../i18n';
+import { tr, type StrKey } from '../i18n';
 import { BRIDGE_PAIRS, CHAINS as AGG_CHAINS, tokenById } from '../lib/aggEngine';
 import { fmtAmount } from '../lib/cawCore';
 import {
@@ -39,6 +39,7 @@ import {
   ENTRY_DEX,
   USDT_ON,
   type EntryKey,
+  type HsChainKey,
 } from '../lib/chains';
 import {
   flowComplete,
@@ -49,6 +50,7 @@ import {
 import {
   amountGate,
   applySlippage,
+  arrivalAction,
   arrivalBalance,
   buildAggApprove,
   buildAggBridge,
@@ -57,6 +59,9 @@ import {
   buildRouteSwapTx,
   bscSpendable,
   chipAmount,
+  classifyStepError,
+  entryStepReady,
+  entrySwapGuard,
   erc20Allowance,
   erc20Balance,
   ethEntryAllowed,
@@ -64,6 +69,8 @@ import {
   ethGasInfo,
   expected42Usdt,
   fetchHsBalances,
+  fetchQl1GasShort,
+  fetchUsdtStartGasOk,
   freshBridgeFee42,
   freshRoute,
   nativeUsdPrice,
@@ -74,13 +81,17 @@ import {
   quoteEntrySwap,
   netHeadline,
   quoteGasEstimates,
+  resumeEntryAdvance,
+  stepErrorKey,
   toTargetUsdtRaw,
+  waitForReceiptRobust,
   type GasEstimates,
   buildAggBridgeFromQl1,
   buildBridgeOut42Tx,
   buildFinalSwapTx,
   quoteBackHalfReverse,
   quoteBridgeOut42,
+  recommendedGoal,
   quoteFinalSwap,
   truncateToDstDecimals,
   worseThanConfirmed,
@@ -91,6 +102,7 @@ import {
 import { huntersFlowStore, huntersSellFlowStore, storeKV } from '../lib/stores';
 import { sendTxReq, signerForHsChain } from '../lib/wallet';
 import SendScreen from './SendScreen';
+import FaucetScreen, { FaucetButton } from './FaucetScreen';
 
 type Phase = 'entry' | 'amount' | 'confirm' | 'run' | 'done';
 
@@ -105,6 +117,15 @@ interface Plan {
   choice: 'single' | 'split';
   /** Headline estimate, NET of the carve-out (see netHeadline). */
   expectedOut: bigint;
+  /** Coin the flow starts from (v0.4.1): 'native' swaps first;
+   *  'usdt' starts at the bridge with USDT already held. */
+  startCoin: 'native' | 'usdt';
+  /** USDT start only: live gas pre-flight (null = unreadable). */
+  gasOk: boolean | null;
+  /** Start point (v0.4.1): 'entry' = from the entry chain;
+   *  'usdt42' = mid-start from USDT already held on 42 Chain
+   *  (entryAmount/entryUsdt are 0 and unused there). */
+  startPoint: 'entry' | 'usdt42';
 }
 
 const fmtUsd = (n: number) =>
@@ -235,6 +256,61 @@ function CoinRow({
   );
 }
 
+const bigOr0 = (s?: string): bigint => {
+  try {
+    return BigInt(s ?? '0');
+  } catch {
+    return 0n;
+  }
+};
+
+/**
+ * Spendable native amount for a FRESH balance, applying the
+ * same auto-keep the amount screen uses ($3 of BNB on BSC via
+ * bscSpendable; the $10 gas portion on Ethereum). The keep is
+ * NEVER spent — not by a fresh start, not by a resume, not by
+ * any mid-start (invariant, v0.4.1).
+ */
+function keepAwareSpendable(
+  e: EntryKey,
+  bal: bigint,
+  bnbUsd: number | null,
+  ethUsd: number | null,
+): bigint {
+  if (e === 'bsc') return bnbUsd ? bscSpendable(bal, bnbUsd) : bal;
+  if (!ethUsd || ethUsd <= 0) return bal;
+  const keep = parseUnits((10 / ethUsd).toFixed(18), 18);
+  return bal > keep ? bal - keep : 0n;
+}
+
+/**
+ * Error surface for a failed guided-flow step (v0.4.1 taxonomy):
+ * the message follows the KIND of failure (see classifyStepError
+ * in lib/hunters) — insufficient balance, no route, price moved,
+ * network, and the distinct UNCONFIRMED text are different
+ * messages, and an unconfirmed tx's hash is recorded on the flow
+ * so a later resume can re-check it instead of re-running the
+ * step blind. Returns the text to show.
+ */
+async function stepErrorText(
+  e: unknown,
+  chain: HsChainKey,
+  flow: HuntersFlow | null,
+  persist: (f: HuntersFlow) => Promise<void>,
+): Promise<string> {
+  const kind = classifyStepError(e);
+  if (kind === 'unconfirmed') {
+    const hash = (e as { hash?: unknown }).hash;
+    if (typeof hash === 'string' && flow) {
+      await persist({
+        ...flow,
+        pendingTx: { chain, hash, at: Date.now() },
+      }).catch(() => {});
+    }
+  }
+  return tr(stepErrorKey(kind) as StrKey);
+}
+
 function CoinCard({ children }: { children: React.ReactNode }) {
   return (
     <View
@@ -295,7 +371,13 @@ function DepositAddressRow({ address }: { address: string }) {
   );
 }
 
-function BuySection({ onClose }: { onClose: () => void }) {
+function BuySection({
+  onClose,
+  onSwitchDirection,
+}: {
+  onClose: () => void;
+  onSwitchDirection: () => void;
+}) {
   const app = useApp();
   const insets = useSafeAreaInsets();
   const address = app.address ?? '';
@@ -307,6 +389,9 @@ function BuySection({ onClose }: { onClose: () => void }) {
   const [gasUsd, setGasUsd] = useState<number | null>(null);
   const [gasEst, setGasEst] = useState<GasEstimates | null>(null);
   const [entry, setEntry] = useState<EntryKey>('bsc');
+  /** Start coin (v0.4.1): swap the native coin into USDT first,
+   *  or start from USDT already held on the entry chain. */
+  const [startCoin, setStartCoin] = useState<'native' | 'usdt'>('native');
   const [amountText, setAmountText] = useState('');
   const [plan, setPlan] = useState<Plan | null>(null);
   const [quoting, setQuoting] = useState(false);
@@ -318,6 +403,26 @@ function BuySection({ onClose }: { onClose: () => void }) {
   const [allowanceTick, setAllowanceTick] = useState(0);
   const flowRef = useRef<HuntersFlow | null>(null);
   flowRef.current = flow;
+  /* Step rehydration (v0.4.1): entering the run phase — above all
+     on RESUME — rebuilds the current step from fresh chain reads
+     before it becomes actionable. `rehydrating` blocks Next while
+     that runs; the entry step additionally needs a LIVE quote
+     (stepQuote) fetched for exactly this step — saved quote
+     values are never restored — and the bridge step shows the
+     USDT actually available to send onward (bridgeUsdt). */
+  const [rehydrating, setRehydrating] = useState(false);
+  const [stepQuote, setStepQuote] = useState<bigint | null>(null);
+  const [stepQuoteErr, setStepQuoteErr] = useState(false);
+  /* QL1 gas-shortage guidance state (v0.4.1): set by the QL1
+     step gates when the native QOM balance cannot cover the
+     step's gas; renders the faucet guidance under the step
+     card instead of any generic error. */
+  const [ql1Short, setQl1Short] = useState(false);
+  /* Mid-start (v0.4.1): 'entry' = start on the entry chain
+     (native or USDT); 'usdt42' = start from USDT already held
+     on 42 Chain, straight into the back half. */
+  const [startPoint, setStartPoint] = useState<'entry' | 'usdt42'>('entry');
+  const [bridgeUsdt, setBridgeUsdt] = useState<bigint | null>(null);
   /* Slow-quote reassurance (v0.3.2): if a quote search runs past
      ~15 s, say so in plain words instead of leaving a silent spinner. */
   const [slowQuote, setSlowQuote] = useState(false);
@@ -389,14 +494,27 @@ function BuySection({ onClose }: { onClose: () => void }) {
     return bal > keep ? bal - keep : 0n;
   };
 
+  /** Decimals of the amount being typed: the native coin is
+   *  always 18; a USDT start uses the entry chain's USDT
+   *  decimals (18 on BSC, 6 on Ethereum). */
+  const amountDecimals = (e: EntryKey): number =>
+    startPoint === 'usdt42'
+      ? 18
+      : startCoin === 'usdt'
+        ? ENTRY_DEX[e].usdtDecimals
+        : 18;
+
   const parsedAmount = (e: EntryKey): bigint | null => {
     try {
-      const v = parseUnits(amountText.trim() === '' ? '0' : amountText.trim(), 18);
+      const v = parseUnits(amountText.trim() === '' ? '0' : amountText.trim(), amountDecimals(e));
       return v;
     } catch {
       return null;
     }
   };
+
+  const usdtBalance = (e: EntryKey): bigint =>
+    (e === 'bsc' ? balances?.bscUsdt : balances?.ethUsdt) ?? 0n;
 
   /* ---------- quoting for the confirm screen ---------- */
   const buildPlan = async (choice: 'single' | 'split') => {
@@ -405,7 +523,9 @@ function BuySection({ onClose }: { onClose: () => void }) {
     beginQuote();
     setStatus(null);
     try {
-      const entryUsdt = await quoteEntrySwap(entry, amt);
+      /* USDT start: the amount IS the entry USDT — the swap leg,
+         its fees and its slippage simply do not exist. */
+      const entryUsdt = startCoin === 'usdt' ? amt : await quoteEntrySwap(entry, amt);
       const usdt42 = expected42Usdt(entryUsdt, ENTRY_DEX[entry].usdtDecimals);
       const back = await quoteBackHalf(usdt42);
       const legs =
@@ -419,7 +539,73 @@ function BuySection({ onClose }: { onClose: () => void }) {
       const rawOut =
         choice === 'split' && back.split ? back.split.netOut : back.bestSingle.finalOut;
       const expectedOut = netHeadline(rawOut, usdt42, carveCost);
-      setPlan({ entryAmount: amt, entryUsdt, usdt42, back, carve, carveCost, choice, expectedOut });
+      /* USDT start: run the gas pre-flight NOW so the confirm
+         screen can show the plain gas message before anything
+         is executed (re-checked again at the bridge step). */
+      const gasOk =
+        startCoin === 'usdt' ? await fetchUsdtStartGasOk(entry, address) : null;
+      setPlan({
+        entryAmount: amt,
+        entryUsdt,
+        usdt42,
+        back,
+        carve,
+        carveCost,
+        choice,
+        expectedOut,
+        startCoin,
+        gasOk,
+        startPoint: 'entry',
+      });
+      setPhase('confirm');
+    } catch (e) {
+      setStatus({
+        text: tr(e instanceof Error && e.message === 'no-route' ? 'hs.noRoute' : 'hs.netFailed'),
+        err: true,
+      });
+    } finally {
+      endQuote();
+    }
+  };
+
+  /**
+   * Mid-start plan (v0.4.1): start from USDT already held on
+   * 42 Chain. There are no entry legs at all — the amount IS
+   * the 42 USDT the back half runs on — so the plan is just
+   * the back-half quote plus the [42] gas carve, exactly what
+   * initBackHalf will re-quote when the flow starts.
+   */
+  const buildPlan42 = async (choice: 'single' | 'split') => {
+    const amt = parsedAmount(entry);
+    if (amt === null || amt <= 0n) return;
+    beginQuote();
+    setStatus(null);
+    try {
+      const back = await quoteBackHalf(amt);
+      const legs =
+        choice === 'split' && back.split ? back.split.parts.length : 1;
+      const carve = planCarveout(legs, back.feePerLeg42, balances?.infNative ?? 0n);
+      let carveCost = 0n;
+      if (carve.needFromFlow > 0n) {
+        const q = await quoteCarveUsdtCost(carve.needFromFlow);
+        if (q) carveCost = q.usdtCost;
+      }
+      const rawOut =
+        choice === 'split' && back.split ? back.split.netOut : back.bestSingle.finalOut;
+      const expectedOut = netHeadline(rawOut, amt, carveCost);
+      setPlan({
+        entryAmount: 0n,
+        entryUsdt: 0n,
+        usdt42: amt,
+        back,
+        carve,
+        carveCost,
+        choice,
+        expectedOut,
+        startCoin: 'native',
+        gasOk: null,
+        startPoint: 'usdt42',
+      });
       setPhase('confirm');
     } catch (e) {
       setStatus({
@@ -439,6 +625,18 @@ function BuySection({ onClose }: { onClose: () => void }) {
       USDT_ON[entry].address,
       address,
     ).catch(() => 0n);
+    const usdtStart = plan.startCoin === 'usdt';
+    /* USDT start: the flow bridges part of an EXISTING balance,
+       so "before" is recorded net of the committed amount — the
+       bridge step then measures exactly that amount with the
+       same balance-minus-before math the swap path uses once
+       its swap has landed. The flow starts AT the bridge step:
+       there is no swap to run. */
+    const beforeForFlow = usdtStart
+      ? before > plan.entryAmount
+        ? before - plan.entryAmount
+        : 0n
+      : before;
     const f = newFlow({
       id: Date.now().toString(36),
       address,
@@ -449,26 +647,150 @@ function BuySection({ onClose }: { onClose: () => void }) {
       confirmedOut: plan.expectedOut.toString(),
       choice: plan.choice,
       createdAt: Date.now(),
-      entryUsdtBefore: before.toString(),
+      entryUsdtBefore: beforeForFlow.toString(),
       carveUsdtCost: plan.carveCost.toString(),
+      startCoin: plan.startCoin,
+      finalAsset: 'CAW',
+      finalChain: 'ql1',
     });
     setResumeFlow(null);
-    await persist(f);
+    await persist(usdtStart ? { ...f, phase: 'entryBridge' } : f);
     setPhase('run');
   };
 
+  /**
+   * Mid-start from 42 Chain USDT (v0.4.1): the flow is born at
+   * the back-half phase — the SAME saved-state shape and the
+   * SAME initializer (initBackHalf) a bridged-in flow uses, so
+   * resume treats it identically. "Before" is recorded net of
+   * the committed amount, as with the USDT entry start.
+   */
+  const startFlow42 = async () => {
+    if (!plan || !address) return;
+    const bal = await erc20Balance(
+      'infinite',
+      USDT_ON.infinite.address,
+      address,
+    ).catch(() => 0n);
+    const before = bal > plan.usdt42 ? bal - plan.usdt42 : 0n;
+    const f = newFlow({
+      id: Date.now().toString(36),
+      address,
+      entry,
+      entryAmountRaw: '0',
+      entryUsdtExpected: '0',
+      usdt42Expected: plan.usdt42.toString(),
+      confirmedOut: plan.expectedOut.toString(),
+      choice: plan.choice,
+      createdAt: Date.now(),
+      entryUsdtBefore: '0',
+      usdt42Before: before.toString(),
+      usdt42Actual: plan.usdt42.toString(),
+      carveUsdtCost: plan.carveCost.toString(),
+      startCoin: 'usdt',
+      finalAsset: 'CAW',
+      finalChain: 'ql1',
+    });
+    setResumeFlow(null);
+    await persist({ ...f, phase: 'back' });
+    setPhase('run');
+    await initBackHalf({ ...f, phase: 'back' });
+  };
+
+  /**
+   * Resume (v0.4.1 rework): the saved flow is NEVER dropped
+   * straight onto an actionable step screen. Fresh chain state
+   * is read first and every decision is made from it:
+   *  - a recorded unconfirmed tx is re-checked; a confirmed one
+   *    clears the record (the step it belonged to is reconciled
+   *    by the balance evidence below);
+   *  - if the flow sits on its entry swap but the balance
+   *    evidence says that swap already landed, the flow advances
+   *    to the bridge step — where the user actually stopped;
+   *  - if the entry step cannot be rebuilt (no valid saved
+   *    amount), the guidance restarts from that step's input
+   *    (the amount screen) instead of showing an empty step.
+   * While this runs, `rehydrating` keeps Next disabled; the
+   * step's live quote is then fetched by the step-data effect.
+   */
   const resume = async () => {
     if (!resumeFlow) return;
-    setFlow(resumeFlow);
-    flowRef.current = resumeFlow;
+    const f0 = resumeFlow;
     setResumeFlow(null);
-    if (flowComplete(resumeFlow)) setPhase('done');
-    else setPhase('run');
+    setRehydrating(true);
+    setStatus(null);
+    /* The saved flow's entry chain and start coin ARE the
+       resume state — the step screens and the bridge builder
+       read them from component state, so they are restored
+       from the flow, never left at a default. */
+    setEntry(f0.entry);
+    setStartCoin(f0.startCoin ?? 'native');
+    setStartPoint(f0.phase === 'back' && f0.entryAmountRaw === '0' ? 'usdt42' : 'entry');
+    try {
+      let f = f0;
+      const b = await fetchHsBalances(address).catch(() => null);
+      if (b) setBalances(b);
+      if (f.pendingTx) {
+        const rc = await waitForReceiptRobust(
+          f.pendingTx.chain as HsChainKey,
+          f.pendingTx.hash,
+          { windowMs: 8000 },
+        ).catch(() => null);
+        if (rc && rc.status === 1) {
+          const cleared = { ...f };
+          delete cleared.pendingTx;
+          f = cleared;
+          setStatus({ text: tr('hs.stepAlreadyDone'), err: false });
+        }
+      }
+      if (f.phase === 'entrySwap') {
+        const usdtNow = await erc20Balance(
+          f.entry,
+          USDT_ON[f.entry].address,
+          address,
+        ).catch(() => null);
+        if (usdtNow !== null) {
+          const adv = resumeEntryAdvance(f, usdtNow);
+          if (adv) {
+            f = adv;
+            setStatus({ text: tr('hs.stepAlreadyDone'), err: false });
+          }
+        }
+        if (f.phase === 'entrySwap' && bigOr0(f.entryAmountRaw) <= 0n) {
+          await huntersFlowStore.clear();
+          setFlow(null);
+          flowRef.current = null;
+          setPhase('amount');
+          setStatus({ text: tr('hs.netFailed'), err: true });
+          return;
+        }
+      }
+      setFlow(f);
+      flowRef.current = f;
+      if (f !== f0) await huntersFlowStore.save(f);
+      setPhase(flowComplete(f) ? 'done' : 'run');
+    } finally {
+      setRehydrating(false);
+    }
   };
 
   const discard = async () => {
     setResumeFlow(null);
     await huntersFlowStore.clear();
+  };
+
+  /* U-turn (v0.4.1): abandon this direction and start the
+     reverse goal from the assets currently held. Legs already
+     broadcast are NOT reversed (a sent swap/bridge cannot be
+     un-sent) — the saved flow is discarded and the other
+     direction's balance-based start points take over; the
+     new flow fixes its own final asset at its start. */
+  const uturn = async () => {
+    await persist(null);
+    setResumeFlow(null);
+    setPhase('entry');
+    setStatus(null);
+    onSwitchDirection();
   };
 
   /* ---------- generic send (app auth pattern) ---------- */
@@ -493,16 +815,16 @@ function BuySection({ onClose }: { onClose: () => void }) {
       const signer = signerForHsChain(sec.kind, sec.secret, chain);
       const req = await build();
       await sendTxReq(signer, req);
-      const f1 = after({ ...flowRef.current! });
+      const base = { ...flowRef.current! };
+      delete base.pendingTx;
+      const f1 = after(base);
       await persist(f1);
       setStatus(null);
       setPending(null);
       setAllowanceTick((t) => t + 1);
     } catch (e) {
-      setStatus({
-        text: tr(e instanceof Error && e.message === 'price-moved' ? 'hs.priceMoved' : 'hs.failed'),
-        err: true,
-      });
+      const text = await stepErrorText(e, chain, flowRef.current, persist);
+      setStatus({ text, err: true });
       setPending(null);
     } finally {
       setBusy(false);
@@ -578,6 +900,53 @@ function BuySection({ onClose }: { onClose: () => void }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watching, flow?.phase, flow?.parts, address]);
+
+  /* ---------- step data (live rebuild, v0.4.1) ----------
+   * Whenever the run phase presents a step — fresh start AND
+   * resume — its content is rebuilt from live reads: the entry
+   * swap gets a FRESH quote for its saved amount (never the
+   * confirm-screen numbers), and the bridge step measures the
+   * USDT actually available to send onward. Until the entry
+   * quote lands, entryStepReady() keeps Next disabled. */
+  const stepKind = step?.kind ?? null;
+  useEffect(() => {
+    setStepQuote(null);
+    setStepQuoteErr(false);
+    setBridgeUsdt(null);
+    if (phase !== 'run' || !flow) return;
+    if (stepKind === 'entrySwap') {
+      const amt = bigOr0(flow.entryAmountRaw);
+      if (amt <= 0n) {
+        setStepQuoteErr(true);
+        return;
+      }
+      let live = true;
+      quoteEntrySwap(flow.entry, amt)
+        .then((q) => {
+          if (live) setStepQuote(q);
+        })
+        .catch(() => {
+          if (live) setStepQuoteErr(true);
+        });
+      return () => {
+        live = false;
+      };
+    }
+    if (stepKind === 'entryBridge') {
+      let live = true;
+      erc20Balance(flow.entry, USDT_ON[flow.entry].address, address)
+        .then((bal) => {
+          if (!live) return;
+          const before = bigOr0(flow.entryUsdtBefore);
+          setBridgeUsdt(bal > before ? bal - before : 0n);
+        })
+        .catch(() => {});
+      return () => {
+        live = false;
+      };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, flow?.id, flow?.phase, stepKind, address]);
 
   /* ---------- back-half initialisation (quote + parts + carve) -- */
   const initBackHalf = async (f: HuntersFlow, accept: boolean = false) => {
@@ -655,6 +1024,43 @@ function BuySection({ onClose }: { onClose: () => void }) {
     askSend(tr(entry === 'bsc' ? 'hs.stepEntrySwapBsc' : 'hs.stepEntrySwapEth'), async () => {
       const f = flowRef.current!;
       const amt = BigInt(f.entryAmountRaw);
+      /* Execution-time re-check (v0.4.1, defense in depth — the
+       * resume path runs the same decision): fresh balances
+       * decide. If the balance evidence says this swap already
+       * landed (an earlier send was misreported as failed),
+       * advance to the bridge step instead of broadcasting it a
+       * second time; if the balance cannot fund the amount, stop
+       * with the insufficient-balance message and NO broadcast. */
+      const [nativeNow, usdtNow] = await Promise.all([
+        arrivalBalance(entry, null, address).catch(() => null),
+        erc20Balance(entry, USDT_ON[entry].address, address).catch(() => null),
+      ]);
+      if (nativeNow !== null && usdtNow !== null) {
+        const g = entrySwapGuard(f, nativeNow, usdtNow);
+        if (g === 'already-done') {
+          const base = { ...f };
+          delete base.pendingTx;
+          await persist({ ...base, phase: 'entryBridge' });
+          setStatus({ text: tr('hs.stepAlreadyDone'), err: false });
+          setPending(null);
+          return;
+        }
+        if (g === 'insufficient') {
+          setStatus({ text: tr('hs.notEnough'), err: true });
+          setPending(null);
+          return;
+        }
+        /* Gas-keep invariant: balance ≥ amount is NOT enough —
+           the swap may not eat the auto-keep ($3 of BNB / the
+           ETH gas portion), on a resume exactly as on a fresh
+           start. Checked against the fresh balance with the
+           same spendable math as the amount screen. */
+        if (amt > keepAwareSpendable(f.entry, nativeNow, bnbUsd, ethUsd)) {
+          setStatus({ text: tr('hs.notEnough'), err: true });
+          setPending(null);
+          return;
+        }
+      }
       await sendStep(entry, async () => {
         const fresh = await quoteEntrySwap(entry, amt);
         if (worseThanConfirmed(fresh, BigInt(f.entryUsdtExpected))) {
@@ -667,6 +1073,20 @@ function BuySection({ onClose }: { onClose: () => void }) {
   const prepareEntryBridge = async () => {
     const f = flowRef.current;
     if (!f) return;
+    /* USDT start (v0.4.1): the bridge spends the gas coin, so a
+       missing gas coin is a pre-flight stop with its own plain
+       message — checked BEFORE any send is prepared, never a
+       send that dies at execution with the generic text. */
+    if (f.startCoin === 'usdt') {
+      const ok = await fetchUsdtStartGasOk(f.entry, address).catch(() => null);
+      if (ok === false) {
+        setStatus({
+          text: tr('hs.needGasCoin', { sym: f.entry === 'bsc' ? 'BNB' : 'ETH' }),
+          err: true,
+        });
+        return;
+      }
+    }
     const cfg = BRIDGE_IN_USDT[entry];
     const bal = await erc20Balance(entry, cfg.token, address).catch(() => 0n);
     const before = BigInt(f.entryUsdtBefore ?? '0');
@@ -791,6 +1211,18 @@ function BuySection({ onClose }: { onClose: () => void }) {
     }
 
     if (partStep === 3) {
+      /* QL1 gas gate (v0.4.1): this step's sends run on QL1 and
+         are paid in NATIVE QOM — measured against the same
+         per-swap gas estimate the confirm screen shows. If the
+         native balance cannot cover it, stop HERE with the
+         faucet guidance: bridged QOM is WQOM and does not pay
+         gas, and the generic failure text must never stand in
+         for this condition. */
+      if ((await fetchQl1GasShort(address)) === true) {
+        setQl1Short(true);
+        return;
+      }
+      setQl1Short(false);
       const dstTok = tokenById('ql1', pair.ql1Id);
       const amt = BigInt(part.bridgedAmount ?? '0');
       const isNative = part.sym === 'QOM';
@@ -856,6 +1288,10 @@ function BuySection({ onClose }: { onClose: () => void }) {
 
   const onRunNext = () => {
     if (!flow || !step) return;
+    if (rehydrating) return;
+    /* Never execute an unbuilt step (v0.4.1): the entry swap
+       needs its amount AND its live quote in hand. */
+    if (step.kind === 'entrySwap' && !entryStepReady(flow, stepQuote)) return;
     if (step.kind === 'entrySwap') runEntrySwap();
     else if (step.kind === 'entryBridge') prepareEntryBridge();
     else if (step.kind === 'carve') runCarve();
@@ -865,18 +1301,70 @@ function BuySection({ onClose }: { onClose: () => void }) {
   };
 
   const amt = parsedAmount(entry);
+  /* USD value of the typed amount: for a USDT start the amount
+     IS dollars; for a native start it is amount × native price. */
   const amtUsd =
-    amt !== null && nativePrice(entry) ? Number(formatUnits(amt, 18)) * (nativePrice(entry) ?? 0) : null;
-  const ethBlocked = entry === 'ethereum' && amt !== null && amt > 0n && ethUsd !== null && !ethEntryAllowed(amt, ethUsd);
-  const overSpendable = amt !== null && amt > spendable(entry);
+    amt === null
+      ? null
+      : startPoint === 'usdt42'
+        ? Number(formatUnits(amt, 18))
+        : startCoin === 'usdt'
+          ? Number(formatUnits(amt, amountDecimals(entry)))
+          : nativePrice(entry)
+            ? Number(formatUnits(amt, 18)) * (nativePrice(entry) ?? 0)
+            : null;
+  /* The $100 rule is an ENTRY minimum (it exists because L1 gas
+     makes small entries pointless, and the L1 bridge send pays
+     that gas either way) — so it applies to the typed USD value
+     of BOTH start coins on the Ethereum entry. A 42-USDT
+     mid-start never touches L1, so it does not apply there. */
+  const ethBlocked =
+    startPoint === 'entry' &&
+    entry === 'ethereum' &&
+    amt !== null &&
+    amt > 0n &&
+    (startCoin === 'usdt'
+      ? Number(formatUnits(amt, ENTRY_DEX.ethereum.usdtDecimals)) < 100
+      : ethUsd !== null && !ethEntryAllowed(amt, ethUsd));
+  const overSpendable =
+    amt !== null &&
+    amt >
+      (startPoint === 'usdt42'
+        ? (balances?.infUsdt ?? 0n)
+        : startCoin === 'usdt'
+          ? usdtBalance(entry)
+          : spendable(entry));
   /* Quote-only gate (v0.3.2): quoting works for ANY amount, but
      STARTING the flow is blocked when the plan's amount is over the
      usable balance (after the gas-keep rules) or under the ETH
      entry minimum. The send path itself is unchanged. */
-  const planGate = plan ? amountGate(plan.entryAmount, spendable(entry)) : null;
+  const planGate = plan
+    ? plan.startPoint === 'usdt42'
+      ? amountGate(plan.usdt42, balances?.infUsdt ?? 0n)
+      : amountGate(
+          plan.entryAmount,
+          plan.startCoin === 'usdt' ? usdtBalance(entry) : spendable(entry),
+        )
+    : null;
   const planEthMinBlocked =
-    !!plan && entry === 'ethereum' && ethUsd !== null && !ethEntryAllowed(plan.entryAmount, ethUsd);
-  const startBlocked = !!planGate?.insufficient || planEthMinBlocked;
+    !!plan &&
+    plan.startPoint === 'entry' &&
+    entry === 'ethereum' &&
+    (plan.startCoin === 'usdt'
+      ? Number(formatUnits(plan.entryAmount, ENTRY_DEX.ethereum.usdtDecimals)) < 100
+      : ethUsd !== null && !ethEntryAllowed(plan.entryAmount, ethUsd));
+  /* USDT start with no gas coin: blocked at the confirm screen
+     with the plain gas message, before anything executes. */
+  const planGasBlocked =
+    !!plan &&
+    plan.startPoint === 'entry' &&
+    plan.startCoin === 'usdt' &&
+    plan.gasOk === false;
+  const startBlocked = !!planGate?.insufficient || planEthMinBlocked || planGasBlocked;
+  /* Next stays disabled until the entry step holds valid data
+     (amount + live quote) — an empty step never offers it. */
+  const entryBlocked =
+    step?.kind === 'entrySwap' && !!flow && !entryStepReady(flow, stepQuote);
 
   return (
     <View style={{ flex: 1 }}>
@@ -893,6 +1381,10 @@ function BuySection({ onClose }: { onClose: () => void }) {
                 <Text style={S.ghostBtnText}>{tr('hs.discard')}</Text>
               </Pressable>
             </View>
+            <Pressable style={[S.ghostBtn, { marginTop: 10 }]} onPress={uturn}>
+              <Text style={S.ghostBtnText}>{tr('hs.uturn')}</Text>
+            </Pressable>
+            <Text style={[S.tiny, { marginTop: 6 }]}>{tr('hs.uturnNote')}</Text>
           </View>
         ) : null}
 
@@ -932,7 +1424,7 @@ function BuySection({ onClose }: { onClose: () => void }) {
             {(['bsc', 'ethereum'] as EntryKey[]).map((e) => (
               <Pressable
                 key={e}
-                onPress={() => setEntry(e)}
+                onPress={() => { setEntry(e); setStartPoint('entry'); }}
                 style={{
                   borderWidth: 2,
                   borderColor: entry === e ? ACCENT : '#eff3f4',
@@ -965,6 +1457,62 @@ function BuySection({ onClose }: { onClose: () => void }) {
             ) : null}
             <Text style={[S.small, { marginTop: 6 }]}>{tr('hs.ethMin')}</Text>
 
+            {/* Start coin (v0.4.1): the native coin (swapped to
+                USDT first) or USDT already held on this chain
+                (straight to the bridge; the native coin is then
+                only needed as gas). */}
+            <Text style={[S.h2, { marginTop: 18 }]}>{tr('hs.startFrom')}</Text>
+            <View style={[S.row, { gap: 10, marginTop: 10 }]}>
+              {(['native', 'usdt'] as const).map((c) => (
+                <Pressable
+                  key={c}
+                  style={[startCoin === c ? S.darkBtn : S.ghostBtn, { flex: 1 }]}
+                  onPress={() => { setStartCoin(c); setStartPoint('entry'); }}
+                >
+                  <Text style={startCoin === c ? S.darkBtnText : S.ghostBtnText}>
+                    {c === 'native' ? (entry === 'bsc' ? 'BNB' : 'ETH') : 'USDT'}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={[S.small, { marginTop: 8 }]}>
+              {startCoin === 'usdt'
+                ? fmtTok(usdtBalance(entry), ENTRY_DEX[entry].usdtDecimals) + ' USDT'
+                : fmtTok(nativeBalance(entry), 18) + ' ' + (entry === 'bsc' ? 'BNB' : 'ETH')}
+            </Text>
+
+            {/* Mid-start point (v0.4.1, balance-based): USDT
+                already held on 42 Chain can start the flow at
+                the back half directly. Offered ONLY when the
+                balance is non-zero — a start the user cannot
+                fund is never presented. */}
+            {(balances?.infUsdt ?? 0n) > 0n ? (
+              <Pressable
+                onPress={() =>
+                  setStartPoint(startPoint === 'usdt42' ? 'entry' : 'usdt42')
+                }
+                style={{
+                  borderWidth: 2,
+                  borderColor: startPoint === 'usdt42' ? ACCENT : '#eff3f4',
+                  borderRadius: 14,
+                  padding: 14,
+                  marginTop: 14,
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+                  <CoinBadge sym="USDT" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[S.body, { fontWeight: '700' }]}>
+                      {tr('hs.fromUsdt42')}
+                    </Text>
+                    <Text style={S.small}>
+                      {fmtTok(balances?.infUsdt ?? 0n, 18)} USDT
+                    </Text>
+                  </View>
+                </View>
+              </Pressable>
+            ) : null}
+
             <Pressable
               style={[S.bigBtn, { marginTop: 18 }]}
               onPress={() => setPhase('amount')}
@@ -986,29 +1534,54 @@ function BuySection({ onClose }: { onClose: () => void }) {
                 keyboardType="decimal-pad"
                 autoCorrect={false}
               />
-              <Text style={[S.body, { fontWeight: '700' }]}>{entry === 'bsc' ? 'BNB' : 'ETH'}</Text>
+              <Text style={[S.body, { fontWeight: '700' }]}>
+                {startPoint === 'usdt42' || startCoin === 'usdt' ? 'USDT' : entry === 'bsc' ? 'BNB' : 'ETH'}
+              </Text>
             </View>
             <View style={[S.row, { gap: 8, marginTop: 10, flexWrap: 'wrap' }]}>
               {[25, 50, 75, 100].map((pct) => (
                 <Pressable
                   key={pct}
                   style={S.chip}
-                  onPress={() => setAmountText(formatUnits(chipAmount(spendable(entry), pct), 18))}
+                  onPress={() =>
+                    setAmountText(
+                      formatUnits(
+                        chipAmount(
+                          startPoint === 'usdt42'
+                            ? (balances?.infUsdt ?? 0n)
+                            : startCoin === 'usdt'
+                              ? usdtBalance(entry)
+                              : spendable(entry),
+                          pct,
+                        ),
+                        amountDecimals(entry),
+                      ),
+                    )
+                  }
                 >
                   <Text style={S.chipText}>{pct === 100 ? 'MAX' : pct + '%'}</Text>
                 </Pressable>
               ))}
             </View>
-            <Text style={[S.small, { marginTop: 10 }]}>
-              {tr('hs.gasKeep')}: {fmtTok(nativeBalance(entry) - spendable(entry), 18)} {entry === 'bsc' ? 'BNB' : 'ETH'}
-              {amtUsd !== null ? ' · ≈ ' + fmtUsd(amtUsd) : ''}
-            </Text>
+            {startPoint === 'usdt42' ? null : startCoin === 'native' ? (
+              <Text style={[S.small, { marginTop: 10 }]}>
+                {tr('hs.gasKeep')}: {fmtTok(nativeBalance(entry) - spendable(entry), 18)} {entry === 'bsc' ? 'BNB' : 'ETH'}
+                {amtUsd !== null ? ' · ≈ ' + fmtUsd(amtUsd) : ''}
+              </Text>
+            ) : nativeBalance(entry) === 0n ? (
+              /* USDT start with NO gas coin at all: say it here,
+                 in plain words, before anything is quoted or
+                 executed — and again at the confirm screen. */
+              <Text style={[S.err, { marginTop: 10 }]}>
+                {tr('hs.needGasCoin', { sym: entry === 'bsc' ? 'BNB' : 'ETH' })}
+              </Text>
+            ) : null}
             {ethBlocked ? <Text style={[S.err, { marginTop: 8 }]}>{tr('hs.ethMin')}</Text> : null}
             {overSpendable ? <Text style={[S.err, { marginTop: 8 }]}>{tr('hs.notEnough')}</Text> : null}
             <Pressable
               style={[S.bigBtn, { marginTop: 18 }, (quoting || amt === null || amt <= 0n) && S.disabled]}
               disabled={quoting || amt === null || amt <= 0n}
-              onPress={() => buildPlan('single')}
+              onPress={() => (startPoint === 'usdt42' ? buildPlan42('single') : buildPlan('single'))}
             >
               <Text style={S.bigBtnText}>{quoting ? tr('hs.checking') : tr('hs.next')}</Text>
             </Pressable>
@@ -1022,9 +1595,23 @@ function BuySection({ onClose }: { onClose: () => void }) {
           <>
             <Text style={S.h2}>{tr('hs.confirmTitle')}</Text>
             <View style={S.cardBox}>
-            {balLine(entry === 'bsc' ? 'BNB' : 'ETH', plan.entryAmount, 18, entry === 'bsc' ? 'BNB' : 'ETH')}
-            {balLine('USDT', plan.entryUsdt, ENTRY_DEX[entry].usdtDecimals, 'USDT')}
-            {balLine(tr('hs.feeBridgeIn'), parseUnits('2', 18), 18, 'USDT')}
+            {plan.startPoint === 'usdt42' ? (
+              /* Mid-start: the 42 Chain USDT itself is what
+                 moves — no entry swap, no inbound bridge. */
+              balLine('USDT (42 Chain)', plan.usdt42, 18, 'USDT')
+            ) : plan.startCoin === 'usdt' ? (
+              /* USDT start: one line — the USDT itself is what
+                 moves; there is no swap leg to show. */
+              balLine('USDT', plan.entryAmount, ENTRY_DEX[entry].usdtDecimals, 'USDT')
+            ) : (
+              <>
+                {balLine(entry === 'bsc' ? 'BNB' : 'ETH', plan.entryAmount, 18, entry === 'bsc' ? 'BNB' : 'ETH')}
+                {balLine('USDT', plan.entryUsdt, ENTRY_DEX[entry].usdtDecimals, 'USDT')}
+              </>
+            )}
+            {plan.startPoint === 'entry'
+              ? balLine(tr('hs.feeBridgeIn'), parseUnits('2', 18), 18, 'USDT')
+              : null}
             {balLine(
               tr('hs.feeBridge42') +
                 ' (' +
@@ -1076,13 +1663,13 @@ function BuySection({ onClose }: { onClose: () => void }) {
                 <View style={[S.row, { gap: 10, marginTop: 10 }]}>
                   <Pressable
                     style={[plan.choice === 'split' ? S.darkBtn : S.ghostBtn, { flex: 1 }]}
-                    onPress={() => plan.choice !== 'split' && buildPlan('split')}
+                    onPress={() => plan.choice !== 'split' && (plan.startPoint === 'usdt42' ? buildPlan42('split') : buildPlan('split'))}
                   >
                     <Text style={plan.choice === 'split' ? S.darkBtnText : S.ghostBtnText}>{tr('hs.useSplit')}</Text>
                   </Pressable>
                   <Pressable
                     style={[plan.choice === 'single' ? S.darkBtn : S.ghostBtn, { flex: 1 }]}
-                    onPress={() => plan.choice !== 'single' && buildPlan('single')}
+                    onPress={() => plan.choice !== 'single' && (plan.startPoint === 'usdt42' ? buildPlan42('single') : buildPlan('single'))}
                   >
                     <Text style={plan.choice === 'single' ? S.darkBtnText : S.ghostBtnText}>{tr('hs.useSingle')}</Text>
                   </Pressable>
@@ -1093,13 +1680,17 @@ function BuySection({ onClose }: { onClose: () => void }) {
             <Text style={[S.small, { marginTop: 6 }]}>{tr('hs.firstTimeNote')}</Text>
             {startBlocked ? (
               <Text style={[S.err, { marginTop: 14 }]}>
-                {planGate?.insufficient ? tr('hs.quoteOnly') : tr('hs.ethMin')}
+                {planGate?.insufficient
+                  ? tr('hs.quoteOnly')
+                  : planGasBlocked
+                    ? tr('hs.needGasCoin', { sym: entry === 'bsc' ? 'BNB' : 'ETH' })
+                    : tr('hs.ethMin')}
               </Text>
             ) : null}
             <Pressable
               style={[S.bigBtn, { marginTop: 18 }, startBlocked && { opacity: 0.4 }]}
               disabled={startBlocked}
-              onPress={startFlow}
+              onPress={plan.startPoint === 'usdt42' ? startFlow42 : startFlow}
             >
               <Text style={S.bigBtnText}>{tr('hs.start')}</Text>
             </Pressable>
@@ -1118,15 +1709,81 @@ function BuySection({ onClose }: { onClose: () => void }) {
             ) : null}
             <View style={{ borderWidth: 1, borderColor: '#eff3f4', borderRadius: 14, padding: 16, marginTop: 12 }}>
               <Text style={[S.body, { fontWeight: '700', fontSize: 17 }]}>{stepLabel()}</Text>
-              {watching ? (
+              {/* Step content (v0.4.1): the step always shows WHAT
+                  it will move — amounts from the flow, and for the
+                  entry swap the LIVE quote fetched for this step.
+                  A bare title with an enabled Next is the bug state
+                  this replaces. */}
+              {step?.kind === 'entrySwap' ? (
+                <View style={{ marginTop: 6 }}>
+                  {balLine(
+                    entry === 'bsc' ? 'BNB' : 'ETH',
+                    bigOr0(flow.entryAmountRaw),
+                    18,
+                    entry === 'bsc' ? 'BNB' : 'ETH',
+                  )}
+                  {stepQuote !== null ? (
+                    balLine('USDT', stepQuote, ENTRY_DEX[entry].usdtDecimals, 'USDT')
+                  ) : (
+                    <Text style={[S.small, { marginTop: 6 }]}>
+                      {stepQuoteErr ? tr('hs.netFailed') : tr('hs.checking')}
+                    </Text>
+                  )}
+                </View>
+              ) : null}
+              {step?.kind === 'entryBridge' && bridgeUsdt !== null
+                ? balLine('USDT', bridgeUsdt, ENTRY_DEX[entry].usdtDecimals, 'USDT')
+                : null}
+              {step?.kind === 'carve' && flow.carveUsdtCost
+                ? balLine('USDT', bigOr0(flow.carveUsdtCost), 18, 'USDT')
+                : null}
+              {step?.kind === 'part' && step.step === 0
+                ? balLine('USDT', bigOr0(flow.parts[step.partIdx]?.usdtIn), 18, 'USDT')
+                : null}
+              {step?.kind === 'part' && step.step === 3 && flow.parts[step.partIdx]?.bridgedAmount
+                ? balLine(
+                    flow.parts[step.partIdx].sym,
+                    bigOr0(flow.parts[step.partIdx].bridgedAmount),
+                    18,
+                    flow.parts[step.partIdx].sym,
+                  )
+                : null}
+              {/* End goal (invariant): the final asset this flow
+                  delivers, read from the SAVED flow state — set
+                  at start (fresh or mid-start), never recomputed
+                  on resume — with its stored amount estimate. */}
+              <View style={[S.row, { justifyContent: 'space-between', marginTop: 10 }]}>
+                <Text style={S.small}>{tr('hs.youGet')}</Text>
+                <Text style={[S.body, { fontWeight: '700' }]}>
+                  {fmtTok(bigOr0(flow.confirmedOut), 18)} {flow.finalAsset ?? 'CAW'}
+                </Text>
+              </View>
+              {/* QL1 gas-shortage guidance (v0.4.1): shown by
+                  the QL1 step gate INSTEAD of any error text,
+                  with the mandatory direct faucet button. */}
+              {ql1Short ? (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={S.err}>{tr('hs.gasQomShort')}</Text>
+                  <Text style={[S.small, { marginTop: 6 }]}>{tr('hs.wqomNote')}</Text>
+                  <View style={{ marginTop: 10 }}>
+                    <FaucetButton label={tr('faucet.goFaucet')} primary />
+                  </View>
+                </View>
+              ) : null}
+              {rehydrating ? (
+                <View style={[S.row, { marginTop: 12, gap: 8 }]}>
+                  <ActivityIndicator color={ACCENT} />
+                  <Text style={S.small}>{tr('hs.checking')}</Text>
+                </View>
+              ) : watching ? (
                 <View style={[S.row, { marginTop: 12, gap: 8 }]}>
                   <ActivityIndicator color={ACCENT} />
                   <Text style={S.small}>{tr('hs.waiting')}</Text>
                 </View>
               ) : (
                 <Pressable
-                  style={[S.bigBtn, { marginTop: 14 }, busy && S.disabled]}
-                  disabled={busy}
+                  style={[S.bigBtn, { marginTop: 14 }, (busy || entryBlocked) && S.disabled]}
+                  disabled={busy || entryBlocked}
                   onPress={onRunNext}
                 >
                   <Text style={S.bigBtnText}>{busy ? tr('hs.sending') : tr('hs.next')}</Text>
@@ -1141,6 +1798,9 @@ function BuySection({ onClose }: { onClose: () => void }) {
                 </Pressable>
               ) : null}
             </View>
+            <Pressable style={[S.ghostBtn, { marginTop: 12 }]} onPress={uturn}>
+              <Text style={S.ghostBtnText}>{tr('hs.uturn')}</Text>
+            </Pressable>
           </>
         ) : null}
 
@@ -1215,14 +1875,30 @@ function BuySection({ onClose }: { onClose: () => void }) {
 
 interface SellPlan {
   qcawAmount: bigint;
-  back: BackHalfQuote;
+  /** Back-half quote; absent on a 42-USDT mid-start plan
+   *  (there is no back half — the flow starts at the exit
+   *  bridge with the USDT already on 42 Chain). */
+  back?: BackHalfQuote;
   choice: 'single' | 'split';
   usdt42: bigint;
   forwardTarget: bigint;
   nativeOut: bigint;
+  /** Arrival coin (v0.4.1): 'usdt' ends the flow when the
+   *  bridge lands (nativeOut stays 0); 'native' adds the
+   *  final swap on the target chain. */
+  endCoin: 'usdt' | 'native';
+  /** Mid-start (v0.4.1): the 42 Chain USDT amount the flow
+   *  starts from, when it does not start from CAW. */
+  fromUsdt42?: bigint;
 }
 
-function SellSection({ onClose }: { onClose: () => void }) {
+function SellSection({
+  onClose,
+  onSwitchDirection,
+}: {
+  onClose: () => void;
+  onSwitchDirection: () => void;
+}) {
   const app = useApp();
   const insets = useSafeAreaInsets();
   const address = app.address ?? '';
@@ -1232,6 +1908,16 @@ function SellSection({ onClose }: { onClose: () => void }) {
   const [bnbUsd, setBnbUsd] = useState<number | null>(null);
   const [ethUsd, setEthUsd] = useState<number | null>(null);
   const [target, setTarget] = useState<EntryKey>('bsc');
+  /** Arrival coin (v0.4.1): receive the bridged USDT as-is, or
+   *  convert it into the target chain's native coin. */
+  const [endCoin, setEndCoin] = useState<'usdt' | 'native'>('native');
+  /* QL1 gas-shortage guidance state (v0.4.1), as on the buy
+     side; set by the QL1 step gates in prepareSellPart. */
+  const [ql1Short, setQl1Short] = useState(false);
+  /* Mid-start (v0.4.1): 'caw' = the full sell from CAW;
+     'usdt42' = start from USDT already held on 42 Chain,
+     straight at the exit bridge. */
+  const [sellFrom, setSellFrom] = useState<'caw' | 'usdt42'>('caw');
   const [amountText, setAmountText] = useState('');
   const [plan, setPlan] = useState<SellPlan | null>(null);
   const [quoting, setQuoting] = useState(false);
@@ -1327,8 +2013,11 @@ function SellSection({ onClose }: { onClose: () => void }) {
         choice === 'split' && back.split ? back.split.netOut : back.bestSingle.finalOut;
       const q = await quoteBridgeOut42(target, usdt42);
       const forwardTarget = toTargetUsdtRaw(q.forward, target);
-      const nativeOut = await quoteFinalSwap(target, forwardTarget);
-      setPlan({ qcawAmount: amt, back, choice, usdt42, forwardTarget, nativeOut });
+      /* USDT arrival: the forward amount IS the result — the
+         final swap (and its quote) does not exist. */
+      const nativeOut =
+        endCoin === 'usdt' ? 0n : await quoteFinalSwap(target, forwardTarget);
+      setPlan({ qcawAmount: amt, back, choice, usdt42, forwardTarget, nativeOut, endCoin });
       setPhase('confirm');
     } catch (e) {
       setStatus({
@@ -1349,11 +2038,13 @@ function SellSection({ onClose }: { onClose: () => void }) {
       address,
     ).catch(() => 0n);
     const total = plan.qcawAmount;
+    const back = plan.back;
+    if (!back) return;
     const parts: HuntersFlow['parts'] = [];
-    if (plan.choice === 'split' && plan.back.split) {
+    if (plan.choice === 'split' && back.split) {
       let used = 0n;
-      plan.back.split.parts.forEach((p: any, i: number) => {
-        const isLast = i === plan.back.split!.parts.length - 1;
+      back.split.parts.forEach((p: any, i: number) => {
+        const isLast = i === back.split!.parts.length - 1;
         const amt = isLast ? total - used : (total * BigInt(p.pct)) / 100n;
         used += amt;
         parts.push({
@@ -1366,7 +2057,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
         });
       });
     } else {
-      const c = plan.back.bestSingle;
+      const c = back.bestSingle;
       parts.push({
         sym: c.pair.sym,
         pct: 100,
@@ -1385,16 +2076,104 @@ function SellSection({ onClose }: { onClose: () => void }) {
       entryAmountRaw: total.toString(),
       entryUsdtExpected: '0',
       usdt42Expected: plan.usdt42.toString(),
-      confirmedOut: plan.nativeOut.toString(),
+      /* USDT arrival: the confirmed result is the forwarded
+         USDT itself, not a native amount. */
+      confirmedOut:
+        plan.endCoin === 'usdt'
+          ? plan.forwardTarget.toString()
+          : plan.nativeOut.toString(),
       choice: plan.choice,
       createdAt: Date.now(),
       usdt42Before: usdt42Before.toString(),
       sellUsdt42Expected: plan.usdt42.toString(),
       sellNativeExpected: plan.nativeOut.toString(),
       exitForward: plan.forwardTarget.toString(),
+      endCoin: plan.endCoin,
+      finalAsset: plan.endCoin === 'usdt' ? 'USDT' : targetSym,
+      finalChain: target,
     });
     setResumeFlow(null);
     await persist({ ...base, phase: 'back', carveDone: true, parts });
+    setPhase('run');
+  };
+
+  /**
+   * Mid-start plan (v0.4.1): start from USDT already held on
+   * 42 Chain. Only the exit legs remain — bridge out to the
+   * target chain, then the arrival choice (USDT as-is or the
+   * final swap) exactly as in a full sell.
+   */
+  const buildSellPlan42 = async () => {
+    const amt = parsedQcaw();
+    if (amt === null || amt <= 0n) return;
+    beginQuote();
+    setStatus(null);
+    try {
+      const q = await quoteBridgeOut42(target, amt);
+      const forwardTarget = toTargetUsdtRaw(q.forward, target);
+      const nativeOut =
+        endCoin === 'usdt' ? 0n : await quoteFinalSwap(target, forwardTarget);
+      setPlan({
+        qcawAmount: 0n,
+        choice: 'single',
+        usdt42: amt,
+        forwardTarget,
+        nativeOut,
+        endCoin,
+        fromUsdt42: amt,
+      });
+      setPhase('confirm');
+    } catch (e) {
+      setStatus({
+        text: tr(e instanceof Error && e.message === 'no-route' ? 'hs.noRoute' : 'hs.netFailed'),
+        err: true,
+      });
+    } finally {
+      endQuote();
+    }
+  };
+
+  /**
+   * Mid-start from 42 Chain USDT (v0.4.1): the flow is born at
+   * the exit-bridge phase — the SAME saved-state shape a full
+   * sell reaches after its back half, so resume and the
+   * arrival watcher treat it identically. "Before" is
+   * recorded net of the committed amount, so the exit bridge
+   * measures exactly that amount from the real balance.
+   */
+  const startSellFlow42 = async () => {
+    if (!plan || !address || !plan.fromUsdt42) return;
+    const bal = await erc20Balance(
+      'infinite',
+      USDT_ON.infinite.address,
+      address,
+    ).catch(() => 0n);
+    const before = bal > plan.fromUsdt42 ? bal - plan.fromUsdt42 : 0n;
+    const base = newFlow({
+      id: Date.now().toString(36),
+      address,
+      entry: target,
+      direction: 'sell',
+      exitTarget: target,
+      entryAmountRaw: '0',
+      entryUsdtExpected: '0',
+      usdt42Expected: plan.usdt42.toString(),
+      confirmedOut:
+        plan.endCoin === 'usdt'
+          ? plan.forwardTarget.toString()
+          : plan.nativeOut.toString(),
+      choice: 'single',
+      createdAt: Date.now(),
+      usdt42Before: before.toString(),
+      sellUsdt42Expected: plan.usdt42.toString(),
+      sellNativeExpected: plan.nativeOut.toString(),
+      exitForward: plan.forwardTarget.toString(),
+      endCoin: plan.endCoin,
+      finalAsset: plan.endCoin === 'usdt' ? 'USDT' : targetSym,
+      finalChain: target,
+    });
+    setResumeFlow(null);
+    await persist({ ...base, phase: 'exitBridge', carveDone: true, parts: [] });
     setPhase('run');
   };
 
@@ -1404,6 +2183,11 @@ function SellSection({ onClose }: { onClose: () => void }) {
     flowRef.current = resumeFlow;
     setResumeFlow(null);
     setTarget(resumeFlow.exitTarget ?? 'bsc');
+    /* The saved arrival-coin choice resumes with the flow. */
+    setEndCoin(resumeFlow.endCoin ?? 'native');
+    if (resumeFlow.phase === 'done' && resumeFlow.endCoin === 'usdt') {
+      setFinishedWithUsdt(true);
+    }
     if (resumeFlow.phase === 'done') setPhase('done');
     else setPhase('run');
   };
@@ -1411,6 +2195,17 @@ function SellSection({ onClose }: { onClose: () => void }) {
   const discard = async () => {
     setResumeFlow(null);
     await huntersSellFlowStore.clear();
+  };
+
+  /* U-turn (v0.4.1): same rule as the buy side — discard the
+     saved flow and start the reverse goal fresh from the
+     assets currently held; sent legs are never reversed. */
+  const uturn = async () => {
+    await persist(null);
+    setResumeFlow(null);
+    setPhase('entry');
+    setStatus(null);
+    onSwitchDirection();
   };
 
   /* ---------- generic send (same app auth pattern as buy) ---------- */
@@ -1435,15 +2230,15 @@ function SellSection({ onClose }: { onClose: () => void }) {
       const signer = signerForHsChain(sec.kind, sec.secret, chain);
       const req = await build();
       await sendTxReq(signer, req);
-      const f1 = after({ ...flowRef.current! });
+      const base = { ...flowRef.current! };
+      delete base.pendingTx;
+      const f1 = after(base);
       await persist(f1);
       setStatus(null);
       setPending(null);
     } catch (e) {
-      setStatus({
-        text: tr(e instanceof Error && e.message === 'price-moved' ? 'hs.priceMoved' : 'hs.failed'),
-        err: true,
-      });
+      const text = await stepErrorText(e, chain, flowRef.current, persist);
+      setStatus({ text, err: true });
       setPending(null);
     } finally {
       setBusy(false);
@@ -1518,16 +2313,25 @@ function SellSection({ onClose }: { onClose: () => void }) {
           const arrived = now - before;
           const want = (BigInt(f.exitForward ?? '0') * 99n) / 100n;
           if (arrived > 0n && arrived >= want) {
-            // Gas reality check on the target chain before the
-            // final swap is offered.
+            // The chosen arrival coin decides what "arrived"
+            // means (arrivalAction): USDT as-is finishes here;
+            // converting needs ~$1 of target-chain gas for the
+            // final swap, else the flow pauses AT the USDT
+            // with the plain gas message (existing behavior).
             const nat = await arrivalBalance(t, null, address).catch(() => 0n);
             const price = t === 'bsc' ? bnbUsd : ethUsd;
             const usd = price ? Number(formatUnits(nat, 18)) * price : 0;
+            const action = arrivalAction(f.endCoin, usd);
             if (live) {
-              await persist({
-                ...f,
-                phase: usd >= 1 ? 'finalSwap' : 'pausedTarget',
-              });
+              if (action === 'done-usdt') {
+                setFinishedWithUsdt(true);
+                await persist({ ...f, phase: 'done' });
+              } else {
+                await persist({
+                  ...f,
+                  phase: action === 'final-swap' ? 'finalSwap' : 'pausedTarget',
+                });
+              }
             }
           }
         }
@@ -1551,6 +2355,19 @@ function SellSection({ onClose }: { onClose: () => void }) {
     const part = f.parts[partIdx];
     const pair = BRIDGE_PAIRS.find((p) => p.sym === part.sym);
     if (!pair) return;
+
+    /* QL1 gas gate (v0.4.1): part steps 0 (swap) and 1 (bridge
+       out of QL1) both SEND on QL1, paid in native QOM. Same
+       rule as the buy side: a short native balance stops here
+       with the faucet guidance — WQOM does not pay gas, and
+       the generic failure text never stands in for it. */
+    if (partStep === 0 || partStep === 1) {
+      if ((await fetchQl1GasShort(address)) === true) {
+        setQl1Short(true);
+        return;
+      }
+      setQl1Short(false);
+    }
 
     if (partStep === 0) {
       if (!part.leg1Path) {
@@ -1787,10 +2604,16 @@ function SellSection({ onClose }: { onClose: () => void }) {
 
   const qcawBal = balances?.ql1Qcaw ?? 0n;
   const amt = parsedQcaw();
-  const overBal = amt !== null && amt > qcawBal;
+  const overBal =
+    amt !== null &&
+    amt > (sellFrom === 'usdt42' ? (balances?.infUsdt ?? 0n) : qcawBal);
   /* Quote-only gate (v0.3.2): quoting works for ANY amount; the
      start action is blocked when the plan sells more than held. */
-  const sellGate = plan ? amountGate(plan.qcawAmount, qcawBal) : null;
+  const sellGate = plan
+    ? plan.fromUsdt42
+      ? amountGate(plan.fromUsdt42, balances?.infUsdt ?? 0n)
+      : amountGate(plan.qcawAmount, qcawBal)
+    : null;
 
   return (
     <View style={{ flex: 1 }}>
@@ -1806,6 +2629,10 @@ function SellSection({ onClose }: { onClose: () => void }) {
                 <Text style={S.ghostBtnText}>{tr('hs.discard')}</Text>
               </Pressable>
             </View>
+            <Pressable style={[S.ghostBtn, { marginTop: 10 }]} onPress={uturn}>
+              <Text style={S.ghostBtnText}>{tr('hs.uturn')}</Text>
+            </Pressable>
+            <Text style={[S.tiny, { marginTop: 6 }]}>{tr('hs.uturnNote')}</Text>
           </View>
         ) : null}
 
@@ -1869,6 +2696,54 @@ function SellSection({ onClose }: { onClose: () => void }) {
                 />
               </Pressable>
             ))}
+            {/* Arrival coin (v0.4.1): keep the bridged USDT
+                as-is, or convert it into BNB / ETH at the end. */}
+            <Text style={[S.h2, { marginTop: 18 }]}>{tr('hs.arriveAs')}</Text>
+            <View style={[S.row, { gap: 10, marginTop: 10 }]}>
+              {(['usdt', 'native'] as const).map((c) => (
+                <Pressable
+                  key={c}
+                  style={[endCoin === c ? S.darkBtn : S.ghostBtn, { flex: 1 }]}
+                  onPress={() => setEndCoin(c)}
+                >
+                  <Text style={endCoin === c ? S.darkBtnText : S.ghostBtnText}>
+                    {c === 'usdt'
+                      ? tr('hs.arriveUsdt')
+                      : tr('hs.arriveNative', { sym: targetSym })}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            {/* Start point (v0.4.1, balance-based): the full
+                sell from CAW, or a mid-start from USDT already
+                held on 42 Chain — offered ONLY when that
+                balance is non-zero. */}
+            <Text style={[S.h2, { marginTop: 18 }]}>{tr('hs.startFrom')}</Text>
+            <View style={[S.row, { gap: 10, marginTop: 10 }]}>
+              <Pressable
+                style={[sellFrom === 'caw' ? S.darkBtn : S.ghostBtn, { flex: 1 }]}
+                onPress={() => setSellFrom('caw')}
+              >
+                <Text style={sellFrom === 'caw' ? S.darkBtnText : S.ghostBtnText}>
+                  {tr('hs.fromCaw')}
+                </Text>
+              </Pressable>
+              {(balances?.infUsdt ?? 0n) > 0n ? (
+                <Pressable
+                  style={[sellFrom === 'usdt42' ? S.darkBtn : S.ghostBtn, { flex: 1 }]}
+                  onPress={() => setSellFrom('usdt42')}
+                >
+                  <Text style={sellFrom === 'usdt42' ? S.darkBtnText : S.ghostBtnText}>
+                    {tr('hs.fromUsdt42')}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+            {sellFrom === 'usdt42' ? (
+              <Text style={[S.small, { marginTop: 8 }]}>
+                {fmtTok(balances?.infUsdt ?? 0n, 18)} USDT
+              </Text>
+            ) : null}
             <Text style={[S.h2, { marginTop: 18 }]}>{tr('hs.yourCoins')}</Text>
             <CoinCard>
               <CoinRow name="CAW" chain="QL1" raw={balances?.ql1Qcaw ?? null} dec={18} sym="CAW" />
@@ -1880,14 +2755,22 @@ function SellSection({ onClose }: { onClose: () => void }) {
             {noGas42 ? (
               <Text style={[S.err, { marginTop: 12 }]}>{tr('hs.gasWarn42')}</Text>
             ) : null}
-            {lowTargetGas ? (
+            {lowTargetGas && endCoin === 'native' ? (
               <Text style={[S.err, { marginTop: 8 }]}>
                 {tr('hs.gasWarnTarget', { sym: targetSym })}
               </Text>
             ) : null}
             <Pressable
-              style={[S.bigBtn, { marginTop: 20 }, qcawBal <= 0n && { opacity: 0.4 }]}
-              disabled={qcawBal <= 0n}
+              style={[
+                S.bigBtn,
+                { marginTop: 20 },
+                (sellFrom === 'caw' ? qcawBal <= 0n : (balances?.infUsdt ?? 0n) <= 0n) && {
+                  opacity: 0.4,
+                },
+              ]}
+              disabled={
+                sellFrom === 'caw' ? qcawBal <= 0n : (balances?.infUsdt ?? 0n) <= 0n
+              }
               onPress={() => setPhase('amount')}
             >
               <Text style={S.bigBtnText}>{tr('hs.next')}</Text>
@@ -1898,7 +2781,9 @@ function SellSection({ onClose }: { onClose: () => void }) {
         {phase === 'amount' ? (
           <>
             <Text style={S.h2}>{tr('hs.amountSellTitle')}</Text>
-            {balLine('CAW', balances?.ql1Qcaw ?? null, 18, 'CAW')}
+            {sellFrom === 'usdt42'
+              ? balLine('USDT (42 Chain)', balances?.infUsdt ?? null, 18, 'USDT')
+              : balLine('CAW', balances?.ql1Qcaw ?? null, 18, 'CAW')}
             <TextInput
               style={[S.input, { marginTop: 12 }]}
               value={amountText}
@@ -1911,7 +2796,14 @@ function SellSection({ onClose }: { onClose: () => void }) {
                 <Pressable
                   key={pct}
                   style={[S.chip, { flex: 1 }]}
-                  onPress={() => setAmountText(formatUnits(chipAmount(qcawBal, pct), 18))}
+                  onPress={() =>
+                    setAmountText(
+                      formatUnits(
+                        chipAmount(sellFrom === 'usdt42' ? (balances?.infUsdt ?? 0n) : qcawBal, pct),
+                        18,
+                      ),
+                    )
+                  }
                 >
                   <Text style={S.chipText}>{pct === 100 ? 'MAX' : pct + '%'}</Text>
                 </Pressable>
@@ -1921,7 +2813,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
             <Pressable
               style={[S.bigBtn, { marginTop: 20 }, (amt === null || amt <= 0n) && { opacity: 0.4 }]}
               disabled={amt === null || amt <= 0n || quoting}
-              onPress={() => buildSellPlan('single')}
+              onPress={() => (sellFrom === 'usdt42' ? buildSellPlan42() : buildSellPlan('single'))}
             >
               <Text style={S.bigBtnText}>{quoting ? tr('hs.checking') : tr('hs.next')}</Text>
             </Pressable>
@@ -1932,17 +2824,17 @@ function SellSection({ onClose }: { onClose: () => void }) {
           <>
             <Text style={S.h2}>{tr('hs.confirmTitle')}</Text>
             <View style={S.cardBox}>
-            {balLine('CAW', plan.qcawAmount, 18, 'CAW')}
+            {plan.fromUsdt42 ? null : balLine('CAW', plan.qcawAmount, 18, 'CAW')}
             {balLine('USDT (42 Chain)', plan.usdt42, 18, 'USDT')}
             <View style={[S.row, { justifyContent: 'space-between', marginTop: 6 }]}>
               <Text style={S.small}>{tr('hs.feeBridgeOut')}</Text>
               <Text style={[S.body, { fontWeight: '600' }]}>-2 USDT</Text>
             </View>
             {balLine(tr('hs.usdtArriving'), plan.forwardTarget, USDT_ON[target].decimals, 'USDT')}
-            {gasEst
+            {gasEst && !plan.fromUsdt42
               ? balLine(
                   tr('hs.gasQl1Est'),
-                  gasEst.gasQomPerSwap * BigInt(plan.choice === 'split' && plan.back.split ? plan.back.split.parts.length : 1),
+                  gasEst.gasQomPerSwap * BigInt(plan.choice === 'split' && plan.back?.split ? plan.back?.split.parts.length : 1),
                   18,
                   'QOM',
                 )
@@ -1950,7 +2842,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
             {gasEst
               ? balLine(
                   tr('hs.gas42Est'),
-                  gasEst.gas42PerLeg * BigInt(plan.choice === 'split' && plan.back.split ? plan.back.split.parts.length : 1),
+                  gasEst.gas42PerLeg * BigInt(plan.choice === 'split' && plan.back?.split ? plan.back?.split.parts.length : 1),
                   18,
                   '42',
                 )
@@ -1959,10 +2851,12 @@ function SellSection({ onClose }: { onClose: () => void }) {
             <View style={[S.row, { justifyContent: 'space-between', marginTop: 10 }]}>
               <Text style={S.body}>{tr('hs.youGet')}</Text>
               <Text style={[S.h2, { color: ACCENT }]}>
-                {fmtTok(plan.nativeOut, 18)} {targetSym}
+                {plan.endCoin === 'usdt'
+                  ? `${fmtTok(plan.forwardTarget, USDT_ON[target].decimals)} USDT`
+                  : `${fmtTok(plan.nativeOut, 18)} ${targetSym}`}
               </Text>
             </View>
-            {plan.back.split ? (
+            {plan.back?.split ? (
               <View style={{ marginTop: 14 }}>
                 <Text style={S.body}>{tr('hs.splitTitle')}</Text>
                 <Text style={[S.small, { marginTop: 4 }]}>{tr('hs.splitDesc')}</Text>
@@ -1987,7 +2881,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
               </View>
             ) : null}
             {noGas42 ? <Text style={[S.err, { marginTop: 12 }]}>{tr('hs.gasWarn42')}</Text> : null}
-            {lowTargetGas ? (
+            {lowTargetGas && endCoin === 'native' ? (
               <Text style={[S.err, { marginTop: 8 }]}>{tr('hs.gasWarnTarget', { sym: targetSym })}</Text>
             ) : null}
             <Text style={[S.tiny, { marginTop: 12 }]}>{tr('hs.firstTimeNote')}</Text>
@@ -1997,7 +2891,7 @@ function SellSection({ onClose }: { onClose: () => void }) {
             <Pressable
               style={[S.bigBtn, { marginTop: 16 }, sellGate?.insufficient && { opacity: 0.4 }]}
               disabled={!!sellGate?.insufficient}
-              onPress={startSellFlow}
+              onPress={plan?.fromUsdt42 ? startSellFlow42 : startSellFlow}
             >
               <Text style={S.bigBtnText}>{tr('hs.start')}</Text>
             </Pressable>
@@ -2049,6 +2943,39 @@ function SellSection({ onClose }: { onClose: () => void }) {
               ))}
             </View>
             <Text style={[S.body, { marginTop: 16, fontWeight: '700' }]}>{stepLabel()}</Text>
+            {/* End goal (invariant): the final asset this flow
+                delivers — from the SAVED flow state (the arrival
+                choice made at start), never recomputed on
+                resume — with its stored amount estimate. */}
+            <View style={[S.row, { justifyContent: 'space-between', marginTop: 8 }]}>
+              <Text style={S.small}>{tr('hs.youGet')}</Text>
+              <Text style={[S.body, { fontWeight: '700' }]}>
+                {fmtTok(
+                  bigOr0(flow.confirmedOut),
+                  flow.endCoin === 'usdt'
+                    ? USDT_ON[flow.exitTarget ?? 'bsc'].decimals
+                    : 18,
+                )}{' '}
+                {flow.finalAsset ??
+                  (flow.endCoin === 'usdt'
+                    ? 'USDT'
+                    : flow.exitTarget === 'ethereum'
+                      ? 'ETH'
+                      : 'BNB')}
+              </Text>
+            </View>
+            {/* QL1 gas-shortage guidance (v0.4.1), as on the
+                buy side: dedicated state + faucet button,
+                never the generic error. */}
+            {ql1Short ? (
+              <View style={{ marginTop: 12 }}>
+                <Text style={S.err}>{tr('hs.gasQomShort')}</Text>
+                <Text style={[S.small, { marginTop: 6 }]}>{tr('hs.wqomNote')}</Text>
+                <View style={{ marginTop: 10 }}>
+                  <FaucetButton label={tr('faucet.goFaucet')} primary />
+                </View>
+              </View>
+            ) : null}
             {step?.kind === 'pausedTarget' ? (
               <>
                 <Text style={[S.body, { marginTop: 10 }]}>
@@ -2072,6 +2999,9 @@ function SellSection({ onClose }: { onClose: () => void }) {
                 <Text style={S.bigBtnText}>{tr('hs.next')}</Text>
               </Pressable>
             )}
+            <Pressable style={[S.ghostBtn, { marginTop: 12 }]} onPress={uturn}>
+              <Text style={S.ghostBtnText}>{tr('hs.uturn')}</Text>
+            </Pressable>
           </>
         ) : null}
 
@@ -2134,10 +3064,58 @@ function SellSection({ onClose }: { onClose: () => void }) {
 /* HuntersSwap screen: direction toggle + buy / sell sections         */
 /* ================================================================== */
 
+/** Faucet entry in the HuntersDEX header (v0.4.1), pill-styled
+ *  to match the Send / Close pills beside it. */
+function FaucetPillButton() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Pressable
+        onPress={() => setOpen(true)}
+        style={{
+          backgroundColor: '#eff3f4',
+          borderRadius: 999,
+          paddingHorizontal: 14,
+          paddingVertical: 8,
+        }}
+      >
+        <Text style={{ color: '#0f1419', fontSize: 14, fontWeight: '600' }}>
+          {tr('faucet.title')}
+        </Text>
+      </Pressable>
+      <Modal
+        visible={open}
+        animationType="slide"
+        onRequestClose={() => setOpen(false)}
+      >
+        <FaucetScreen onClose={() => setOpen(false)} />
+      </Modal>
+    </>
+  );
+}
+
 export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) {
+  const app = useApp();
   const insets = useSafeAreaInsets();
   const [direction, setDirection] = useState<'buy' | 'sell'>('buy');
   const [sendOpen, setSendOpen] = useState(false);
+  /* Goal recommendation (v0.4.1): keyed off the user's actual
+     position — holding CAW highlights the cash-out goal;
+     anything else (or an unreadable balance) defaults to the
+     buy goal. See recommendedGoal in lib/hunters. */
+  const [goalRec, setGoalRec] = useState<'buy' | 'sell'>('buy');
+  useEffect(() => {
+    if (!app.address) return;
+    let live = true;
+    fetchHsBalances(app.address)
+      .then((b) => {
+        if (live) setGoalRec(recommendedGoal(b.ql1Qcaw ?? 0n));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [app.address]);
   return (
     <View style={[S.screen, { paddingTop: insets.top }]}>
       {/* Brand header (v0.4.0): the feature's name is HuntersDEX
@@ -2162,6 +3140,7 @@ export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) 
             <Text style={[S.small, { marginTop: 1 }]}>{tr('hs.title')}</Text>
           </View>
           <View style={[S.row, { gap: 8, paddingTop: 2 }]}>
+            <FaucetPillButton />
             <Pressable
               onPress={() => setSendOpen(true)}
               style={{
@@ -2186,44 +3165,72 @@ export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) 
             </Pressable>
           </View>
         </View>
-        {/* Buy / sell as a segmented control (same language as the
-         * timeline's Latest / Following switch). */}
-        <View
-          style={{
-            flexDirection: 'row',
-            backgroundColor: '#eff3f4',
-            borderRadius: 12,
-            padding: 3,
-            marginTop: 12,
-          }}
-        >
+        {/* Direction by GOAL, not by technique (v0.4.1): two
+         * prominent cards — "for people who want CAW" and "for
+         * people who want to cash out". The card matching the
+         * user's current position glows with an おすすめ
+         * badge (recommendedGoal); the chosen card is filled.
+         * The cards are also the U-turn junction: switching
+         * goal here keeps every start point of the other
+         * direction one tap away. */}
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
           {(['buy', 'sell'] as const).map((d) => {
             const on = direction === d;
+            const rec = goalRec === d;
             return (
               <Pressable
                 key={d}
                 onPress={() => setDirection(d)}
                 style={{
                   flex: 1,
-                  alignItems: 'center',
-                  paddingVertical: 8,
-                  borderRadius: 9,
-                  backgroundColor: on ? '#fff' : 'transparent',
-                  shadowColor: '#000',
-                  shadowOpacity: on ? 0.08 : 0,
-                  shadowRadius: 3,
-                  shadowOffset: { width: 0, height: 1 },
-                  elevation: on ? 1 : 0,
+                  borderWidth: 2,
+                  borderColor: on || rec ? ACCENT : '#eff3f4',
+                  backgroundColor: on ? '#f2f8ff' : '#fff',
+                  borderRadius: 16,
+                  padding: 12,
+                  shadowColor: ACCENT,
+                  shadowOpacity: rec ? 0.35 : 0,
+                  shadowRadius: rec ? 8 : 0,
+                  shadowOffset: { width: 0, height: 2 },
+                  elevation: rec ? 4 : 0,
                 }}
               >
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'flex-start',
+                    minHeight: 20,
+                  }}
+                >
+                  <Text style={{ fontSize: 17 }}>{d === 'buy' ? '🐟' : '💰'}</Text>
+                  {rec ? (
+                    <View
+                      style={{
+                        backgroundColor: ACCENT,
+                        borderRadius: 999,
+                        paddingHorizontal: 8,
+                        paddingVertical: 2,
+                      }}
+                    >
+                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+                        {tr('hs.recommend')}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
                 <Text
                   style={{
                     fontSize: 15,
-                    fontWeight: on ? '700' : '500',
-                    color: on ? '#0f1419' : '#536471',
+                    fontWeight: '700',
+                    color: '#0f1419',
+                    marginTop: 6,
                   }}
                 >
-                  {tr(d === 'buy' ? 'hs.buy' : 'hs.sell')}
+                  {tr(d === 'buy' ? 'hs.goalBuy' : 'hs.goalSell')}
+                </Text>
+                <Text style={[S.small, { marginTop: 2 }]}>
+                  {tr(d === 'buy' ? 'hs.goalBuySub' : 'hs.goalSellSub')}
                 </Text>
               </Pressable>
             );
@@ -2238,9 +3245,9 @@ export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) 
         <SendScreen onClose={() => setSendOpen(false)} />
       </Modal>
       {direction === 'buy' ? (
-        <BuySection onClose={onClose} />
+        <BuySection onClose={onClose} onSwitchDirection={() => setDirection('sell')} />
       ) : (
-        <SellSection onClose={onClose} />
+        <SellSection onClose={onClose} onSwitchDirection={() => setDirection('buy')} />
       )}
     </View>
   );

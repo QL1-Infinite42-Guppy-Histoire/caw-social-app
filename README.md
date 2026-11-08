@@ -14,9 +14,65 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.3.12** — released 2026-11-08.
+- **現在版 / Current: v0.4.1** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.3.12/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.1/caw-social.apk
+  v0.4.1 fixes a HuntersDEX buy that was shown as failed even
+  though the swap had actually succeeded on-chain (user report
+  2026-11-08 08:56 JST; BSC tx 0x7b5ac1… confirmed successful).
+  Root cause: the send path confirmed receipts with a
+  single-endpoint wait that could throw after the tx had
+  already been mined, and the step's catch-all then showed the
+  generic failure text — while the flow state stayed on the
+  swap step, so "resume" later rendered an empty step whose
+  Next re-ran a swap the wallet could no longer fund. Sends
+  now confirm across all of the chain's RPC endpoints over a
+  ~90-second window; a tx that cannot be confirmed gets its
+  own "unconfirmed — it may have succeeded, check before
+  retrying" message in all 13 languages (never the generic
+  failure text), with the pending hash saved on the flow.
+  Resume rebuilds the current step from fresh balances and a
+  live quote before it becomes actionable, detects an
+  already-executed step from balance evidence and lands on
+  the next step, and Next stays disabled until the step holds
+  valid data; if a step cannot be rebuilt, the flow restarts
+  from that step's amount entry instead of an empty step.
+  Errors at execution steps are classified: insufficient
+  balance / network / no route / price moved / reverted /
+  unconfirmed each show their own message. New start points
+  (the user's rule: any intermediate asset you already hold
+  can start the flow): buys can start from USDT on the entry
+  chain (gas coin checked beforehand with its own message)
+  or from USDT on 42 Chain; sells can start from USDT on
+  42 Chain and can end with the USDT as-is instead of
+  converting to BNB/ETH. The flow's end goal (final asset +
+  chain + estimate) is stored in the saved state and shown
+  on every step screen; the gas auto-keep ($3 of BNB, the
+  ETH gas portion) is re-checked at execution and never
+  spent by any start or resume. QL1 steps that lack native
+  QOM for gas now stop with a dedicated faucet guidance
+  (bridged QOM is WQOM and does not pay gas) and a button to
+  the new in-app faucet screen — claims of 0.05 [42],
+  10,000,000 QOM and 1 ZAP from the public faucet Worker,
+  with every rejection code shown in plain language. Also:
+  the Recaw choice sheet on the timeline now clears the
+  Android navigation bar (bottom safe-area inset, the same
+  pattern its Profile-screen sibling already used). The
+  HuntersDEX entry is now framed by goal — 「CAW が欲しい人は
+  これ」 / 「現金化したい人はこれ」 cards, with the natural
+  continuation for the user's current position highlighted
+  as おすすめ (holding CAW highlights cashing out) — and a
+  U-turn action on the resume card and every step screen
+  abandons the current direction and starts the reverse
+  goal fresh from the assets currently held (sent legs are
+  never reversed). Verified
+  by scripts/verify-resume.mjs (75 checks, stubbed chain and
+  stubbed faucet Worker) plus all previous suites.
+  versionCode 23. v0.4.0 (the open-beta release) added:
+  like rows leave the Latest/Following timelines, Recaw shows
+  the original post, replies + quote Recaws via the app-level
+  marker convention (CAW has no native reply), the
+  HuntersDEX rename, and 5 more languages (13 total).
   v0.3.12 fixes the "my post does not appear in the timeline"
   bug (user report 2026-11-08). Root cause: the session page
   cache in cawApi cached the feed's HEAD page from its first

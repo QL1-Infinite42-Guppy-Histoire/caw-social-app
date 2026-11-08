@@ -51,6 +51,27 @@ export interface HuntersFlow {
   /** 'buy' = BNB/ETH -> CAW; 'sell' = CAW -> BNB/ETH. */
   direction?: 'buy' | 'sell';
   entry: 'bsc' | 'ethereum';
+  /** Buy only (v0.4.1): the coin the flow starts from on the
+   *  entry chain — 'native' (BNB/ETH, swapped to USDT first) or
+   *  'usdt' (USDT already held; the flow starts at the bridge
+   *  step). Absent on pre-v0.4.1 flows, meaning 'native'. */
+  startCoin?: 'native' | 'usdt';
+  /** Sell only (v0.4.1): the coin the user chose to END with on
+   *  the target chain — 'usdt' (finish when the bridge lands)
+   *  or 'native' (one more swap into BNB/ETH). Absent on
+   *  pre-v0.4.1 flows, meaning 'native'. */
+  endCoin?: 'usdt' | 'native';
+  /** The flow's END GOAL (v0.4.1 invariant): the final asset
+   *  the whole flow delivers ('CAW' for buys; 'BNB' / 'ETH' /
+   *  'USDT' for sells, per the arrival choice) and the chain
+   *  it lands on. Fixed when the flow starts — fresh, mid-start
+   *  or resumed — carried in the saved state, and NEVER
+   *  recomputed or reset by a resume or a step rebuild; every
+   *  step screen shows progress toward it (with confirmedOut
+   *  as its amount estimate). The recipient on every leg is
+   *  the user's own address (the flow's `address`). */
+  finalAsset?: string;
+  finalChain?: string;
   /** Sell only: the chain the USDT finally lands on / swaps on. */
   exitTarget?: 'bsc' | 'ethereum';
   /** Sell only: USDT expected on 42 Chain from the back half. */
@@ -82,6 +103,12 @@ export interface HuntersFlow {
   usdt42Before?: string;
   /** True once the [42] carve-out swap has run (or was unneeded). */
   carveDone: boolean;
+  /** A broadcast step whose receipt could not be obtained inside
+   *  the confirmation window (v0.4.1). The tx MAY have succeeded;
+   *  keeping its hash lets a later resume re-check it instead of
+   *  blindly re-running the step. Cleared by the next confirmed
+   *  send. */
+  pendingTx?: { chain: string; hash: string; at: number };
   /** USDT (42) set aside for the carve swap, as a string. */
   carveUsdtCost?: string;
   parts: FlowPart[];
