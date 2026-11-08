@@ -53,6 +53,7 @@ scripts/.build-follow/
 scripts/.build-feed/
 scripts/.build-i18n/
 scripts/.build-reactions/
+scripts/.build-sellbridge/
 
 # local env / keys
 .env

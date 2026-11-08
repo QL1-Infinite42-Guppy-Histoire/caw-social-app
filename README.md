@@ -14,10 +14,45 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.4.3** — released 2026-11-08.
+- **現在版 / Current: v0.4.4** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.3/caw-social.apk
-  v0.4.3 fixes a HuntersDEX buy that stopped at the QL1
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.4/caw-social.apk
+  v0.4.4 fixes a HuntersDEX cash-out that could not
+  bridge QOM from QL1 to 42 Chain (user report
+  2026-11-08 12:16 JST): the sell's QL1 swap leg paid
+  its proceeds out as NATIVE QOM while the next step —
+  the QL1->42 bridge — spends the pair's ERC-20 (WQOM)
+  via transferRemote, so the bridge step found a WQOM
+  balance of 0 and the send could never proceed (the
+  on-device sell of 12:13 JST swapped and approved,
+  then nothing was ever broadcast). Root cause: a
+  native/wrapped representation mismatch inside the
+  sell flow — the mirror image of the buy-side bug
+  fixed in v0.4.2/v0.4.3. buildRouteSwapTx resolved the
+  route's QL1 end (the WQOM contract) by address lookup
+  to the chain's "native" entry (same address, first
+  match) and built swapExactTokensForETH. The builder
+  now takes a toTokOverride, symmetric to the existing
+  fromTokOverride, and the sell leg passes the pair's
+  own QL1 token entry, so proceeds land as WQOM and the
+  bridge step works as designed. The bridge step also
+  reconciles representations for flows saved by older
+  builds (lib/hunters ql1BridgePlan +
+  runQl1BridgeBatch): if the WQOM balance is short of
+  the bridge amount but the native surplus above the
+  QL1 gas keep covers the shortfall, the step wraps
+  exactly the shortfall (WQOM.deposit) inside its own
+  send sequence — one confirmation, sub-statuses shown
+  — and then bridges; if neither balance covers it, the
+  step stops beforehand with the classified
+  insufficient message, never a silent failure. The
+  keep is never converted. Verified by
+  scripts/verify-sellbridge.mjs (fresh sell leg builds
+  swapExactTokensForTokens; the reporter's exact parked
+  state — native QOM 11,370,689,767, WQOM 0 — wraps once
+  and bridges in one sequence) plus the full existing
+  suites, all green.
+  versionCode 26. v0.4.3 fixes a HuntersDEX buy that stopped at the QL1
   gas-securing step (user report 2026-11-08 11:18 JST):
   after v0.4.2 advanced the stuck buy to the QL1 swap
   step, securing the gas keep ran THREE separate

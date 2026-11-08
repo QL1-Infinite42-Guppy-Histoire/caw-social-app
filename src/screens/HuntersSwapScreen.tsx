@@ -104,6 +104,10 @@ import {
   runQl1FinishBatch,
   ql1FinishPlan,
   fetchQl1FinishState,
+  buildWrapTx,
+  fetchQl1BridgeState,
+  ql1BridgePlan,
+  runQl1BridgeBatch,
   resolveQl1Input,
   isWrappedNativeToken,
   fetchHeldTokens,
@@ -114,6 +118,7 @@ import {
   type HsBalances,
   type HeldToken,
   type Ql1FinishPlan,
+  type Ql1BridgePlan,
 } from '../lib/hunters';
 import { huntersFlowStore, huntersSellFlowStore, storeKV } from '../lib/stores';
 import { sendTxReq, signerForHsChain } from '../lib/wallet';
@@ -3219,7 +3224,15 @@ function SellSection({
           const route = await freshRoute('ql1', fromAddr, dstTok.address, need, part.leg1Path);
           if (!route) throw new Error('no-route');
           part.bridgedAmount = route.amountOut.toString();
-          return buildRouteSwapTx('ql1', route, address, 1);
+          /* The route must PAY OUT the pair's own QL1 token
+             (dstTok — WQOM for the QOM pair): that ERC-20 is
+             what the bridge step spends via transferRemote.
+             Resolving the route end by address instead picks
+             the chain's "native" entry for the WQOM contract
+             and builds swapExactTokensForETH, stranding the
+             proceeds as native QOM the bridge cannot spend
+             (v0.4.4 — the cash-out parked exactly there). */
+          return buildRouteSwapTx('ql1', route, address, 1, undefined, dstTok);
         }, (g) => {
           const parts = g.parts.slice();
           parts[partIdx] = { ...parts[partIdx], step: 1, bridgedAmount: part.bridgedAmount };
@@ -3232,28 +3245,93 @@ function SellSection({
     if (partStep === 1) {
       const tSrc = tokenById('ql1', pair.ql1Id);
       const amt = BigInt(part.bridgedAmount ?? '0');
-      if (!tSrc.isNative) {
-        const allow = await erc20Allowance('ql1', tSrc.address, address, pair.ql1Router).catch(() => 0n);
-        if (allow < amt) {
-          askSend(tr('hs.stepApprove'), async () => {
-            await sendStep('ql1', async () => buildAggApprove(tSrc.address, pair.ql1Router, amt), (g) => g);
-          });
-          return;
-        }
+      /* Representation reconcile (v0.4.4): the bridge spends
+       * the pair's ERC-20 (WQOM for the QOM pair), but a flow
+       * saved by an older build can hold the proceeds as
+       * NATIVE QOM (its swap leg paid out natively). Plan the
+       * step's whole send sequence from fresh balances: wrap
+       * exactly the shortfall from the native surplus above
+       * the gas keep, then approve if needed, then the bridge
+       * — one confirmation, batch-style. If the amount cannot
+       * be assembled, stop HERE with the classified
+       * insufficient message; the step never fails silently
+       * at broadcast time again. */
+      const st = await fetchQl1BridgeState(address, tSrc.address, pair.ql1Router);
+      if (!st) {
+        setStatus({ text: tr('hs.netFailed'), err: true });
+        return;
+      }
+      const plan: Ql1BridgePlan = ql1BridgePlan({
+        amt,
+        erc20: !tSrc.isNative,
+        wrappedNative: isWrappedNativeToken('ql1', tSrc),
+        tokenBal: st.tokenBal,
+        nativeBal: st.nativeBal,
+        allowance: st.allowance,
+        keepWei: st.keepWei,
+        wrapCostWei: st.wrapCostWei,
+      });
+      if (plan.action !== 'run') {
+        setStatus({ text: tr('hs.notEnough'), err: true });
+        return;
       }
       askSend(tr('hs.sStepBridge'), async () => {
-        let dstBefore = '0';
-        await sendStep('ql1', async () => {
-          const dstTok = tokenById('infinite', pair.infId);
-          dstBefore = (
-            await arrivalBalance('infinite', dstTok.isNative ? null : dstTok.address, address)
-          ).toString();
-          return buildAggBridgeFromQl1({ pair }, address, amt, 0n);
-        }, (g) => {
-          const parts = g.parts.slice();
+        if (!flowRef.current) return;
+        setBusy(true);
+        setStatus({ text: tr('hs.sending'), err: false });
+        try {
+          const ok = await app.requireAuth();
+          if (!ok) {
+            setStatus(null);
+            setPending(null);
+            return;
+          }
+          const sec = app.getSecret();
+          if (!sec) throw new Error('no secret');
+          const signer = signerForHsChain(sec.kind, sec.secret, 'ql1');
+          let dstBefore = '0';
+          await runQl1BridgeBatch({
+            plan,
+            amt,
+            buildTx: async (leg) => {
+              if (leg.kind === 'wrap') return buildWrapTx(leg.amount);
+              if (leg.kind === 'approve') {
+                return buildAggApprove(tSrc.address, pair.ql1Router, leg.amount);
+              }
+              const dstTok = tokenById('infinite', pair.infId);
+              dstBefore = (
+                await arrivalBalance('infinite', dstTok.isNative ? null : dstTok.address, address)
+              ).toString();
+              return buildAggBridgeFromQl1({ pair }, address, amt, 0n);
+            },
+            send: (tx) => sendTxReq(signer, tx),
+            onLeg: (leg) => {
+              setStatus({
+                text: tr(
+                  leg.kind === 'wrap'
+                    ? 'hs.stepWrap'
+                    : leg.kind === 'approve'
+                      ? 'hs.stepApprove'
+                      : 'hs.sStepBridge',
+                ),
+                err: false,
+              });
+            },
+          });
+          const base = { ...flowRef.current! };
+          delete base.pendingTx;
+          const parts = base.parts.slice();
           parts[partIdx] = { ...parts[partIdx], step: 2, dstBalanceBefore: dstBefore };
-          return { ...g, parts };
-        });
+          await persist({ ...base, parts });
+          setStatus(null);
+          setPending(null);
+        } catch (e) {
+          const text = await stepErrorText(e, 'ql1', flowRef.current, persist);
+          setStatus({ text, err: true });
+          setPending(null);
+        } finally {
+          setBusy(false);
+        }
       });
       return;
     }

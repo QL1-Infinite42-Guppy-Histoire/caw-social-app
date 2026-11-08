@@ -559,6 +559,10 @@ export const QL1_KEEP_ACTIONS = 100n;
 export const QL1_KEEP_SWAP_OPS = 10n;
 /** Unwrap gas budget: measured 36,042, with margin. */
 export const QL1_UNWRAP_GAS_UNITS = 50000n;
+/** Wrap (WQOM.deposit) gas budget: same class as the
+ *  unwrap (a thin payable call on the same contract),
+ *  same margin. */
+export const QL1_WRAP_GAS_UNITS = 50000n;
 export const QL1_KEEP_GAS_UNITS =
   ((QL1_ACTION_GAS_UNITS * QL1_KEEP_ACTIONS +
     QL1_SWAP_GAS_UNITS * QL1_KEEP_SWAP_OPS) *
@@ -694,6 +698,19 @@ export function buildUnwrapTx(amount: bigint): BuiltTx {
     to: WQOM_ADDR,
     data: '0x2e1a7d4d' + amount.toString(16).padStart(64, '0'),
     value: 0n,
+  };
+}
+
+/** WQOM.deposit(): wrap native QOM into WQOM 1:1. The
+ *  payable twin of buildUnwrapTx — selector 0xd0e30db0,
+ *  the amount rides in the tx value. Used by the sell
+ *  bridge step when a part's proceeds sit in native form
+ *  but the bridge spends the ERC-20 (v0.4.4). */
+export function buildWrapTx(amount: bigint): BuiltTx {
+  return {
+    to: WQOM_ADDR,
+    data: '0xd0e30db0',
+    value: amount,
   };
 }
 
@@ -1037,6 +1054,176 @@ export async function runQl1FinishBatch(
     }
   }
   return { swapInput };
+}
+
+/* ============================================================
+ * v0.4.4 — the sell bridge step's representation reconcile.
+ *
+ * The sell's QL1 swap leg used to pay its proceeds out as
+ * NATIVE QOM (see toTokOverride above) while the bridge step
+ * spends the pair's ERC-20 (WQOM) — a flow saved by an older
+ * build can therefore sit at the bridge step with the money
+ * in the wrong representation: WQOM balance short of the
+ * part's amount, the rest sitting natively. Rather than
+ * stranding it, the bridge step reconciles INSIDE its own
+ * send sequence: wrap exactly the shortfall (WQOM.deposit)
+ * from the native surplus ABOVE the QL1 gas keep, then
+ * approve (if still needed), then transferRemote — one
+ * confirmation, batch-style like the finishing batch.
+ * The keep is never converted: after the wrap, the native
+ * balance (minus the wrap's own gas) must still cover it,
+ * or the plan stops as a classified insufficient — never a
+ * silent failure, never a partial wrap.
+ * ============================================================ */
+
+export interface Ql1BridgePlanArgs {
+  /** The amount the bridge must spend (the part's
+   *  bridgedAmount, in the pair token's units). */
+  amt: bigint;
+  /** True when the bridge spends an ERC-20 at all (every
+   *  current pair; false would be a native-spending bridge
+   *  with no allowance concept). */
+  erc20: boolean;
+  /** True when the spent token is the wrapped form of the
+   *  chain's native asset (registry-derived —
+   *  isWrappedNativeToken): only then can a shortfall be
+   *  covered by wrapping native funds. */
+  wrappedNative: boolean;
+  /** Fresh balances of the spent token and of native. */
+  tokenBal: bigint;
+  nativeBal: bigint;
+  /** Current allowance of the spent token to the pair's
+   *  QL1 bridge router. */
+  allowance: bigint;
+  /** The QL1 gas keep and the wrap's own gas cost, both in
+   *  native wei at the live gas price. */
+  keepWei: bigint;
+  wrapCostWei: bigint;
+}
+
+export interface Ql1BridgePlan {
+  /** 'run': legs decided. 'insufficient': the bridge amount
+   *  cannot be assembled from what the wallet holds (token
+   *  balance + native surplus above the keep) — the caller
+   *  stops with the classified insufficient message. */
+  action: 'run' | 'insufficient';
+  /** WQOM to wrap inside the sequence (0 = proceeds already
+   *  in the spent form). */
+  wrapWei: bigint;
+  needsApprove: boolean;
+}
+
+/** Plan the sell bridge step's send sequence from fresh
+ *  balances. Pure. */
+export function ql1BridgePlan(a: Ql1BridgePlanArgs): Ql1BridgePlan {
+  const needsApprove = a.erc20 && a.allowance < a.amt;
+  if (!a.wrappedNative) {
+    /* An ordinary token part: no representation to
+     * reconcile — the sequence is approve (if needed) +
+     * bridge, exactly as before. */
+    return { action: 'run', wrapWei: 0n, needsApprove };
+  }
+  const shortfall = a.amt > a.tokenBal ? a.amt - a.tokenBal : 0n;
+  if (shortfall <= 0n) {
+    return { action: 'run', wrapWei: 0n, needsApprove };
+  }
+  /* Wrap exactly the shortfall — but only out of the native
+   * surplus above the keep: after converting, native minus
+   * the wrap's own gas must still hold the whole keep (the
+   * bridge send's gas is one of the swap-class ops the keep
+   * already budgets). */
+  if (a.nativeBal - shortfall - a.wrapCostWei >= a.keepWei) {
+    return { action: 'run', wrapWei: shortfall, needsApprove };
+  }
+  return { action: 'insufficient', wrapWei: 0n, needsApprove };
+}
+
+export interface Ql1BridgeState {
+  tokenBal: bigint;
+  nativeBal: bigint;
+  allowance: bigint;
+  keepWei: bigint;
+  wrapCostWei: bigint;
+}
+
+/** Read the fresh balances + gas figures a bridge plan is
+ *  decided from (fee data falls back to the measured floor
+ *  price, like fetchQl1FinishState). Returns null ONLY when
+ *  a balance read fails — the caller then shows the network
+ *  guidance and nothing is planned from stale numbers. */
+export async function fetchQl1BridgeState(
+  owner: string,
+  tokenAddr: string,
+  spender: string,
+): Promise<Ql1BridgeState | null> {
+  try {
+    const fee = await providerFor('ql1')
+      .getFeeData()
+      .catch(() => null);
+    const gasPrice = fee?.gasPrice ?? fee?.maxFeePerGas ?? QL1_GAS_PRICE_FLOOR;
+    const [tokenBal, nativeBal, allowance] = await Promise.all([
+      erc20Balance('ql1', tokenAddr, owner),
+      arrivalBalance('ql1', null, owner),
+      erc20Allowance('ql1', tokenAddr, owner, spender).catch(() => 0n),
+    ]);
+    return {
+      tokenBal,
+      nativeBal,
+      allowance,
+      keepWei: ql1GasKeepWei(gasPrice),
+      wrapCostWei: gasPrice * QL1_WRAP_GAS_UNITS,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export type Ql1BridgeLeg =
+  | { kind: 'wrap'; amount: bigint }
+  | { kind: 'approve'; amount: bigint }
+  | { kind: 'bridge'; amount: bigint };
+
+export interface Ql1BridgeBatchDeps {
+  plan: Ql1BridgePlan;
+  amt: bigint;
+  /** Build the broadcast tx for a leg. The bridge leg's
+   *  builder is where the caller captures the destination
+   *  baseline (it must be read after any wrap/approve has
+   *  landed, right before transferRemote is built). */
+  buildTx: (leg: Ql1BridgeLeg) => Promise<any>;
+  /** Broadcast + robustly confirm one tx (the step's
+   *  sendTxReq). A landed-but-unconfirmed leg throws
+   *  TxUnconfirmedError and aborts the sequence — the
+   *  bridge is never attempted on an unproven wrap. */
+  send: (tx: any) => Promise<unknown>;
+  onLeg?: (leg: Ql1BridgeLeg) => void;
+}
+
+/**
+ * Execute the sell bridge step's sequence: [wrap] ->
+ * [approve] -> bridge, in order, under the caller's single
+ * confirmation. Idempotent by construction: an interruption
+ * after a confirmed wrap re-plans from fresh balances (the
+ * token balance now covers the amount), so a resume never
+ * wraps twice for the same step.
+ */
+export async function runQl1BridgeBatch(
+  deps: Ql1BridgeBatchDeps,
+): Promise<void> {
+  if (deps.plan.action !== 'run') throw new Error('insufficient');
+  const legs: Ql1BridgeLeg[] = [];
+  if (deps.plan.wrapWei > 0n) {
+    legs.push({ kind: 'wrap', amount: deps.plan.wrapWei });
+  }
+  if (deps.plan.needsApprove) {
+    legs.push({ kind: 'approve', amount: deps.amt });
+  }
+  legs.push({ kind: 'bridge', amount: deps.amt });
+  for (const leg of legs) {
+    deps.onLeg?.(leg);
+    const tx = await deps.buildTx(leg);
+    await deps.send(tx);
+  }
 }
 
 /* ---------------- holdings-driven display (v0.4.3) ------- */
@@ -1873,17 +2060,29 @@ export async function freshRoute(
  *  swapExactETHForTokens — wrong when the input is WQOM the
  *  user actually holds as an ERC-20 (e.g. a bridge delivery);
  *  the delivered-token entry (id 'wqom', isNative false) builds
- *  the token-spending swapExactTokensForTokens instead. */
+ *  the token-spending swapExactTokensForTokens instead.
+ *  toTokOverride: the symmetric trap on the OUTPUT side
+ *  (v0.4.4). The sell's QL1 leg resolves its route end — the
+ *  WQOM contract — by lookup to the same "native" entry and
+ *  built swapExactTokensForETH, so the proceeds landed as
+ *  NATIVE QOM while the next step (the QL1->42 bridge) spends
+ *  the ERC-20 via transferRemote: balance 0, the send could
+ *  never proceed, and the cash-out parked mid-flow. When the
+ *  caller knows which asset the route must PAY OUT (the
+ *  pair's own QL1 token entry — the asset the following step
+ *  spends), it passes that entry here and the builder pays
+ *  out exactly that asset. */
 export function buildRouteSwapTx(
   aggKey: 'infinite' | 'ql1',
   route: any,
   account: string,
   slippagePct: number,
   fromTokOverride?: any,
+  toTokOverride?: any,
 ): BuiltTx {
   const chainObj = AGG_CHAINS[aggKey];
   const fromTok = fromTokOverride ?? aggTokenByAddress(aggKey, route.path[0]);
-  const toTok = aggTokenByAddress(aggKey, route.path[route.path.length - 1]);
+  const toTok = toTokOverride ?? aggTokenByAddress(aggKey, route.path[route.path.length - 1]);
   return normTx(aggBuildSwapTx(chainObj, fromTok, toTok, route, account, slippagePct, Math.floor(Date.now() / 1000)));
 }
 
