@@ -42,6 +42,15 @@ export interface FlowPart {
   bridgedAmount?: string;
   /** QL1 balance of the pair token before this part's bridge. */
   dstBalanceBefore?: string;
+  /** True when dstBalanceBefore was read from the pair token's
+   *  own balance — for QL1 arrivals that is the ERC-20 balance
+   *  (bridged QOM lands as WQOM), set when the watcher baseline
+   *  is armed (v0.4.2+) and when a legacy baseline is rebased.
+   *  Absent on buy flows saved by v0.4.1 and earlier, whose QOM
+   *  baselines were captured from the NATIVE QOM balance by
+   *  mistake; the arrival watcher repairs those exactly once
+   *  (see partArrivalVerdict in lib/hunters). */
+  dstBaseIsToken?: boolean;
 }
 
 export interface HuntersFlow {

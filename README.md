@@ -14,10 +14,52 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.4.1** — released 2026-11-08.
+- **現在版 / Current: v0.4.2** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.1/caw-social.apk
-  v0.4.1 fixes a HuntersDEX buy that was shown as failed even
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.2/caw-social.apk
+  v0.4.2 fixes a HuntersDEX buy parked forever at
+  「コインが届くのを待っています…」 even though every leg had
+  executed (user report 2026-11-08 10:00 JST). Root cause:
+  the 42->QL1 arrival watcher read the NATIVE QOM balance
+  for the QOM pair, but QOM bridged into QL1 is delivered
+  as WQOM — an ERC-20 — so the delivery never registered
+  and the QL1 swap never ran. The watcher and the bridge
+  baseline now read the delivered token's balance (WQOM);
+  flows saved by older versions, whose baselines were
+  captured from the native balance, are repaired by the
+  watcher itself (cross-asset acceptance when the WQOM
+  balance already covers the delivery, otherwise a
+  one-time rebase onto the WQOM balance) and continue from
+  where they stopped — no restart, no second swap. The
+  QL1 swap step also treats the arrived token as the
+  ERC-20 it is (allowance + token swap; it previously
+  resolved WQOM to the native entry and built a
+  native-spending swap that could only fail). QL1 WQOM is
+  now shown as its own row in the HuntersDEX balance
+  lists, and holding WQOM offers a mid-start straight at
+  the QL1 swap step (same flow shape as a part that
+  arrived there by bridging). New: ONE app-wide QL1 gas
+  keep, defined once in lib/hunters and used by planning,
+  mid-starts, resumes, execution re-checks and the
+  faucet-guidance judgment: a native-QOM reserve sized
+  from measured chain costs (processAction 106,316–
+  136,258 gasUsed across 15 sampled real txs; swap
+  183,917; bridge-out 233,913; approve ~46,900; unwrap
+  36,042 by estimateGas; gas price 18 QOM/gas), namely
+  100 SNS actions + 10 swap-class ops + 10% margin =
+  19,250,000 gas = 346,500,000 QOM. DEX steps whose
+  working funds are WQOM secure the keep first by
+  unwrapping exactly the shortfall; only the surplus is
+  spendable principal, the keep is re-checked from fresh
+  balances at broadcast time, and when the keep cannot be
+  secured (native balance too low to pay the unwrap
+  itself) the step stops at the faucet guidance — never
+  a partial execution. Verified by
+  scripts/verify-arrival.mjs (17 checks, including the
+  reporter's exact stuck state with their real numbers)
+  and scripts/verify-wqom.mjs (25 checks) plus all
+  previous suites.
+  versionCode 24. v0.4.1 fixes a HuntersDEX buy that was shown as failed even
   though the swap had actually succeeded on-chain (user report
   2026-11-08 08:56 JST; BSC tx 0x7b5ac1… confirmed successful).
   Root cause: the send path confirmed receipts with a

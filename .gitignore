@@ -63,3 +63,5 @@ scripts/.build-reveal/
 scripts/.build-send/
 scripts/.build-threads/
 scripts/.build-resume/
+scripts/.build-arrival/
+scripts/.build-wqom/

@@ -523,6 +523,139 @@ export async function fetchQl1GasShort(owner: string): Promise<boolean | null> {
   }
 }
 
+/* ---------------- QL1 gas keep (v0.4.2) ------------------------
+ * THE app's single QL1 gas basis. SNS sends (posts, likes,
+ * Recaws, follows — each a CawActions processAction) and
+ * HuntersDEX sends draw on the SAME native QOM balance, so
+ * there is exactly one reserve definition, defined here and
+ * used by DEX planning, mid-starts, resumes, execution
+ * re-checks and the faucet-guidance judgment alike:
+ *
+ *   keep = 100 SNS actions + 10 swap-class ops, + 10% margin
+ *
+ * Measured on the live chain (2026-11-08, gas price
+ * 18 QOM/gas — QL1's floor):
+ *   processAction: 106,316–136,258 gasUsed over 15 sampled
+ *     real txs (fees 1.91M–2.45M QOM) → unit 150,000 gas
+ *     (heaviest sample + ~10% headroom)
+ *   swap-class op: swapExactTokensForTokens 183,917 gas,
+ *     bridge transferRemote 233,913 gas, approve ~46,900 →
+ *     unit 250,000 gas (the same per-swap unit
+ *     quoteGasEstimates has always modelled)
+ *   unwrap (WQOM.withdraw): 36,042 gas by estimateGas
+ * Keep in gas: (150,000×100 + 250,000×10) × 1.10 margin
+ *   = 19,250,000 gas → 346,500,000 QOM at 18 QOM/gas.
+ * The reserve is held in NATIVE QOM (WQOM does not pay
+ * gas). DEX steps whose working funds are WQOM secure the
+ * keep FIRST by unwrapping exactly the shortfall, and only
+ * the surplus over the secured keep is spendable principal;
+ * a plan that cannot secure the keep stops at the faucet
+ * guidance — never a partial execution, never principal
+ * planned against the reserve. */
+export const QL1_ACTION_GAS_UNITS = 150000n;
+export const QL1_SWAP_GAS_UNITS = 250000n;
+export const QL1_KEEP_ACTIONS = 100n;
+export const QL1_KEEP_SWAP_OPS = 10n;
+/** Unwrap gas budget: measured 36,042, with margin. */
+export const QL1_UNWRAP_GAS_UNITS = 50000n;
+export const QL1_KEEP_GAS_UNITS =
+  ((QL1_ACTION_GAS_UNITS * QL1_KEEP_ACTIONS +
+    QL1_SWAP_GAS_UNITS * QL1_KEEP_SWAP_OPS) *
+    110n) /
+  100n;
+/** Measured QL1 gas-price floor (wei per gas): 18 QOM. */
+export const QL1_GAS_PRICE_FLOOR = 18n * 10n ** 18n;
+/** Keep at the floor price: 346,500,000 QOM in wei. Used
+ *  when live fee data cannot be read. */
+export const QL1_GAS_KEEP_FLOOR_WEI = QL1_KEEP_GAS_UNITS * QL1_GAS_PRICE_FLOOR;
+
+/** The keep in wei at a given gas price (wei/gas). */
+export function ql1GasKeepWei(gasPriceWei: bigint): bigint {
+  return gasPriceWei * QL1_KEEP_GAS_UNITS;
+}
+
+export interface Ql1KeepPlan {
+  /** ok: keep already secured natively (or nothing to secure
+   *  against); unwrap: unwrap `unwrapWei` of WQOM first, then
+   *  `spendableWei` is quotable; faucet: the keep cannot be
+   *  secured — the unwrap itself is unpayable (native balance
+   *  below the unwrap's gas, incl. zero) — stop at the faucet
+   *  guidance, do not execute partially. */
+  action: 'ok' | 'unwrap' | 'faucet';
+  keepWei: bigint;
+  unwrapWei: bigint;
+  /** WQOM principal that may be planned/spent AFTER the keep
+   *  is secured. Never includes the reserve. */
+  spendableWei: bigint;
+}
+
+/** Pure keep decision for a step whose working funds are
+ *  WQOM, from fresh balances. */
+export function ql1KeepPlan(
+  nativeNow: bigint,
+  wqomNow: bigint,
+  keepWei: bigint,
+  unwrapCostWei: bigint,
+): Ql1KeepPlan {
+  if (keepWei <= 0n) {
+    return { action: 'ok', keepWei, unwrapWei: 0n, spendableWei: wqomNow };
+  }
+  const shortfall = keepWei - nativeNow;
+  if (shortfall <= 0n) {
+    return { action: 'ok', keepWei, unwrapWei: 0n, spendableWei: wqomNow };
+  }
+  if (nativeNow < unwrapCostWei) {
+    /* The bootstrap problem, honestly: securing the keep
+     * needs an unwrap, the unwrap is itself a QL1 send, and
+     * the native balance cannot pay for it. The faucet is
+     * the way out (it hands out native QOM) — no relayer is
+     * invented here. */
+    return { action: 'faucet', keepWei, unwrapWei: 0n, spendableWei: 0n };
+  }
+  const unwrapWei = shortfall < wqomNow ? shortfall : wqomNow;
+  return {
+    action: unwrapWei > 0n ? 'unwrap' : 'ok',
+    keepWei,
+    unwrapWei,
+    spendableWei: wqomNow - unwrapWei,
+  };
+}
+
+/** Live keep plan for the wallet's QL1 position; null when
+ *  the balances or fee data cannot be read (callers fall
+ *  back to the pre-keep gas gate rather than guessing). */
+export async function fetchQl1KeepPlan(owner: string): Promise<Ql1KeepPlan | null> {
+  try {
+    const [nativeNow, wqomNow, fee] = await Promise.all([
+      arrivalBalance('ql1', null, owner),
+      erc20Balance('ql1', WQOM_ADDR, owner),
+      providerFor('ql1').getFeeData(),
+    ]);
+    const gp = fee.gasPrice ?? fee.maxFeePerGas;
+    if (gp === null || gp === undefined) return null;
+    const gasPrice = BigInt(gp);
+    return ql1KeepPlan(
+      nativeNow,
+      wqomNow,
+      ql1GasKeepWei(gasPrice),
+      gasPrice * QL1_UNWRAP_GAS_UNITS,
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** WQOM.withdraw(amount): unwrap WQOM back to native QOM.
+ *  Selector 0x2e1a7d4d (verified live by estimateGas from a
+ *  real holder, 2026-11-08: 36,042 gas). */
+export function buildUnwrapTx(amount: bigint): BuiltTx {
+  return {
+    to: WQOM_ADDR,
+    data: '0x2e1a7d4d' + amount.toString(16).padStart(64, '0'),
+    value: 0n,
+  };
+}
+
 /**
  * Goal recommendation for the HuntersDEX entry cards
  * (v0.4.1): the direction whose continuation the user's
@@ -596,10 +729,17 @@ export interface HsBalances {
   infUsdt: bigint | null;
   infNative: bigint | null;
   ql1Native: bigint | null;
+  /** WQOM held on QL1 (ERC-20) — what bridged QOM actually
+   *  arrives as. Shown as its OWN balance row (v0.4.2): before
+   *  this, delivered funds were invisible in the list. */
+  ql1Wqom: bigint | null;
   ql1Qcaw: bigint | null;
 }
 
 const QCAW_ADDR = '0xd2140E16aDf37194036865E90BbCA1139b739d0D';
+/** WQOM on QL1 — the wrapped native token (also the bridge
+ *  delivery asset for the QOM pair). */
+export const WQOM_ADDR = '0xa26dfBF98Dd1A32FAe56A3D2B2D60A8a41b0bDF0';
 
 async function tryRead<T>(fn: () => Promise<T>): Promise<T | null> {
   try {
@@ -612,7 +752,7 @@ async function tryRead<T>(fn: () => Promise<T>): Promise<T | null> {
 /** All balances the HuntersSwap entry screen shows. A failed read
  *  comes back null (shown as "—"), never as a guessed number. */
 export async function fetchHsBalances(address: string): Promise<HsBalances> {
-  const [bscNative, bscUsdt, ethNative, ethUsdt, infUsdt, infNative, ql1Native, ql1Qcaw] =
+  const [bscNative, bscUsdt, ethNative, ethUsdt, infUsdt, infNative, ql1Native, ql1Wqom, ql1Qcaw] =
     await Promise.all([
       tryRead(() => providerFor('bsc').getBalance(address).then((v) => BigInt(v))),
       tryRead(() => erc20Balance('bsc', USDT_ON.bsc.address, address)),
@@ -621,6 +761,7 @@ export async function fetchHsBalances(address: string): Promise<HsBalances> {
       tryRead(() => erc20Balance('infinite', USDT_ON.infinite.address, address)),
       tryRead(() => providerFor('infinite').getBalance(address).then((v) => BigInt(v))),
       tryRead(() => providerFor('ql1').getBalance(address).then((v) => BigInt(v))),
+      tryRead(() => erc20Balance('ql1', WQOM_ADDR, address)),
       tryRead(() => erc20Balance('ql1', QCAW_ADDR, address)),
     ]);
   return {
@@ -631,6 +772,7 @@ export async function fetchHsBalances(address: string): Promise<HsBalances> {
     infUsdt,
     infNative,
     ql1Native,
+    ql1Wqom,
     ql1Qcaw,
   };
 }
@@ -646,6 +788,61 @@ export async function arrivalBalance(
     return BigInt(await providerFor(chain).getBalance(owner));
   }
   return erc20Balance(chain, token, owner);
+}
+
+export type PartArrivalVerdict =
+  | { action: 'wait' }
+  | { action: 'arrived'; arrived: bigint }
+  | { action: 'rebase' };
+
+/**
+ * One arrival-watch poll for a buy part parked at its bridge
+ * step (step 2), decided purely from the QL1 balance of the
+ * pair token AS DELIVERED — an ERC-20 in every case: QOM
+ * bridged into QL1 lands as WQOM, never as native QOM
+ * (v0.4.2; before this the QOM pair was watched on the native
+ * balance and could never advance).
+ *
+ * Normal rule (baseline denominated in the delivered token,
+ * dstBaseIsToken set — armed by v0.4.2+, and always the case
+ * for non-QOM pairs, whose baselines were never misread):
+ * the part advances once the balance DELTA reaches 99% of
+ * the bridged amount; the delta is what gets swapped onward.
+ *
+ * Repair rule for legacy QOM parts (saved by v0.4.1 or
+ * earlier with dstBaseIsToken absent): their stored baseline
+ * was captured from the NATIVE balance, so the delta mixes
+ * two different assets and can under- or over-state the
+ * delivery. If the delta does not reach the threshold but
+ * the delivered-token balance ALONE already covers 99% of
+ * the bridged amount, the delivery is here — advance with
+ * the full balance as the arrived amount (cross-asset
+ * baseline). If neither holds, the watcher rebases the
+ * stored baseline onto the current delivered-token balance
+ * exactly once (the caller persists dstBaseIsToken with it,
+ * which is also what makes it once-only) and keeps watching
+ * deltas from there. A partial delivery below threshold
+ * never advances the part.
+ */
+export function partArrivalVerdict(
+  now: bigint,
+  part: {
+    sym: string;
+    dstBalanceBefore?: string;
+    bridgedAmount?: string;
+    dstBaseIsToken?: boolean;
+  },
+): PartArrivalVerdict {
+  const want = (safeBig(part.bridgedAmount) * 99n) / 100n;
+  if (want <= 0n) return { action: 'wait' };
+  const arrived = now - safeBig(part.dstBalanceBefore);
+  if (arrived > 0n && arrived >= want) return { action: 'arrived', arrived };
+  const legacyNativeBaseline = part.sym === 'QOM' && !part.dstBaseIsToken;
+  if (legacyNativeBaseline) {
+    if (now >= want) return { action: 'arrived', arrived: now };
+    return { action: 'rebase' };
+  }
+  return { action: 'wait' };
 }
 
 /* ---------------- prices (all from live DEX quotes) ---------------- */
@@ -1157,15 +1354,24 @@ export async function freshRoute(
   return withAmountIn(q.routes[0]);
 }
 
-/** Build a swap tx from a fresh engine route (route amounts rule). */
+/** Build a swap tx from a fresh engine route (route amounts rule).
+ *  fromTokOverride: the caller already holds the input token's
+ *  entry and needs it used as-is. Needed on QL1, where resolving
+ *  the WQOM address by lookup yields the chain's "native" entry
+ *  (same contract) and would build a native-spending
+ *  swapExactETHForTokens — wrong when the input is WQOM the
+ *  user actually holds as an ERC-20 (e.g. a bridge delivery);
+ *  the delivered-token entry (id 'wqom', isNative false) builds
+ *  the token-spending swapExactTokensForTokens instead. */
 export function buildRouteSwapTx(
   aggKey: 'infinite' | 'ql1',
   route: any,
   account: string,
   slippagePct: number,
+  fromTokOverride?: any,
 ): BuiltTx {
   const chainObj = AGG_CHAINS[aggKey];
-  const fromTok = aggTokenByAddress(aggKey, route.path[0]);
+  const fromTok = fromTokOverride ?? aggTokenByAddress(aggKey, route.path[0]);
   const toTok = aggTokenByAddress(aggKey, route.path[route.path.length - 1]);
   return normTx(aggBuildSwapTx(chainObj, fromTok, toTok, route, account, slippagePct, Math.floor(Date.now() / 1000)));
 }
@@ -1433,7 +1639,10 @@ export async function quoteGasEstimates(): Promise<GasEstimates | null> {
     if (!f42.gasPrice || !fQ.gasPrice) return null;
     return {
       gas42PerLeg: BigInt(f42.gasPrice) * 410000n,
-      gasQomPerSwap: BigInt(fQ.gasPrice) * 250000n,
+      /* The shared QL1 swap-class unit (see the QL1 gas keep
+       * section): one gas model for estimates, the gas gate
+       * and the keep — no divergent thresholds. */
+      gasQomPerSwap: BigInt(fQ.gasPrice) * QL1_SWAP_GAS_UNITS,
     };
   } catch {
     return null;
