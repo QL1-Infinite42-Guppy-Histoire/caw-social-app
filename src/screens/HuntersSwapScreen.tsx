@@ -101,9 +101,19 @@ import {
   quoteFinalSwap,
   truncateToDstDecimals,
   worseThanConfirmed,
+  runQl1FinishBatch,
+  ql1FinishPlan,
+  fetchQl1FinishState,
+  resolveQl1Input,
+  isWrappedNativeToken,
+  fetchHeldTokens,
+  ensureAggToken,
+  ql1HeldStartCandidate,
   type BackHalfQuote,
   type CarvePlan,
   type HsBalances,
+  type HeldToken,
+  type Ql1FinishPlan,
 } from '../lib/hunters';
 import { huntersFlowStore, huntersSellFlowStore, storeKV } from '../lib/stores';
 import { sendTxReq, signerForHsChain } from '../lib/wallet';
@@ -428,7 +438,7 @@ function BuySection({
   /* Mid-start (v0.4.1): 'entry' = start on the entry chain
      (native or USDT); 'usdt42' = start from USDT already held
      on 42 Chain, straight into the back half. */
-  const [startPoint, setStartPoint] = useState<'entry' | 'usdt42' | 'wqom' | 'qom'>('entry');
+  const [startPoint, setStartPoint] = useState<'entry' | 'usdt42' | 'wqom' | 'qom' | 'ql1tok'>('entry');
   const [bridgeUsdt, setBridgeUsdt] = useState<bigint | null>(null);
   /* WQOM mid-start (v0.4.2): the QL1 gas-keep plan for the
    * typed amount (caps it at the post-keep spendable) and the
@@ -441,6 +451,19 @@ function BuySection({
    * live QOM->CAW quote for the typed amount. */
   const [qomPlan, setQomPlan] = useState<import('../lib/hunters').Ql1KeepPlan | null>(null);
   const [qomQuote, setQomQuote] = useState<bigint | null>(null);
+  /* Held-token discovery (v0.4.3): tokens the wallet actually
+   * holds on 42 Chain / QL1 beyond the curated rows, read
+   * from the explorers' token-balances. They ADD balance
+   * rows automatically; a held QL1 token whose live route to
+   * CAW exists (probe result in heldRoutable) also becomes a
+   * direct start point — no curation, no list-keeping; no
+   * route, no card (honest absence, never an error). */
+  const [heldTokens, setHeldTokens] = useState<HeldToken[]>([]);
+  const [heldRoutable, setHeldRoutable] = useState<Record<string, boolean>>({});
+  const [heldSel, setHeldSel] = useState<HeldToken | null>(null);
+  const [heldQuote, setHeldQuote] = useState<bigint | null>(null);
+  const [heldGasShort, setHeldGasShort] = useState(false);
+  const heldProbedRef = useRef<Set<string>>(new Set());
   /* Slow-quote reassurance (v0.3.2): if a quote search runs past
      ~15 s, say so in plain words instead of leaving a silent spinner. */
   const [slowQuote, setSlowQuote] = useState(false);
@@ -822,6 +845,11 @@ function BuySection({
           step: 3,
           bridgedAmount: amt.toString(),
           dstBaseIsToken: true,
+          /* v0.4.3: the typed amount is the SWAP INPUT, not
+             a delivered total — the finishing batch secures
+             the gas keep ON TOP of it from the remaining
+             WQOM, in the same single batch. */
+          ql1FixedInput: amt.toString(),
         },
       ],
     });
@@ -940,6 +968,174 @@ function BuySection({
           step: 3,
           bridgedAmount: amt.toString(),
           srcNativeQom: true,
+        },
+      ],
+    });
+    setPhase('run');
+  };
+
+  /* Held-token discovery + route probing (v0.4.3): refresh
+   * the holdings whenever the curated balances reload; probe
+   * each newly seen QL1 holding ONCE for a live route to CAW
+   * (full-balance quote). Routable ones earn a start card;
+   * the rest simply never appear as starts. */
+  useEffect(() => {
+    if (!address) return;
+    let live = true;
+    fetchHeldTokens(address)
+      .then((h) => {
+        if (live) setHeldTokens(h);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [address, balances]);
+
+  useEffect(() => {
+    const qcaw = tokenById('ql1', 'qcaw');
+    if (!qcaw) return;
+    for (const h of heldTokens) {
+      if (!ql1HeldStartCandidate(h)) continue;
+      if (heldProbedRef.current.has(h.address)) continue;
+      heldProbedRef.current.add(h.address);
+      ensureAggToken(h);
+      freshRoute('ql1', h.address, qcaw.address, h.balance, null)
+        .then((r) =>
+          setHeldRoutable((m) => ({ ...m, [h.address]: !!r })),
+        )
+        .catch(() =>
+          setHeldRoutable((m) => ({ ...m, [h.address]: false })),
+        );
+    }
+  }, [heldTokens]);
+
+  /** Typed amount for a held-token start, in the TOKEN's own
+   *  decimals (held tokens are not all 18-decimal). */
+  const parsedAmountHeld = (): bigint | null => {
+    if (!heldSel) return null;
+    try {
+      return parseUnits(
+        amountText.trim() === '' ? '0' : amountText.trim(),
+        heldSel.decimals,
+      );
+    } catch {
+      return null;
+    }
+  };
+
+  /* Held-token start: live quote for the typed amount. */
+  useEffect(() => {
+    if (phase !== 'amount' || startPoint !== 'ql1tok' || !heldSel) {
+      setHeldQuote(null);
+      return;
+    }
+    const amt = parsedAmountHeld();
+    if (amt === null || amt <= 0n) {
+      setHeldQuote(null);
+      return;
+    }
+    let live = true;
+    const t = setTimeout(() => {
+      ensureAggToken(heldSel);
+      freshRoute('ql1', heldSel.address, tokenById('ql1', 'qcaw').address, amt, null)
+        .then((r) => {
+          if (live) setHeldQuote(r ? BigInt(r.amountOut) : null);
+        })
+        .catch(() => {
+          if (live) setHeldQuote(null);
+        });
+    }, 600);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, startPoint, amountText, heldSel, address]);
+
+  /* Held-token start: the same per-swap QL1 gas gate the
+   * other QL1 steps use — held tokens do not pay
+   * gas; native QOM does. Short = faucet guidance. */
+  useEffect(() => {
+    if (phase !== 'amount' || startPoint !== 'ql1tok') {
+      setHeldGasShort(false);
+      return;
+    }
+    let live = true;
+    fetchQl1GasShort(address)
+      .then((s) => {
+        if (live) setHeldGasShort(s === true);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [phase, startPoint, address]);
+
+  /**
+   * Direct start from a token held on QL1 (v0.4.3): the flow
+   * is born as a single part parked at the QL1 swap step,
+   * carrying the token by ADDRESS (not by pair) — the
+   * finishing batch resolves it through the registry and
+   * runs unwrap/approval/swap as one batch, exactly like a
+   * bridged part. Admission mirrors the other starts:
+   * balance-based, gas-gated, route required.
+   */
+  const startHeldTokenFlow = async () => {
+    if (!address || !heldSel) return;
+    const amt = parsedAmountHeld();
+    if (amt === null || amt <= 0n) return;
+    setStatus(null);
+    if (amt > heldSel.balance) {
+      setStatus({ text: tr('hs.notEnough'), err: true });
+      return;
+    }
+    const short = await fetchQl1GasShort(address).catch(() => null);
+    if (short === true) {
+      setHeldGasShort(true);
+      return;
+    }
+    ensureAggToken(heldSel);
+    const route = await freshRoute(
+      'ql1',
+      heldSel.address,
+      tokenById('ql1', 'qcaw').address,
+      amt,
+      null,
+    ).catch(() => null);
+    if (!route) {
+      setStatus({ text: tr('hs.noRoute'), err: true });
+      return;
+    }
+    const f = newFlow({
+      id: Date.now().toString(36),
+      address,
+      entry,
+      entryAmountRaw: '0',
+      entryUsdtExpected: '0',
+      usdt42Expected: '0',
+      confirmedOut: BigInt(route.amountOut).toString(),
+      choice: 'single',
+      createdAt: Date.now(),
+      finalAsset: 'CAW',
+      finalChain: 'ql1',
+    });
+    setResumeFlow(null);
+    await persist({
+      ...f,
+      phase: 'back',
+      carveDone: true,
+      parts: [
+        {
+          sym: heldSel.symbol,
+          pct: 100,
+          usdtIn: '0',
+          leg1Path: null,
+          leg2Path: route.path as string[],
+          step: 3,
+          bridgedAmount: amt.toString(),
+          ql1TokenAddr: heldSel.address,
+          ql1TokenDec: heldSel.decimals,
         },
       ],
     });
@@ -1126,7 +1322,14 @@ function BuySection({
              * also repairs baselines that older versions
              * captured from the native balance. */
             const now = await arrivalBalance('ql1', dstTok.address, address);
-            const verdict = partArrivalVerdict(now, part);
+            /* v0.4.3: whether this pair delivers as the
+             * wrapped native is a REGISTRY fact (the pair's
+             * QL1 token is the chain's native anchor), handed
+             * to the verdict — no symbol comparison anywhere. */
+            const verdict = partArrivalVerdict(now, {
+              ...part,
+              deliversWrappedNative: isWrappedNativeToken('ql1', dstTok),
+            });
             if (verdict.action === 'arrived') {
               const parts = f.parts.slice();
               parts[s.partIdx] = {
@@ -1397,10 +1600,173 @@ function BuySection({
     });
   };
 
+  /* ---------- QL1 finishing batch (v0.4.3) ----------
+   * A part's QL1 swap step executes as ONE batch under the
+   * step's single confirmation: the gas-securing unwrap (the
+   * step's FULL working amount, once — never a shortfall-only
+   * amount), any missing approval, and the swap into CAW,
+   * planned from fresh balances by ql1FinishPlan and run by
+   * runQl1FinishBatch with per-leg sub-statuses in the step
+   * card. There is no standalone gas step and no per-leg
+   * sheet: v0.4.2's shortfall unwrap sheet could never
+   * converge (each withdraw's own gas re-created the
+   * shortfall it measured — the user was stopped three times
+   * at the gas prompt). Token-generic: what the part's input
+   * is comes from resolveQl1Input (the registries), so a
+   * part delivered as ANY token finishes the same way. */
+  const prepareFinish = async (partIdx: number) => {
+    const f = flowRef.current;
+    if (!f) return;
+    const part = f.parts[partIdx];
+    const facts = resolveQl1Input(part);
+    if (!facts) {
+      setStatus({ text: tr('hs.netFailed'), err: true });
+      return;
+    }
+    const planNow = async (): Promise<Ql1FinishPlan> => {
+      const st = await fetchQl1FinishState(address, facts.tokenAddr);
+      if (!st) throw new Error('network');
+      return ql1FinishPlan({
+        kind: facts.kind,
+        fundsWei: bigOr0(part.bridgedAmount),
+        fixedInputWei: part.srcNativeQom
+          ? bigOr0(part.bridgedAmount)
+          : part.ql1FixedInput
+            ? bigOr0(part.ql1FixedInput)
+            : undefined,
+        convertedWei: part.srcNativeQom
+          ? bigOr0(part.bridgedAmount)
+          : bigOr0(part.ql1Unwrapped),
+        nativeNow: st.nativeNow,
+        tokenNow: st.tokenNow,
+        allowanceNow: st.allowanceNow,
+        tokenAddr: facts.tokenAddr,
+        keepWei: st.keepWei,
+        unwrapCostWei: st.unwrapCostWei,
+        swapGasCostWei: st.swapGasCostWei,
+      });
+    };
+    let first: Ql1FinishPlan;
+    try {
+      first = await planNow();
+    } catch {
+      setStatus({ text: tr('hs.netFailed'), err: true });
+      return;
+    }
+    if (first.action === 'faucet') {
+      setQl1Short(true);
+      return;
+    }
+    setQl1Short(false);
+    if (first.action !== 'run') {
+      setStatus({ text: tr('hs.notEnough'), err: true });
+      return;
+    }
+    askSend(tr('hs.stepSwap2'), async () => {
+      if (!flowRef.current) return;
+      setBusy(true);
+      setStatus({ text: tr('hs.sending'), err: false });
+      try {
+        const ok = await app.requireAuth();
+        if (!ok) {
+          setStatus(null);
+          setPending(null);
+          return;
+        }
+        const sec = app.getSecret();
+        if (!sec) throw new Error('no secret');
+        const signer = signerForHsChain(sec.kind, sec.secret, 'ql1');
+        const qcaw = tokenById('ql1', 'qcaw');
+        await runQl1FinishBatch({
+          plan: planNow,
+          buildTx: async (leg, swapInput) => {
+            if (leg.kind === 'unwrap') return buildUnwrapTx(leg.amount);
+            if (leg.kind === 'approve') {
+              return buildAggApprove(
+                leg.token,
+                AGG_CHAINS.ql1.router as string,
+                leg.amount,
+              );
+            }
+            const route = await freshRoute(
+              'ql1',
+              facts.tokenAddr,
+              qcaw.address,
+              swapInput,
+              part.leg2Path,
+            );
+            if (!route) throw new Error('no-route');
+            /* Native-asset inputs spend natively (the builder
+               resolves the wrapped-native address to its
+               native entry); token inputs spend the registry
+               entry as an ERC-20. */
+            return facts.kind === 'nativeAsset'
+              ? buildRouteSwapTx('ql1', route, address, 1)
+              : buildRouteSwapTx('ql1', route, address, 1, facts.aggToken);
+          },
+          send: (tx) => sendTxReq(signer, tx),
+          onLeg: (leg) => {
+            setStatus({
+              text: tr(
+                leg.kind === 'unwrap'
+                  ? 'hs.stepUnwrap'
+                  : leg.kind === 'approve'
+                    ? 'hs.stepApprove'
+                    : 'hs.stepSwap2',
+              ),
+              err: false,
+            });
+          },
+          onUnwrapConfirmed: async (amount) => {
+            /* Persist the converted amount IMMEDIATELY —
+               before the swap leg runs — so an interruption
+               resumes with the unwrap credited and the batch
+               can never plan it a second time. */
+            const cur = flowRef.current;
+            if (!cur) return;
+            const parts = cur.parts.slice();
+            const prev = bigOr0(parts[partIdx].ql1Unwrapped);
+            parts[partIdx] = {
+              ...parts[partIdx],
+              ql1Unwrapped: (prev + amount).toString(),
+            };
+            await persist({ ...cur, parts });
+          },
+        });
+        const base = { ...flowRef.current! };
+        delete base.pendingTx;
+        const parts = base.parts.slice();
+        parts[partIdx] = { ...parts[partIdx], step: 4 };
+        await persist({ ...base, parts });
+        setStatus(null);
+        setPending(null);
+        setAllowanceTick((t) => t + 1);
+      } catch (e) {
+        if (e instanceof Error && e.message === 'faucet') {
+          /* A mid-batch re-plan degraded to gas-unsecurable:
+             the faucet guidance is the answer, not an error. */
+          setQl1Short(true);
+          setStatus(null);
+          setPending(null);
+          return;
+        }
+        const text = await stepErrorText(e, 'ql1', flowRef.current, persist);
+        setStatus({ text, err: true });
+        setPending(null);
+      } finally {
+        setBusy(false);
+      }
+    });
+  };
+
   const preparePart = async (partIdx: number, partStep: number) => {
     const f = flowRef.current;
     if (!f) return;
     const part = f.parts[partIdx];
+    if (partStep === 3) {
+      await prepareFinish(partIdx);
+      return;
+    }
     const pair = BRIDGE_PAIRS.find((p) => p.sym === part.sym);
     if (!pair) return;
 
@@ -1470,142 +1836,6 @@ function BuySection({
       return;
     }
 
-    if (partStep === 3) {
-      const dstTok = tokenById('ql1', pair.ql1Id);
-      let amt = BigInt(part.bridgedAmount ?? '0');
-      if (pair.sym === 'QOM') {
-        /* QL1 gas keep (v0.4.2): this step's working funds are
-           WQOM (arrived over the bridge or a WQOM mid-start)
-           or NATIVE QOM (a native direct start — the part is
-           marked srcNativeQom and its cap is the native
-           surplus over the same keep).
-           The shared keep (100 SNS actions + swap-class ops +
-           margin, held in NATIVE QOM; see ql1KeepPlan) is
-           secured BEFORE any principal moves: a shortfall is
-           unwrapped from the WQOM first, only the surplus over
-           the secured keep may be swapped, and when the keep
-           cannot be secured the step stops at the faucet
-           guidance — never a partial execution, never the
-           generic failure text for a gas condition. When the
-           keep plan cannot be read, fall back to the v0.4.1
-           per-swap gas gate rather than guessing. */
-        const plan = await fetchQl1KeepPlan(address);
-        if (plan) {
-          if (plan.action === 'faucet') {
-            setQl1Short(true);
-            return;
-          }
-          setQl1Short(false);
-          if (plan.action === 'unwrap') {
-            askSend(tr('hs.stepUnwrap'), async () => {
-              await sendStep('ql1', async () => {
-                const p2 = await fetchQl1KeepPlan(address).catch(() => null);
-                const uw = p2 && p2.action === 'unwrap' ? p2.unwrapWei : plan.unwrapWei;
-                if (uw <= 0n) throw new Error('insufficient');
-                return buildUnwrapTx(uw);
-              }, (g) => g);
-            });
-            return;
-          }
-          /* The cap is the post-keep surplus of the part's
-             OWN funds: WQOM parts plan against the WQOM
-             surplus (spendableWei); a native-QOM part plans
-             against the native balance above the keep — the
-             keep itself is never principal. */
-          const spendableCap = part.srcNativeQom
-            ? ql1NativeSpendableWei(plan)
-            : plan.spendableWei;
-          if (amt > spendableCap) {
-            /* Cap the swap at the post-keep surplus; the rest
-               of the delivery is not lost — it is (or becomes)
-               the native gas reserve itself. */
-            amt = spendableCap;
-            if (amt <= 0n) {
-              setStatus({ text: tr('hs.notEnough'), err: true });
-              return;
-            }
-            const parts = f.parts.slice();
-            parts[partIdx] = { ...parts[partIdx], bridgedAmount: amt.toString() };
-            await persist({ ...f, parts });
-          }
-        } else if ((await fetchQl1GasShort(address)) === true) {
-          setQl1Short(true);
-          return;
-        } else {
-          setQl1Short(false);
-        }
-      } else {
-        /* QL1 gas gate (v0.4.1): this step's sends run on QL1
-           and are paid in NATIVE QOM — measured against the
-           same per-swap gas estimate the confirm screen
-           shows. If the native balance cannot cover it, stop
-           HERE with the faucet guidance: bridged QOM is WQOM
-           and does not pay gas, and the generic failure text
-           must never stand in for this condition. */
-        if ((await fetchQl1GasShort(address)) === true) {
-          setQl1Short(true);
-          return;
-        }
-        setQl1Short(false);
-      }
-      /* v0.4.2: the arrived token is an ERC-20 in the wallet
-       * for EVERY pair — the QOM pair's is WQOM — so the swap
-       * in is a token swap needing an allowance, never a
-       * native spend. (Pre-v0.4.2 the QOM pair skipped the
-       * allowance and the tx builder resolved WQOM to the
-       * native entry, building a native-spending swap that
-       * could only die on the small native gas balance.) */
-      const ql1Router = AGG_CHAINS.ql1.router as string;
-      /* A native-QOM part needs no allowance: the tx value
-       * IS the input. Every other part's input is the pair
-       * token as an ERC-20 and needs one (v0.4.2 note above). */
-      if (!part.srcNativeQom) {
-        const allow = await erc20Allowance('ql1', dstTok.address, address, ql1Router).catch(() => 0n);
-        if (allow < amt) {
-          askSend(tr('hs.stepApprove'), async () => {
-            await sendStep('ql1', async () => buildAggApprove(dstTok.address, ql1Router, amt), (g) => g);
-          });
-          return;
-        }
-      }
-      askSend(tr('hs.stepSwap2'), async () => {
-        await sendStep('ql1', async () => {
-          if (pair.sym === 'QOM') {
-            /* Execution re-check (v0.4.2, mirroring the BSC
-               keepAwareSpendable rule): the keep is re-decided
-               from FRESH balances at broadcast time — if the
-               amount no longer fits over the secured reserve,
-               stop with the typed insufficient error instead
-               of sending a swap that eats the gas keep. A
-               native part is checked against the native
-               surplus; a WQOM part against the WQOM surplus. */
-            const p3 = await fetchQl1KeepPlan(address).catch(() => null);
-            if (
-              p3 &&
-              amt >
-                (part.srcNativeQom
-                  ? ql1NativeSpendableWei(p3)
-                  : p3.spendableWei)
-            )
-              throw new Error('insufficient');
-          }
-          const qcaw = tokenById('ql1', 'qcaw');
-          const route = await freshRoute('ql1', dstTok.address, qcaw.address, amt, part.leg2Path);
-          if (!route) throw new Error('no-route');
-          /* Native part: no override — the builder resolves
-             the pair token (WQOM address) to its native entry
-             and builds the native-spending swap. WQOM part:
-             the delivered-token entry, a token spend. */
-          return part.srcNativeQom
-            ? buildRouteSwapTx('ql1', route, address, 1)
-            : buildRouteSwapTx('ql1', route, address, 1, dstTok);
-        }, (g) => {
-          const parts = g.parts.slice();
-          parts[partIdx] = { ...parts[partIdx], step: 4 };
-          return { ...g, parts };
-        });
-      });
-    }
   };
 
   /* ---------- completion side effect ---------- */
@@ -1657,13 +1887,16 @@ function BuySection({
     }
   };
 
-  const amt = parsedAmount(entry);
+  /* The typed amount in the start point's own units: a
+   * held-token start parses in the TOKEN's decimals, every
+   * other start in the entry/18 rule. */
+  const amt = startPoint === 'ql1tok' ? parsedAmountHeld() : parsedAmount(entry);
   /* USD value of the typed amount: for a USDT start the amount
      IS dollars; for a native start it is amount × native price. */
   const amtUsd =
     amt === null
       ? null
-      : startPoint === 'wqom' || startPoint === 'qom'
+      : startPoint === 'wqom' || startPoint === 'qom' || startPoint === 'ql1tok'
         ? null
         : startPoint === 'usdt42'
           ? Number(formatUnits(amt, 18))
@@ -1688,7 +1921,9 @@ function BuySection({
   const overSpendable =
     amt !== null &&
     amt >
-      (startPoint === 'wqom'
+      (startPoint === 'ql1tok'
+        ? (heldSel?.balance ?? 0n)
+        : startPoint === 'wqom'
         ? wqomPlan
           ? wqomPlan.spendableWei
           : (balances?.ql1Wqom ?? 0n)
@@ -1787,7 +2022,21 @@ function BuySection({
                 usd={balances?.infUsdt != null ? Number(formatUnits(balances.infUsdt, 18)) : null} />
               <CoinRow name="QOM" chain="QL1" raw={balances?.ql1Native ?? null} dec={18} sym="QOM" />
               <CoinRow name="WQOM" chain="QL1" raw={balances?.ql1Wqom ?? null} dec={18} sym="WQOM" />
-              <CoinRow name="CAW" chain="QL1" raw={balances?.ql1Qcaw ?? null} dec={18} sym="CAW" last />
+              <CoinRow name="CAW" chain="QL1" raw={balances?.ql1Qcaw ?? null} dec={18} sym="CAW" last={heldTokens.length === 0} />
+              {/* Held tokens beyond the curated set (v0.4.3):
+                  whatever the wallet actually holds on the
+                  flow chains appears here automatically. */}
+              {heldTokens.map((h, i) => (
+                <CoinRow
+                  key={h.chain + h.address}
+                  name={h.symbol}
+                  chain={h.chain === 'ql1' ? 'QL1' : '42 Chain'}
+                  raw={h.balance}
+                  dec={h.decimals}
+                  sym={h.symbol}
+                  last={i === heldTokens.length - 1}
+                />
+              ))}
             </CoinCard>
 
             <Text style={[S.h2, { marginTop: 18 }]}>{tr('hs.amountTitle')}</Text>
@@ -1949,6 +2198,48 @@ function BuySection({
               </Pressable>
             ) : null}
 
+            {/* Held-token start points (v0.4.3): a token held
+                on QL1 with a live route to CAW — discovered,
+                never curated. A held token with no route
+                simply has no card here. */}
+            {heldTokens
+              .filter((h) => ql1HeldStartCandidate(h) && heldRoutable[h.address])
+              .map((h) => (
+                <Pressable
+                  key={h.address}
+                  onPress={() => {
+                    setHeldSel(h);
+                    setStartPoint(
+                      startPoint === 'ql1tok' && heldSel?.address === h.address
+                        ? 'entry'
+                        : 'ql1tok',
+                    );
+                  }}
+                  style={{
+                    borderWidth: 2,
+                    borderColor:
+                      startPoint === 'ql1tok' && heldSel?.address === h.address
+                        ? ACCENT
+                        : '#eff3f4',
+                    borderRadius: 14,
+                    padding: 14,
+                    marginTop: 14,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+                    <CoinBadge sym={h.symbol} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[S.body, { fontWeight: '700' }]}>
+                        {tr('hs.fromToken', { sym: h.symbol })}
+                      </Text>
+                      <Text style={S.small}>
+                        {fmtTok(h.balance, h.decimals)} {h.symbol}
+                      </Text>
+                    </View>
+                  </View>
+                </Pressable>
+              ))}
+
             <Pressable
               style={[S.bigBtn, { marginTop: 18 }]}
               onPress={() => setPhase('amount')}
@@ -1971,7 +2262,7 @@ function BuySection({
                 autoCorrect={false}
               />
               <Text style={[S.body, { fontWeight: '700' }]}>
-                {startPoint === 'wqom' ? 'WQOM' : startPoint === 'qom' ? 'QOM' : startPoint === 'usdt42' || startCoin === 'usdt' ? 'USDT' : entry === 'bsc' ? 'BNB' : 'ETH'}
+                {startPoint === 'ql1tok' ? (heldSel?.symbol ?? '') : startPoint === 'wqom' ? 'WQOM' : startPoint === 'qom' ? 'QOM' : startPoint === 'usdt42' || startCoin === 'usdt' ? 'USDT' : entry === 'bsc' ? 'BNB' : 'ETH'}
               </Text>
             </View>
             <View style={[S.row, { gap: 8, marginTop: 10, flexWrap: 'wrap' }]}>
@@ -1983,7 +2274,9 @@ function BuySection({
                     setAmountText(
                       formatUnits(
                         chipAmount(
-                          startPoint === 'wqom'
+                          startPoint === 'ql1tok'
+                            ? (heldSel?.balance ?? 0n)
+                            : startPoint === 'wqom'
                             ? wqomPlan
                               ? wqomPlan.spendableWei
                               : (balances?.ql1Wqom ?? 0n)
@@ -2000,7 +2293,9 @@ function BuySection({
                                 : spendable(entry),
                           pct,
                         ),
-                        amountDecimals(entry),
+                        startPoint === 'ql1tok' && heldSel
+                          ? heldSel.decimals
+                          : amountDecimals(entry),
                       ),
                     )
                   }
@@ -2060,7 +2355,24 @@ function BuySection({
                 ) : null}
               </>
             ) : null}
-            {startPoint === 'usdt42' || startPoint === 'wqom' || startPoint === 'qom' ? null : startCoin === 'native' ? (
+            {startPoint === 'ql1tok' ? (
+              <>
+                {heldQuote !== null && amt !== null && amt > 0n ? (
+                  <Text style={[S.small, { marginTop: 10 }]}>
+                    {tr('hs.youGet')}: {fmtTok(heldQuote, 18)} CAW
+                  </Text>
+                ) : null}
+                {heldGasShort ? (
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={S.err}>{tr('hs.gasQomShort')}</Text>
+                    <View style={{ marginTop: 10 }}>
+                      <FaucetButton label={tr('faucet.goFaucet')} primary />
+                    </View>
+                  </View>
+                ) : null}
+              </>
+            ) : null}
+            {startPoint === 'usdt42' || startPoint === 'wqom' || startPoint === 'qom' || startPoint === 'ql1tok' ? null : startCoin === 'native' ? (
               <Text style={[S.small, { marginTop: 10 }]}>
                 {tr('hs.gasKeep')}: {fmtTok(nativeBalance(entry) - spendable(entry), 18)} {entry === 'bsc' ? 'BNB' : 'ETH'}
                 {amtUsd !== null ? ' · ≈ ' + fmtUsd(amtUsd) : ''}
@@ -2076,9 +2388,9 @@ function BuySection({
             {ethBlocked ? <Text style={[S.err, { marginTop: 8 }]}>{tr('hs.ethMin')}</Text> : null}
             {overSpendable ? <Text style={[S.err, { marginTop: 8 }]}>{tr('hs.notEnough')}</Text> : null}
             <Pressable
-              style={[S.bigBtn, { marginTop: 18 }, (quoting || amt === null || amt <= 0n || (startPoint === 'wqom' && (wqomQuote === null || wqomPlan?.action === 'faucet' || overSpendable)) || (startPoint === 'qom' && (qomQuote === null || qomPlan?.action === 'faucet' || overSpendable))) && S.disabled]}
-              disabled={quoting || amt === null || amt <= 0n || (startPoint === 'wqom' && (wqomQuote === null || wqomPlan?.action === 'faucet' || overSpendable)) || (startPoint === 'qom' && (qomQuote === null || qomPlan?.action === 'faucet' || overSpendable))}
-              onPress={() => (startPoint === 'wqom' ? startWqomFlow() : startPoint === 'qom' ? startQomFlow() : startPoint === 'usdt42' ? buildPlan42('single') : buildPlan('single'))}
+              style={[S.bigBtn, { marginTop: 18 }, (quoting || amt === null || amt <= 0n || (startPoint === 'wqom' && (wqomQuote === null || wqomPlan?.action === 'faucet' || overSpendable)) || (startPoint === 'qom' && (qomQuote === null || qomPlan?.action === 'faucet' || overSpendable)) || (startPoint === 'ql1tok' && (heldQuote === null || heldGasShort || overSpendable))) && S.disabled]}
+              disabled={quoting || amt === null || amt <= 0n || (startPoint === 'wqom' && (wqomQuote === null || wqomPlan?.action === 'faucet' || overSpendable)) || (startPoint === 'qom' && (qomQuote === null || qomPlan?.action === 'faucet' || overSpendable)) || (startPoint === 'ql1tok' && (heldQuote === null || heldGasShort || overSpendable))}
+              onPress={() => (startPoint === 'wqom' ? startWqomFlow() : startPoint === 'qom' ? startQomFlow() : startPoint === 'ql1tok' ? startHeldTokenFlow() : startPoint === 'usdt42' ? buildPlan42('single') : buildPlan('single'))}
             >
               <Text style={S.bigBtnText}>{quoting ? tr('hs.checking') : tr('hs.next')}</Text>
             </Pressable>
@@ -2241,7 +2553,7 @@ function BuySection({
                 ? balLine(
                     flow.parts[step.partIdx].sym,
                     bigOr0(flow.parts[step.partIdx].bridgedAmount),
-                    18,
+                    flow.parts[step.partIdx].ql1TokenDec ?? 18,
                     flow.parts[step.partIdx].sym,
                   )
                 : null}
@@ -2402,6 +2714,9 @@ function SellSection({
 
   const [phase, setPhase] = useState<Phase>('entry');
   const [balances, setBalances] = useState<HsBalances | null>(null);
+  /* Held tokens beyond the curated rows (v0.4.3) — display
+   * only on the sell side; see BuySection for start points. */
+  const [heldTokens, setHeldTokens] = useState<HeldToken[]>([]);
   const [bnbUsd, setBnbUsd] = useState<number | null>(null);
   const [ethUsd, setEthUsd] = useState<number | null>(null);
   const [target, setTarget] = useState<EntryKey>('bsc');
@@ -2471,6 +2786,21 @@ function SellSection({
         .catch(() => {});
     }
   }, [address, loadBasics]);
+
+  /* Held-token display discovery (v0.4.3), refreshed with
+   * the curated balances like the buy side. */
+  useEffect(() => {
+    if (!address) return;
+    let live = true;
+    fetchHeldTokens(address)
+      .then((h) => {
+        if (live) setHeldTokens(h);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [address, balances]);
 
   const persist = useCallback(async (f: HuntersFlow | null) => {
     setFlow(f);
@@ -3248,7 +3578,20 @@ function SellSection({
               <CoinRow name="WQOM" chain="QL1" raw={balances?.ql1Wqom ?? null} dec={18} sym="WQOM" />
               <CoinRow name="USDT" chain="42 Chain" raw={balances?.infUsdt ?? null} dec={18} sym="USDT"
                 usd={balances?.infUsdt != null ? Number(formatUnits(balances.infUsdt, 18)) : null} />
-              <CoinRow name="42" chain="42 Chain" raw={balances?.infNative ?? null} dec={18} sym="42" last />
+              <CoinRow name="42" chain="42 Chain" raw={balances?.infNative ?? null} dec={18} sym="42" last={heldTokens.length === 0} />
+              {/* Held tokens beyond the curated set (v0.4.3):
+                  automatic display, same as the buy side. */}
+              {heldTokens.map((h, i) => (
+                <CoinRow
+                  key={h.chain + h.address}
+                  name={h.symbol}
+                  chain={h.chain === 'ql1' ? 'QL1' : '42 Chain'}
+                  raw={h.balance}
+                  dec={h.decimals}
+                  sym={h.symbol}
+                  last={i === heldTokens.length - 1}
+                />
+              ))}
             </CoinCard>
             {noGas42 ? (
               <Text style={[S.err, { marginTop: 12 }]}>{tr('hs.gasWarn42')}</Text>

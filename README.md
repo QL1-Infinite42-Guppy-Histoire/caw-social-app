@@ -14,10 +14,63 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.4.2** — released 2026-11-08.
+- **現在版 / Current: v0.4.3** — released 2026-11-08.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.2/caw-social.apk
-  v0.4.2 fixes a HuntersDEX buy parked forever at
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.3/caw-social.apk
+  v0.4.3 fixes a HuntersDEX buy that stopped at the QL1
+  gas-securing step (user report 2026-11-08 11:18 JST):
+  after v0.4.2 advanced the stuck buy to the QL1 swap
+  step, securing the gas keep ran THREE separate
+  WQOM.withdraw transactions (11:16:51 / 11:17:16 /
+  11:18:09 JST, all ok) and the swap never ran. Root
+  cause: the step offered the unwrap as a standalone
+  sheet that converted only the keep SHORTFALL — but a
+  withdraw's own gas is paid from the same native balance
+  the gate measures, so each unwrap landed native at
+  (keep − one withdraw's gas), the plan still reported a
+  shortfall, and the sheet re-fired; a gate that
+  re-measures after its own remedy can never converge.
+  The QL1 swap step now executes as ONE batch under the
+  step's single confirmation (lib/hunters
+  ql1FinishPlan + runQl1FinishBatch): one unwrap of the
+  step's FULL working amount, any missing approval, and
+  the swap — with per-leg sub-statuses in the step card
+  and no separate gas step or per-leg sheet. The swap
+  input is re-planned from fresh balances right before
+  the swap leg, so it absorbs the withdraw's gas and the
+  native balance lands exactly on the keep; the keep
+  arithmetic itself is unchanged (346,500,000 QOM) and
+  the planned input never includes it. The converted
+  amount is persisted the moment the unwrap confirms, so
+  an interrupted batch resumes with the unwrap credited
+  and can never plan a second one for the same step; a
+  landed-but-unconfirmed leg aborts the batch with the
+  UNCONFIRMED outcome instead of proceeding on an
+  unproven state. The batch is token-generic: what a
+  part's input is comes from the bridge-pair / token
+  registries (resolveQl1Input), with the
+  native-vs-wrapped distinction carried as a registry
+  property (the QL1 token whose address is the chain's
+  native anchor) — a part delivered as BABY or any other
+  token finishes through the same single batch, and the
+  last symbol branches (`part.sym === 'QOM'` in the swap
+  step, the arrival verdict, and the cross-quote engine)
+  are gone. Holdings now drive display: tokens the
+  wallet actually holds on 42 Chain / QL1 (read from the
+  explorers' token-balances) appear in the HuntersDEX
+  balance lists automatically, beyond the curated rows,
+  and a held QL1 token with a live route to CAW becomes
+  a direct start point — routing needs no list-keeping,
+  and a held token with no route is simply not offered
+  as a start. Verified by scripts/verify-batch.mjs
+  (57 checks: full-amount single withdraw incl. a
+  confirmation hiccup, interrupt/resume with zero
+  further withdraws, the reporter's exact current
+  balances, a BABY batch, a registry-only token, the
+  keep matrix) plus verify-arrival 17 / verify-wqom 25 /
+  verify-qomstart 24 / verify-resume 80 and the i18n
+  audit, all green.
+  versionCode 25. v0.4.2 fixes a HuntersDEX buy parked forever at
   「コインが届くのを待っています…」 even though every leg had
   executed (user report 2026-11-08 10:00 JST). Root cause:
   the 42->QL1 arrival watcher read the NATIVE QOM balance

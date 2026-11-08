@@ -44,6 +44,7 @@ import {
 import {
   CHAINS as AGG_CHAINS,
   BRIDGE_PAIRS,
+  addCustomToken,
   buildApproveTx as aggBuildApproveTx,
   buildBridgeTx as aggBuildBridgeTx,
   buildSwapTx as aggBuildSwapTx,
@@ -56,7 +57,7 @@ import {
   quoteCrossPlan,
   tokenById,
 } from './aggEngine';
-import type { HuntersFlow } from './flows';
+import type { FlowPart, HuntersFlow } from './flows';
 
 export const ROUTER_ABI = [
   'function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)',
@@ -696,6 +697,469 @@ export function buildUnwrapTx(amount: bigint): BuiltTx {
   };
 }
 
+/* ============================================================
+ * v0.4.3 — the QL1 finishing batch.
+ *
+ * What v0.4.2 did wrong (on-device, 2026-11-08 11:16–11:18
+ * JST): the QL1 swap step offered the gas-securing unwrap as
+ * a STANDALONE sheet action that unwrapped only the keep
+ * shortfall (ql1KeepPlan). The withdraw's own gas is paid
+ * from the same native balance the gate measures, so after
+ * the unwrap landed, native sat at (keep − one withdraw's
+ * gas) — the plan still reported a shortfall, the sheet
+ * re-fired, and the user unwrapped THREE times in shrinking
+ * amounts without ever reaching the swap. A gate that
+ * re-measures after its own remedy can never converge.
+ *
+ * The batch below removes the mechanism: when a QL1 swap
+ * step executes, the whole finishing sequence — one unwrap
+ * of the step's FULL working amount (when the input sits in
+ * the wrapped native), any missing approval, and the swap —
+ * runs as ONE sequence under the step's single confirmation,
+ * with per-leg sub-statuses. Planning happens once from
+ * fresh balances; resume re-plans from fresh balances and
+ * the persisted converted amount, so an interrupted batch
+ * re-enters with the unwrap already credited and never
+ * plans a second one for the same step. Everything here is
+ * token-generic: the native-vs-wrapped distinction is a
+ * registry property (the QL1 token entry whose address is
+ * the chain's native anchor), never a symbol comparison.
+ * ============================================================ */
+
+/** True when `tok` is the wrapped form of its chain's
+ *  native asset: its address is the chain's native anchor
+ *  and the entry is not the native pseudo-entry itself.
+ *  Registry-derived — adding any token never needs a branch
+ *  here; only an entry whose address IS the anchor matches. */
+export function isWrappedNativeToken(
+  chainKey: 'infinite' | 'ql1',
+  tok: { address: string; isNative?: boolean } | null | undefined,
+): boolean {
+  if (!tok || tok.isNative) return false;
+  const anchor = (AGG_CHAINS[chainKey] as any)?.nativeAnchor;
+  return (
+    typeof anchor === 'string' &&
+    tok.address.toLowerCase() === String(anchor).toLowerCase()
+  );
+}
+
+export interface Ql1InputFacts {
+  /** 'nativeAsset': the part's funds ARE the chain's native
+   *  asset (delivered wrapped, held natively, or a mix after
+   *  a partial batch) — the gas keep carves out of them.
+   *  'token': an ordinary ERC-20; the keep does not apply. */
+  kind: 'nativeAsset' | 'token';
+  /** Balance address of the delivered form (the WQOM
+   *  contract for the native asset). */
+  tokenAddr: string;
+  decimals: number;
+  /** Agg registry entry for tx building; null when the
+   *  input is spent natively from the start. */
+  aggToken: any | null;
+  pair: (typeof BRIDGE_PAIRS)[number] | null;
+}
+
+/** Resolve what a step-3 part's input actually is, purely
+ *  from the registries and the part's own carried facts —
+ *  no symbol branches. Sources, in order: a native-QOM
+ *  direct start (srcNativeQom), a held-token direct start
+ *  (ql1TokenAddr, re-registered into the aggregator on a
+ *  cold start so routing resolves), then the bridge-pair
+ *  registry. Returns null when nothing identifies the part
+ *  (corrupt/legacy state) — the caller shows the network
+ *  guidance rather than guessing. */
+export function resolveQl1Input(part: FlowPart): Ql1InputFacts | null {
+  if (part.srcNativeQom) {
+    return {
+      kind: 'nativeAsset',
+      tokenAddr: WQOM_ADDR,
+      decimals: 18,
+      aggToken: null,
+      pair: null,
+    };
+  }
+  if (part.ql1TokenAddr) {
+    const addr = part.ql1TokenAddr.toLowerCase();
+    let tok = aggTokenByAddress('ql1', addr);
+    if (!tok) {
+      tok = addCustomToken('ql1', {
+        address: addr,
+        symbol: part.sym,
+        decimals: part.ql1TokenDec ?? 18,
+      });
+    }
+    if (!tok) return null;
+    return {
+      kind: isWrappedNativeToken('ql1', tok) ? 'nativeAsset' : 'token',
+      tokenAddr: addr,
+      decimals: part.ql1TokenDec ?? tok.decimals ?? 18,
+      aggToken: tok,
+      pair: null,
+    };
+  }
+  const pair = BRIDGE_PAIRS.find((p) => p.sym === part.sym);
+  if (!pair) return null;
+  const tok = tokenById('ql1', pair.ql1Id);
+  if (!tok) return null;
+  return {
+    kind: isWrappedNativeToken('ql1', tok) ? 'nativeAsset' : 'token',
+    tokenAddr: tok.address.toLowerCase(),
+    decimals: tok.decimals ?? 18,
+    aggToken: tok,
+    pair,
+  };
+}
+
+export type Ql1FinishLeg =
+  | { kind: 'unwrap'; amount: bigint }
+  | { kind: 'approve'; token: string; amount: bigint }
+  | { kind: 'swap'; spendNative: boolean };
+
+export interface Ql1FinishPlan {
+  /** 'run': legs + swapInput are decided. 'faucet': gas
+   *  cannot be secured from what the wallet holds — the
+   *  caller shows the faucet guidance. 'blocked': nothing
+   *  swappable exists under the keep rules. */
+  action: 'run' | 'faucet' | 'blocked';
+  swapInput: bigint;
+  legs: Ql1FinishLeg[];
+  keepWei: bigint;
+}
+
+export interface Ql1FinishArgs {
+  kind: 'nativeAsset' | 'token';
+  /** nativeAsset delivered-total semantics (bridged parts):
+   *  the total this step controls; the keep is carved out
+   *  of it. Ignored for direct starts (fixedInputWei set). */
+  fundsWei: bigint;
+  /** Direct starts: the swap input the user chose; the keep
+   *  is secured ON TOP of it from the remaining token
+   *  balance. */
+  fixedInputWei?: bigint;
+  /** Amount of this step's funds already in native form
+   *  because the batch unwrapped them (persisted on the
+   *  part). For a native direct start, pass fundsWei. */
+  convertedWei: bigint;
+  nativeNow: bigint;
+  /** Balance of the delivered form (wrapped / ERC-20). */
+  tokenNow: bigint;
+  /** Token kind: current allowance to the QL1 router. */
+  allowanceNow: bigint;
+  tokenAddr: string;
+  keepWei: bigint;
+  unwrapCostWei: bigint;
+  swapGasCostWei: bigint;
+}
+
+/**
+ * Plan ONE QL1 finishing batch from fresh balances. Pure.
+ *
+ * Native-asset accounting (all in native units):
+ *  - `still`   = the part's funds still in wrapped form the
+ *    batch may touch: for a delivered total, the unconsumed
+ *    remainder of the delivery; for a direct start, the
+ *    chosen input plus the CURRENT keep shortfall (nothing
+ *    more of the user's pile is ever pulled in).
+ *  - `outside` = native balance NOT belonging to this part
+ *    (nativeNow minus what the batch already converted);
+ *    the keep is charged against it first — keepShare is
+ *    only what the part itself must still set aside.
+ *  - swapInput = min(partTotal − keepShare, nativeNow +
+ *    still − keep): the keep is never swapped, by
+ *    construction, in every plan.
+ *  - the unwrap leg, when the input cannot be funded
+ *    natively, converts ALL of `still` in a single withdraw
+ *    — never a shortfall-only amount (that was v0.4.2's
+ *    converging-loop bug).
+ */
+export function ql1FinishPlan(a: Ql1FinishArgs): Ql1FinishPlan {
+  const K = a.keepWei;
+  const nonNeg = (x: bigint) => (x > 0n ? x : 0n);
+  if (a.kind === 'token') {
+    const input = a.fundsWei < a.tokenNow ? a.fundsWei : a.tokenNow;
+    if (input <= 0n) return { action: 'blocked', swapInput: 0n, legs: [], keepWei: K };
+    if (a.nativeNow < a.swapGasCostWei) {
+      return { action: 'faucet', swapInput: 0n, legs: [], keepWei: K };
+    }
+    const legs: Ql1FinishLeg[] = [];
+    if (a.allowanceNow < input) {
+      legs.push({ kind: 'approve', token: a.tokenAddr, amount: input });
+    }
+    legs.push({ kind: 'swap', spendNative: false });
+    return { action: 'run', swapInput: input, legs, keepWei: K };
+  }
+  /* nativeAsset */
+  const fixed = a.fixedInputWei;
+  let still: bigint;
+  if (fixed !== undefined) {
+    const shortfall = nonNeg(K - a.nativeNow);
+    const want = fixed + shortfall;
+    still = a.tokenNow < want ? a.tokenNow : want;
+  } else {
+    const remaining = nonNeg(a.fundsWei - a.convertedWei);
+    still = a.tokenNow < remaining ? a.tokenNow : remaining;
+  }
+  const partTotal = a.convertedWei + still;
+  const outside = nonNeg(a.nativeNow - a.convertedWei);
+  const keepShare = nonNeg(K - outside);
+  const maxInput = nonNeg(
+    (partTotal - keepShare < a.nativeNow + still - K
+      ? partTotal - keepShare
+      : a.nativeNow + still - K),
+  );
+  let input = fixed !== undefined && fixed < maxInput ? fixed : maxInput;
+  if (input < 0n) input = 0n;
+  const nativeFundable = nonNeg(a.nativeNow - K);
+  const needsUnwrap = still > 0n && input > nativeFundable;
+  if (input <= 0n || (needsUnwrap && a.nativeNow < a.unwrapCostWei)) {
+    /* Gas cannot be secured: either nothing is swappable
+     * under the keep, or the unwrap that would fix it is
+     * itself unpayable. When native alone already covers
+     * the keep there is no gas problem — just nothing to
+     * swap — so that case is 'blocked', not faucet. */
+    if (input <= 0n && a.nativeNow >= K) {
+      return { action: 'blocked', swapInput: 0n, legs: [], keepWei: K };
+    }
+    return { action: 'faucet', swapInput: 0n, legs: [], keepWei: K };
+  }
+  const legs: Ql1FinishLeg[] = [];
+  if (needsUnwrap) legs.push({ kind: 'unwrap', amount: still });
+  legs.push({ kind: 'swap', spendNative: true });
+  return { action: 'run', swapInput: input, legs, keepWei: K };
+}
+
+export interface Ql1FinishState {
+  nativeNow: bigint;
+  tokenNow: bigint;
+  allowanceNow: bigint;
+  keepWei: bigint;
+  unwrapCostWei: bigint;
+  swapGasCostWei: bigint;
+}
+
+/** Read the fresh balances + gas figures a finish plan is
+ *  decided from (fee data falls back to the measured floor
+ *  price, like fetchQl1KeepPlan). Returns null ONLY when a
+ *  balance read fails — the caller then shows the network
+ *  guidance and nothing is planned from stale numbers. */
+export async function fetchQl1FinishState(
+  owner: string,
+  tokenAddr: string | null,
+): Promise<Ql1FinishState | null> {
+  try {
+    const fee = await providerFor('ql1')
+      .getFeeData()
+      .catch(() => null);
+    const gasPrice = fee?.gasPrice ?? fee?.maxFeePerGas ?? QL1_GAS_PRICE_FLOOR;
+    const nativeNow = await arrivalBalance('ql1', null, owner);
+    let tokenNow = 0n;
+    let allowanceNow = 0n;
+    if (tokenAddr) {
+      tokenNow = await erc20Balance('ql1', tokenAddr, owner);
+      allowanceNow = await erc20Allowance(
+        'ql1',
+        tokenAddr,
+        owner,
+        AGG_CHAINS.ql1.router,
+      ).catch(() => 0n);
+    }
+    return {
+      nativeNow,
+      tokenNow,
+      allowanceNow,
+      keepWei: ql1GasKeepWei(gasPrice),
+      unwrapCostWei: gasPrice * QL1_UNWRAP_GAS_UNITS,
+      swapGasCostWei: gasPrice * QL1_SWAP_GAS_UNITS,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export interface Ql1BatchDeps {
+  /** Fresh plan callback — invoked once at batch start and
+   *  again right before the swap leg builds (post-unwrap
+   *  balances): the swap input is ALWAYS re-derived, never
+   *  carried across the unwrap. */
+  plan: () => Promise<Ql1FinishPlan>;
+  /** Build the broadcast tx for a leg (its swapInput for
+   *  the swap leg). Token-build failures (no route, moved
+   *  price) throw and surface through the classifier. */
+  buildTx: (leg: Ql1FinishLeg, swapInput: bigint) => Promise<any>;
+  /** Broadcast + robustly confirm one tx (the step's
+   *  sendTxReq; resolves with the tx hash). A landed-but-
+   *  unconfirmed tx throws TxUnconfirmedError and aborts
+   *  the batch — later legs are never attempted on an
+   *  unproven state. */
+  send: (tx: any) => Promise<unknown>;
+  onLeg?: (leg: Ql1FinishLeg) => void;
+  /** Fires the moment an unwrap leg confirms; the caller
+   *  persists the converted amount on the part BEFORE the
+   *  swap leg runs. */
+  onUnwrapConfirmed?: (amount: bigint) => void | Promise<void>;
+}
+
+/**
+ * Execute a QL1 finishing batch: every leg of the plan, in
+ * order, under the caller's single confirmation. Typed
+ * stops: Error('faucet') / Error('blocked') mirror the plan
+ * actions (also when a mid-batch re-plan degrades — e.g.
+ * the route's input vanished); every other failure is the
+ * leg's own error, classified by the caller exactly like a
+ * single-step send. The swap leg re-plans first, so a
+ * resume after a confirmed unwrap plans ZERO further
+ * unwraps (fresh native covers keep + input) by
+ * construction.
+ */
+export async function runQl1FinishBatch(
+  deps: Ql1BatchDeps,
+): Promise<{ swapInput: bigint }> {
+  const p0 = await deps.plan();
+  if (p0.action === 'faucet') throw new Error('faucet');
+  if (p0.action !== 'run') throw new Error('blocked');
+  let swapInput = p0.swapInput;
+  for (const leg of p0.legs) {
+    if (leg.kind === 'swap') {
+      const p1 = await deps.plan();
+      if (p1.action === 'faucet') throw new Error('faucet');
+      if (p1.action !== 'run' || p1.swapInput <= 0n) throw new Error('blocked');
+      swapInput = p1.swapInput;
+      deps.onLeg?.(leg);
+      const tx = await deps.buildTx(leg, swapInput);
+      await deps.send(tx);
+    } else {
+      deps.onLeg?.(leg);
+      const tx = await deps.buildTx(leg, swapInput);
+      await deps.send(tx);
+      if (leg.kind === 'unwrap') {
+        await deps.onUnwrapConfirmed?.(leg.amount);
+      }
+    }
+  }
+  return { swapInput };
+}
+
+/* ---------------- holdings-driven display (v0.4.3) ------- */
+
+export interface HeldToken {
+  chain: 'infinite' | 'ql1';
+  address: string;
+  symbol: string;
+  decimals: number;
+  balance: bigint;
+}
+
+/** Addresses already covered by the curated balance rows —
+ *  auto-discovery must ADD to the curated set, never
+ *  duplicate it. */
+export function heldTokenExclude(chain: 'infinite' | 'ql1'): Set<string> {
+  if (chain === 'ql1') {
+    return new Set([WQOM_ADDR.toLowerCase(), QCAW_ADDR.toLowerCase()]);
+  }
+  return new Set([USDT_ON.infinite.address.toLowerCase()]);
+}
+
+/** Parse a Blockscout v2 token-balances payload into held
+ *  tokens. Pure. Light sanity filter: only positive
+ *  balances, plausible decimals (0–36), at most 50 entries;
+ *  a missing symbol falls back to the short address so the
+ *  row is still identifiable. */
+export function parseHeldTokenBalances(
+  chain: 'infinite' | 'ql1',
+  payload: any,
+  exclude: Set<string>,
+): HeldToken[] {
+  const items = Array.isArray(payload) ? payload : payload?.items;
+  if (!Array.isArray(items)) return [];
+  const out: HeldToken[] = [];
+  const seen = new Set<string>();
+  for (const it of items) {
+    const tok = it?.token ?? {};
+    const addrRaw = tok.address_hash ?? tok.address;
+    if (typeof addrRaw !== 'string') continue;
+    const addr = addrRaw.toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(addr)) continue;
+    if (exclude.has(addr) || seen.has(addr)) continue;
+    let value: bigint;
+    try {
+      value = BigInt(it?.value ?? '0');
+    } catch {
+      continue;
+    }
+    if (value <= 0n) continue;
+    const dec = Number.parseInt(String(tok.decimals ?? '18'), 10);
+    if (!Number.isInteger(dec) || dec < 0 || dec > 36) continue;
+    const symbol =
+      typeof tok.symbol === 'string' && tok.symbol.length > 0
+        ? tok.symbol
+        : '…' + addr.slice(-4);
+    seen.add(addr);
+    out.push({ chain, address: addr, symbol, decimals: dec, balance: value });
+    if (out.length >= 50) break;
+  }
+  return out;
+}
+
+/** Discover the tokens the wallet actually holds on the two
+ *  flow chains, via the same Blockscout explorers the app
+ *  already links to (/api/v2/addresses/<addr>/token-
+ *  balances). A failed chain read simply yields no extras
+ *  for that chain — the curated rows are unaffected.
+ *  `fetcher` is injectable for the harness. */
+export async function fetchHeldTokens(
+  address: string,
+  fetcher?: (url: string) => Promise<any>,
+): Promise<HeldToken[]> {
+  const get =
+    fetcher ??
+    (async (url: string) => {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 12000);
+      try {
+        const r = await fetch(url, { signal: ctl.signal });
+        if (!r.ok) throw new Error('http ' + r.status);
+        return await r.json();
+      } finally {
+        clearTimeout(t);
+      }
+    });
+  const out: HeldToken[] = [];
+  for (const chain of ['infinite', 'ql1'] as const) {
+    try {
+      const base = (AGG_CHAINS[chain] as any)?.explorer;
+      if (typeof base !== 'string' || !base) continue;
+      const payload = await get(
+        `${base}/api/v2/addresses/${address}/token-balances`,
+      );
+      out.push(...parseHeldTokenBalances(chain, payload, heldTokenExclude(chain)));
+    } catch {
+      /* that chain's extras are simply absent */
+    }
+  }
+  return out;
+}
+
+/** A held QL1 token is a candidate BUY start point (the
+ *  aggregator still has the final say: no live route, no
+ *  start card). The wrapped native and CAW itself are
+ *  excluded — they have their own cards / are the goal. */
+export function ql1HeldStartCandidate(h: HeldToken): boolean {
+  return h.chain === 'ql1' && h.balance > 0n;
+}
+
+/** Register a held token into the aggregator (idempotent)
+ *  and return its registry entry, so route search and the
+ *  tx builders resolve it exactly like a built-in token. */
+export function ensureAggToken(h: HeldToken): any | null {
+  const existing = aggTokenByAddress(h.chain, h.address);
+  if (existing) return existing;
+  return addCustomToken(h.chain, {
+    address: h.address,
+    symbol: h.symbol,
+    decimals: h.decimals,
+  });
+}
+
 /**
  * Goal recommendation for the HuntersDEX entry cards
  * (v0.4.1): the direction whose continuation the user's
@@ -871,13 +1335,20 @@ export function partArrivalVerdict(
     dstBalanceBefore?: string;
     bridgedAmount?: string;
     dstBaseIsToken?: boolean;
+    /** Registry-derived by the caller (v0.4.3): this part's
+     *  pair delivers as the wrapped native (WQOM), so a
+     *  pre-v0.4.2 native baseline can mismatch the read
+     *  asset and needs the repair below. Any other token
+     *  leaves it unset — the delta rule alone applies. */
+    deliversWrappedNative?: boolean;
   },
 ): PartArrivalVerdict {
   const want = (safeBig(part.bridgedAmount) * 99n) / 100n;
   if (want <= 0n) return { action: 'wait' };
   const arrived = now - safeBig(part.dstBalanceBefore);
   if (arrived > 0n && arrived >= want) return { action: 'arrived', arrived };
-  const legacyNativeBaseline = part.sym === 'QOM' && !part.dstBaseIsToken;
+  const legacyNativeBaseline =
+    part.deliversWrappedNative === true && !part.dstBaseIsToken;
   if (legacyNativeBaseline) {
     if (now >= want) return { action: 'arrived', arrived: now };
     return { action: 'rebase' };

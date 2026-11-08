@@ -68,7 +68,11 @@ const stuckFlow = (part) => ({
 });
 const qomPart = (over) => ({
   sym: 'QOM', pct: 100, usdtIn: '0', leg1Path: null, leg2Path: LEG2,
-  step: 2, bridgedAmount: DELIVERED.toString(), ...over,
+  step: 2, bridgedAmount: DELIVERED.toString(),
+  /* v0.4.3: the watcher hands the verdict the registry fact
+   * (the QOM pair's QL1 token IS the wrapped native) instead
+   * of the verdict comparing symbols. */
+  deliversWrappedNative: true, ...over,
 });
 
 /* Mirror of the screen's step-2 watcher branch: read the

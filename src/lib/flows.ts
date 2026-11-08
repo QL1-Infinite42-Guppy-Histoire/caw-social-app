@@ -60,6 +60,29 @@ export interface FlowPart {
    *  at broadcast time. Absent = the pair token is the
    *  ERC-20 it normally is (WQOM for the QOM pair). */
   srcNativeQom?: boolean;
+  /** Cumulative WQOM the step-3 finishing batch (v0.4.3) has
+   *  already unwrapped for this part, persisted the moment
+   *  the unwrap leg confirms — BEFORE the swap leg runs. A
+   *  resume re-plans from fresh balances with this credited,
+   *  so an interrupted batch can never plan a second unwrap
+   *  for the same step. Absent on pre-v0.4.3 flows (= 0). */
+  ql1Unwrapped?: string;
+  /** A direct start's chosen swap input (v0.4.3): for a WQOM
+   *  start the user picked the amount to SWAP, and the gas
+   *  keep is secured on top of it from the remaining WQOM —
+   *  unlike a bridged part, whose bridgedAmount is the total
+   *  the keep is carved out of. Absent = the part's amount
+   *  is a delivered total (bridged semantics). */
+  ql1FixedInput?: string;
+  /** A held-token direct start (v0.4.3): the QL1 token the
+   *  part's input sits in, carried by ADDRESS (+ decimals
+   *  for display) because the token need not be a bridge
+   *  pair at all — routing is discovered live by the
+   *  aggregator. When set, step 3 resolves its input token
+   *  from here instead of BRIDGE_PAIRS; `sym` carries the
+   *  display symbol. */
+  ql1TokenAddr?: string;
+  ql1TokenDec?: number;
 }
 
 export interface HuntersFlow {

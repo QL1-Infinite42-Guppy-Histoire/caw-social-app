@@ -157,6 +157,30 @@ function allTokens(chainKey) {
   return [...c.tokens, ...state.custom[c.key]];
 }
 function tokenById(chainKey, id) { return allTokens(chainKey).find((tk) => tk.id === id) || null; }
+/* Register a token the wallet actually holds into the chain's
+ * custom slot (v0.4.3): routing is discovered from on-chain
+ * pairs, so a held token needs no curation — once its entry
+ * exists (address / symbol / decimals, read from the chain),
+ * tokenByAddress, route search and the tx builders treat it
+ * exactly like a built-in registry token. Idempotent by
+ * address; a built-in entry always wins. */
+function addCustomToken(chainKey, tok) {
+  const c = CHAINS[chainKey];
+  if (!c || !tok || typeof tok.address !== "string") return null;
+  const addr = tok.address.toLowerCase();
+  const existing = allTokens(chainKey).find((tk) => tk.address.toLowerCase() === addr);
+  if (existing) return existing;
+  const entry = {
+    id: tok.id || ("held-" + addr.slice(2, 12)),
+    symbol: tok.symbol || "TOKEN",
+    name: tok.name || tok.symbol || "TOKEN",
+    address: addr,
+    decimals: Number.isInteger(tok.decimals) ? tok.decimals : 18,
+    isNative: false,
+  };
+  state.custom[c.key].push(entry);
+  return entry;
+}
 function tokenByAddress(chainKey, addr) {
   const a = (addr || "").toLowerCase();
   const list = allTokens(chainKey);
@@ -824,7 +848,13 @@ async function quoteCrossPlan(srcKey, fromTok, dstKey, toTok, amountIn) {
     if (!tSrc || !tDst) return { skip: true };
     const enabledDir = srcKey === "ql1" ? pair.enabledFromQl1 : pair.enabledFromInf;
     if (!enabledDir) return { disabled: { pair, tSrc, tDst, enabled: false, reason: t("xDisabledOsak") } };
-    if (srcKey === "ql1" && fromTok.id === "native" && pair.sym === "QOM") return { disabled: { pair, tSrc, tDst, enabled: false, reason: t("xDisabledWrap") } };
+    /* Native QOM cannot depart QL1 through the pair whose
+     * QL1 token IS the wrapped native (WQOM): it would have
+     * to be wrapped first. Registry-derived (v0.4.3): the
+     * pair's source token address is the chain's native
+     * anchor and the entry is not the native entry itself —
+     * no symbol comparison. */
+    if (srcKey === "ql1" && fromTok.id === "native" && !tSrc.isNative && tSrc.address.toLowerCase() === src.nativeAnchor.toLowerCase()) return { disabled: { pair, tSrc, tDst, enabled: false, reason: t("xDisabledWrap") } };
     try {
       // --- leg 1 variants: source -> bridge token (top distinct paths) ---
       let leg1Vars; // [{route|null, out}]
@@ -1326,7 +1356,7 @@ function crossSplitPhase(f) {
 
 export {
   CHAINS, BRIDGE_PAIRS, BRIDGE_MAILBOX, SEL as AGG_SEL, NATIVE_PH, WQOM,
-  tokenById, tokenByAddress, symbolFor, allTokens,
+  tokenById, tokenByAddress, symbolFor, allTokens, addCustomToken,
   parseAmount, formatAmount,
   fetchQuotesForTokens, fetchBestRoute, fetchRoutesOnly,
   quoteCrossPlan, evaluateCrossSplit, evaluateCrossSplitNet,

@@ -200,11 +200,18 @@ console.log('\n--- (f) screen wiring ---');
     src.includes("planNow.action === 'faucet'"));
   check('f4 the born part is marked srcNativeQom at step 3',
     src.includes('srcNativeQom: true'));
-  check('f5 step 3 caps a native part at the native surplus and skips its allowance',
-    src.includes('? ql1NativeSpendableWei(plan)') &&
-    src.includes('if (!part.srcNativeQom)'));
-  check('f6 step 3 builds the native swap without the token override for native parts',
-    src.includes('? buildRouteSwapTx(\'ql1\', route, address, 1)'));
+  /* v0.4.3: step 3 is the finishing batch now. The intents
+     of the old f5/f6 (native part planned against its native
+     funds only, no allowance leg; native swap built without
+     the token override) are carried by the batch plan/build
+     wiring — asserted here in their new shape, and covered
+     behaviorally by verify-batch.mjs. */
+  check('f5 step 3 plans a native part as native funds (fixed input, fully converted) inside the batch',
+    src.includes('part.srcNativeQom') &&
+    src.includes('runQl1FinishBatch') && src.includes('ql1FinishPlan'));
+  check('f6 the batch builds the native swap without the token override for native-asset parts',
+    src.includes("facts.kind === 'nativeAsset'") &&
+    src.includes("buildRouteSwapTx('ql1', route, address, 1, facts.aggToken)"));
   check('f7 the amount screen caps chips at the native spendable',
     src.includes('ql1NativeSpendableWei(qomPlan)'));
 }

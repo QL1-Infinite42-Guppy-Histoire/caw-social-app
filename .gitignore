@@ -66,3 +66,4 @@ scripts/.build-resume/
 scripts/.build-arrival/
 scripts/.build-wqom/
 scripts/.build-qomstart/
+scripts/.build-batch/
