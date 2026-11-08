@@ -71,6 +71,8 @@ import {
   expected42Usdt,
   buildUnwrapTx,
   WQOM_ADDR,
+  QL1_GAS_KEEP_FLOOR_WEI,
+  ql1NativeSpendableWei,
   fetchHsBalances,
   fetchQl1GasShort,
   fetchQl1KeepPlan,
@@ -426,13 +428,19 @@ function BuySection({
   /* Mid-start (v0.4.1): 'entry' = start on the entry chain
      (native or USDT); 'usdt42' = start from USDT already held
      on 42 Chain, straight into the back half. */
-  const [startPoint, setStartPoint] = useState<'entry' | 'usdt42' | 'wqom'>('entry');
+  const [startPoint, setStartPoint] = useState<'entry' | 'usdt42' | 'wqom' | 'qom'>('entry');
   const [bridgeUsdt, setBridgeUsdt] = useState<bigint | null>(null);
   /* WQOM mid-start (v0.4.2): the QL1 gas-keep plan for the
    * typed amount (caps it at the post-keep spendable) and the
    * live WQOM->CAW quote for it. */
   const [wqomPlan, setWqomPlan] = useState<import('../lib/hunters').Ql1KeepPlan | null>(null);
   const [wqomQuote, setWqomQuote] = useState<bigint | null>(null);
+  /* Native-QOM direct start (v0.4.2): the same keep plan —
+   * for a native start the spendable side is the native
+   * balance ABOVE the keep (ql1NativeSpendableWei) — and the
+   * live QOM->CAW quote for the typed amount. */
+  const [qomPlan, setQomPlan] = useState<import('../lib/hunters').Ql1KeepPlan | null>(null);
+  const [qomQuote, setQomQuote] = useState<bigint | null>(null);
   /* Slow-quote reassurance (v0.3.2): if a quote search runs past
      ~15 s, say so in plain words instead of leaving a silent spinner. */
   const [slowQuote, setSlowQuote] = useState(false);
@@ -814,6 +822,124 @@ function BuySection({
           step: 3,
           bridgedAmount: amt.toString(),
           dstBaseIsToken: true,
+        },
+      ],
+    });
+    setPhase('run');
+  };
+
+  /* Native-QOM direct start (v0.4.2): the amount screen for
+   * a QOM start keeps the same shared gas-keep plan fresh —
+   * its NATIVE spendable (balance minus the keep) caps the
+   * amount, so the reserve is never presented as usable —
+   * and a fresh QOM->CAW quote for the typed amount. The
+   * quote runs over the QOM pair (WQOM address is the pair
+   * token); only the SPEND differs (native, at step 3). */
+  useEffect(() => {
+    if (phase !== 'amount' || startPoint !== 'qom') return;
+    let live = true;
+    fetchQl1KeepPlan(address)
+      .then((p) => {
+        if (live) setQomPlan(p);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [phase, startPoint, address]);
+
+  useEffect(() => {
+    if (phase !== 'amount' || startPoint !== 'qom') {
+      setQomQuote(null);
+      return;
+    }
+    const amt = parsedAmount(entry);
+    if (amt === null || amt <= 0n) {
+      setQomQuote(null);
+      return;
+    }
+    let live = true;
+    const t = setTimeout(() => {
+      freshRoute('ql1', WQOM_ADDR, tokenById('ql1', 'qcaw').address, amt, null)
+        .then((r) => {
+          if (live) setQomQuote(r ? BigInt(r.amountOut) : null);
+        })
+        .catch(() => {
+          if (live) setQomQuote(null);
+        });
+    }, 600);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, startPoint, amountText, address]);
+
+  /**
+   * Direct start from NATIVE QOM held on QL1 (v0.4.2, the
+   * user's explicit go-ahead): the flow is born as a single
+   * QOM part parked at the QL1 swap step, marked
+   * srcNativeQom so step 3 spends natively and enforces the
+   * keep against the native balance — the same saved-state
+   * shape and resume machinery as every other start. The
+   * keep plan is re-read at start: an amount that would eat
+   * into the 100-action keep never starts, and when the keep
+   * cannot be secured the amount screen's faucet guidance is
+   * what stands instead.
+   */
+  const startQomFlow = async () => {
+    if (!address) return;
+    const amt = parsedAmount(entry);
+    if (amt === null || amt <= 0n) return;
+    setStatus(null);
+    const planNow = await fetchQl1KeepPlan(address).catch(() => null);
+    if (planNow) {
+      setQomPlan(planNow);
+      if (planNow.action === 'faucet') return;
+      if (amt > ql1NativeSpendableWei(planNow)) {
+        setStatus({ text: tr('hs.notEnough'), err: true });
+        return;
+      }
+    }
+    const route = await freshRoute(
+      'ql1',
+      WQOM_ADDR,
+      tokenById('ql1', 'qcaw').address,
+      amt,
+      null,
+    ).catch(() => null);
+    if (!route) {
+      setStatus({ text: tr('hs.noRoute'), err: true });
+      return;
+    }
+    const f = newFlow({
+      id: Date.now().toString(36),
+      address,
+      entry,
+      entryAmountRaw: '0',
+      entryUsdtExpected: '0',
+      usdt42Expected: '0',
+      confirmedOut: BigInt(route.amountOut).toString(),
+      choice: 'single',
+      createdAt: Date.now(),
+      finalAsset: 'CAW',
+      finalChain: 'ql1',
+    });
+    setResumeFlow(null);
+    await persist({
+      ...f,
+      phase: 'back',
+      carveDone: true,
+      parts: [
+        {
+          sym: 'QOM',
+          pct: 100,
+          usdtIn: '0',
+          leg1Path: null,
+          leg2Path: route.path as string[],
+          step: 3,
+          bridgedAmount: amt.toString(),
+          srcNativeQom: true,
         },
       ],
     });
@@ -1349,7 +1475,10 @@ function BuySection({
       let amt = BigInt(part.bridgedAmount ?? '0');
       if (pair.sym === 'QOM') {
         /* QL1 gas keep (v0.4.2): this step's working funds are
-           WQOM — arrived over the bridge or a WQOM mid-start.
+           WQOM (arrived over the bridge or a WQOM mid-start)
+           or NATIVE QOM (a native direct start — the part is
+           marked srcNativeQom and its cap is the native
+           surplus over the same keep).
            The shared keep (100 SNS actions + swap-class ops +
            margin, held in NATIVE QOM; see ql1KeepPlan) is
            secured BEFORE any principal moves: a shortfall is
@@ -1378,11 +1507,19 @@ function BuySection({
             });
             return;
           }
-          if (amt > plan.spendableWei) {
+          /* The cap is the post-keep surplus of the part's
+             OWN funds: WQOM parts plan against the WQOM
+             surplus (spendableWei); a native-QOM part plans
+             against the native balance above the keep — the
+             keep itself is never principal. */
+          const spendableCap = part.srcNativeQom
+            ? ql1NativeSpendableWei(plan)
+            : plan.spendableWei;
+          if (amt > spendableCap) {
             /* Cap the swap at the post-keep surplus; the rest
                of the delivery is not lost — it is (or becomes)
                the native gas reserve itself. */
-            amt = plan.spendableWei;
+            amt = spendableCap;
             if (amt <= 0n) {
               setStatus({ text: tr('hs.notEnough'), err: true });
               return;
@@ -1419,12 +1556,17 @@ function BuySection({
        * native entry, building a native-spending swap that
        * could only die on the small native gas balance.) */
       const ql1Router = AGG_CHAINS.ql1.router as string;
-      const allow = await erc20Allowance('ql1', dstTok.address, address, ql1Router).catch(() => 0n);
-      if (allow < amt) {
-        askSend(tr('hs.stepApprove'), async () => {
-          await sendStep('ql1', async () => buildAggApprove(dstTok.address, ql1Router, amt), (g) => g);
-        });
-        return;
+      /* A native-QOM part needs no allowance: the tx value
+       * IS the input. Every other part's input is the pair
+       * token as an ERC-20 and needs one (v0.4.2 note above). */
+      if (!part.srcNativeQom) {
+        const allow = await erc20Allowance('ql1', dstTok.address, address, ql1Router).catch(() => 0n);
+        if (allow < amt) {
+          askSend(tr('hs.stepApprove'), async () => {
+            await sendStep('ql1', async () => buildAggApprove(dstTok.address, ql1Router, amt), (g) => g);
+          });
+          return;
+        }
       }
       askSend(tr('hs.stepSwap2'), async () => {
         await sendStep('ql1', async () => {
@@ -1434,14 +1576,29 @@ function BuySection({
                from FRESH balances at broadcast time — if the
                amount no longer fits over the secured reserve,
                stop with the typed insufficient error instead
-               of sending a swap that eats the gas keep. */
+               of sending a swap that eats the gas keep. A
+               native part is checked against the native
+               surplus; a WQOM part against the WQOM surplus. */
             const p3 = await fetchQl1KeepPlan(address).catch(() => null);
-            if (p3 && amt > p3.spendableWei) throw new Error('insufficient');
+            if (
+              p3 &&
+              amt >
+                (part.srcNativeQom
+                  ? ql1NativeSpendableWei(p3)
+                  : p3.spendableWei)
+            )
+              throw new Error('insufficient');
           }
           const qcaw = tokenById('ql1', 'qcaw');
           const route = await freshRoute('ql1', dstTok.address, qcaw.address, amt, part.leg2Path);
           if (!route) throw new Error('no-route');
-          return buildRouteSwapTx('ql1', route, address, 1, dstTok);
+          /* Native part: no override — the builder resolves
+             the pair token (WQOM address) to its native entry
+             and builds the native-spending swap. WQOM part:
+             the delivered-token entry, a token spend. */
+          return part.srcNativeQom
+            ? buildRouteSwapTx('ql1', route, address, 1)
+            : buildRouteSwapTx('ql1', route, address, 1, dstTok);
         }, (g) => {
           const parts = g.parts.slice();
           parts[partIdx] = { ...parts[partIdx], step: 4 };
@@ -1506,7 +1663,7 @@ function BuySection({
   const amtUsd =
     amt === null
       ? null
-      : startPoint === 'wqom'
+      : startPoint === 'wqom' || startPoint === 'qom'
         ? null
         : startPoint === 'usdt42'
           ? Number(formatUnits(amt, 18))
@@ -1535,7 +1692,13 @@ function BuySection({
         ? wqomPlan
           ? wqomPlan.spendableWei
           : (balances?.ql1Wqom ?? 0n)
-        : startPoint === 'usdt42'
+        : startPoint === 'qom'
+          ? qomPlan
+            ? ql1NativeSpendableWei(qomPlan)
+            : (balances?.ql1Native ?? 0n) > QL1_GAS_KEEP_FLOOR_WEI
+              ? (balances?.ql1Native ?? 0n) - QL1_GAS_KEEP_FLOOR_WEI
+              : 0n
+          : startPoint === 'usdt42'
           ? (balances?.infUsdt ?? 0n)
           : startCoin === 'usdt'
             ? usdtBalance(entry)
@@ -1752,6 +1915,40 @@ function BuySection({
               </Pressable>
             ) : null}
 
+            {/* Direct start point (v0.4.2, balance-based):
+                NATIVE QOM held on QL1 can start the buy
+                directly at the QL1 swap step. Offered ONLY
+                when the balance is non-zero; the amount is
+                planned against the balance above the shared
+                gas keep, so holding only the keep offers the
+                card but no spendable amount. */}
+            {(balances?.ql1Native ?? 0n) > 0n ? (
+              <Pressable
+                onPress={() =>
+                  setStartPoint(startPoint === 'qom' ? 'entry' : 'qom')
+                }
+                style={{
+                  borderWidth: 2,
+                  borderColor: startPoint === 'qom' ? ACCENT : '#eff3f4',
+                  borderRadius: 14,
+                  padding: 14,
+                  marginTop: 14,
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+                  <CoinBadge sym="QOM" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[S.body, { fontWeight: '700' }]}>
+                      {tr('hs.fromQom')}
+                    </Text>
+                    <Text style={S.small}>
+                      {fmtTok(balances?.ql1Native ?? 0n, 18)} QOM
+                    </Text>
+                  </View>
+                </View>
+              </Pressable>
+            ) : null}
+
             <Pressable
               style={[S.bigBtn, { marginTop: 18 }]}
               onPress={() => setPhase('amount')}
@@ -1774,7 +1971,7 @@ function BuySection({
                 autoCorrect={false}
               />
               <Text style={[S.body, { fontWeight: '700' }]}>
-                {startPoint === 'wqom' ? 'WQOM' : startPoint === 'usdt42' || startCoin === 'usdt' ? 'USDT' : entry === 'bsc' ? 'BNB' : 'ETH'}
+                {startPoint === 'wqom' ? 'WQOM' : startPoint === 'qom' ? 'QOM' : startPoint === 'usdt42' || startCoin === 'usdt' ? 'USDT' : entry === 'bsc' ? 'BNB' : 'ETH'}
               </Text>
             </View>
             <View style={[S.row, { gap: 8, marginTop: 10, flexWrap: 'wrap' }]}>
@@ -1790,7 +1987,13 @@ function BuySection({
                             ? wqomPlan
                               ? wqomPlan.spendableWei
                               : (balances?.ql1Wqom ?? 0n)
-                            : startPoint === 'usdt42'
+                            : startPoint === 'qom'
+                              ? qomPlan
+                                ? ql1NativeSpendableWei(qomPlan)
+                                : (balances?.ql1Native ?? 0n) > QL1_GAS_KEEP_FLOOR_WEI
+                                  ? (balances?.ql1Native ?? 0n) - QL1_GAS_KEEP_FLOOR_WEI
+                                  : 0n
+                              : startPoint === 'usdt42'
                               ? (balances?.infUsdt ?? 0n)
                               : startCoin === 'usdt'
                                 ? usdtBalance(entry)
@@ -1832,7 +2035,32 @@ function BuySection({
                 ) : null}
               </>
             ) : null}
-            {startPoint === 'usdt42' || startPoint === 'wqom' ? null : startCoin === 'native' ? (
+            {startPoint === 'qom' ? (
+              <>
+                {qomPlan ? (
+                  <Text style={[S.small, { marginTop: 10 }]}>
+                    {tr('hs.gasKeep')}: {fmtTok(qomPlan.keepWei, 18)} QOM
+                  </Text>
+                ) : null}
+                {qomPlan?.action === 'unwrap' ? (
+                  <Text style={[S.small, { marginTop: 6 }]}>{tr('hs.keepUnwrap')}</Text>
+                ) : null}
+                {qomQuote !== null && amt !== null && amt > 0n ? (
+                  <Text style={[S.small, { marginTop: 6 }]}>
+                    {tr('hs.youGet')}: {fmtTok(qomQuote, 18)} CAW
+                  </Text>
+                ) : null}
+                {qomPlan?.action === 'faucet' ? (
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={S.err}>{tr('hs.gasQomShort')}</Text>
+                    <View style={{ marginTop: 10 }}>
+                      <FaucetButton label={tr('faucet.goFaucet')} primary />
+                    </View>
+                  </View>
+                ) : null}
+              </>
+            ) : null}
+            {startPoint === 'usdt42' || startPoint === 'wqom' || startPoint === 'qom' ? null : startCoin === 'native' ? (
               <Text style={[S.small, { marginTop: 10 }]}>
                 {tr('hs.gasKeep')}: {fmtTok(nativeBalance(entry) - spendable(entry), 18)} {entry === 'bsc' ? 'BNB' : 'ETH'}
                 {amtUsd !== null ? ' · ≈ ' + fmtUsd(amtUsd) : ''}
@@ -1848,9 +2076,9 @@ function BuySection({
             {ethBlocked ? <Text style={[S.err, { marginTop: 8 }]}>{tr('hs.ethMin')}</Text> : null}
             {overSpendable ? <Text style={[S.err, { marginTop: 8 }]}>{tr('hs.notEnough')}</Text> : null}
             <Pressable
-              style={[S.bigBtn, { marginTop: 18 }, (quoting || amt === null || amt <= 0n || (startPoint === 'wqom' && (wqomQuote === null || wqomPlan?.action === 'faucet' || overSpendable))) && S.disabled]}
-              disabled={quoting || amt === null || amt <= 0n || (startPoint === 'wqom' && (wqomQuote === null || wqomPlan?.action === 'faucet' || overSpendable))}
-              onPress={() => (startPoint === 'wqom' ? startWqomFlow() : startPoint === 'usdt42' ? buildPlan42('single') : buildPlan('single'))}
+              style={[S.bigBtn, { marginTop: 18 }, (quoting || amt === null || amt <= 0n || (startPoint === 'wqom' && (wqomQuote === null || wqomPlan?.action === 'faucet' || overSpendable)) || (startPoint === 'qom' && (qomQuote === null || qomPlan?.action === 'faucet' || overSpendable))) && S.disabled]}
+              disabled={quoting || amt === null || amt <= 0n || (startPoint === 'wqom' && (wqomQuote === null || wqomPlan?.action === 'faucet' || overSpendable)) || (startPoint === 'qom' && (qomQuote === null || qomPlan?.action === 'faucet' || overSpendable))}
+              onPress={() => (startPoint === 'wqom' ? startWqomFlow() : startPoint === 'qom' ? startQomFlow() : startPoint === 'usdt42' ? buildPlan42('single') : buildPlan('single'))}
             >
               <Text style={S.bigBtnText}>{quoting ? tr('hs.checking') : tr('hs.next')}</Text>
             </Pressable>

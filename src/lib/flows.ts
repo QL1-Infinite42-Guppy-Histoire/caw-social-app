@@ -51,6 +51,15 @@ export interface FlowPart {
    *  mistake; the arrival watcher repairs those exactly once
    *  (see partArrivalVerdict in lib/hunters). */
   dstBaseIsToken?: boolean;
+  /** True when this part's QL1 input is NATIVE QOM held in
+   *  the wallet (a native-QOM direct start, v0.4.2) rather
+   *  than the WQOM a bridge delivers. Step 3 then spends
+   *  natively (swapExactETHForTokens, no allowance), plans
+   *  only against the native balance ABOVE the shared gas
+   *  keep (ql1NativeSpendableWei), and re-checks that keep
+   *  at broadcast time. Absent = the pair token is the
+   *  ERC-20 it normally is (WQOM for the QOM pair). */
+  srcNativeQom?: boolean;
 }
 
 export interface HuntersFlow {

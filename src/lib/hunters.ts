@@ -587,6 +587,23 @@ export interface Ql1KeepPlan {
   /** WQOM principal that may be planned/spent AFTER the keep
    *  is secured. Never includes the reserve. */
   spendableWei: bigint;
+  /** The fresh balances the plan was decided from. */
+  nativeWei: bigint;
+  wqomWei: bigint;
+}
+
+/** NATIVE QOM principal that may be planned/spent: the part
+ *  of the native balance ABOVE the keep. The keep itself is
+ *  never spendable principal — a native-QOM start or step
+ *  plans against this and nothing else. (When the plan's
+ *  action is 'unwrap' the native balance is below the keep
+ *  by construction, so this is 0 until the keep is secured —
+ *  and securing it brings native to exactly the keep, still
+ *  0 spendable; the WQOM side is the spendable side then.) */
+export function ql1NativeSpendableWei(plan: Ql1KeepPlan): bigint {
+  return plan.nativeWei > plan.keepWei
+    ? plan.nativeWei - plan.keepWei
+    : 0n;
 }
 
 /** Pure keep decision for a step whose working funds are
@@ -598,11 +615,25 @@ export function ql1KeepPlan(
   unwrapCostWei: bigint,
 ): Ql1KeepPlan {
   if (keepWei <= 0n) {
-    return { action: 'ok', keepWei, unwrapWei: 0n, spendableWei: wqomNow };
+    return {
+      action: 'ok',
+      keepWei,
+      unwrapWei: 0n,
+      spendableWei: wqomNow,
+      nativeWei: nativeNow,
+      wqomWei: wqomNow,
+    };
   }
   const shortfall = keepWei - nativeNow;
   if (shortfall <= 0n) {
-    return { action: 'ok', keepWei, unwrapWei: 0n, spendableWei: wqomNow };
+    return {
+      action: 'ok',
+      keepWei,
+      unwrapWei: 0n,
+      spendableWei: wqomNow,
+      nativeWei: nativeNow,
+      wqomWei: wqomNow,
+    };
   }
   if (nativeNow < unwrapCostWei) {
     /* The bootstrap problem, honestly: securing the keep
@@ -610,7 +641,14 @@ export function ql1KeepPlan(
      * the native balance cannot pay for it. The faucet is
      * the way out (it hands out native QOM) — no relayer is
      * invented here. */
-    return { action: 'faucet', keepWei, unwrapWei: 0n, spendableWei: 0n };
+    return {
+      action: 'faucet',
+      keepWei,
+      unwrapWei: 0n,
+      spendableWei: 0n,
+      nativeWei: nativeNow,
+      wqomWei: wqomNow,
+    };
   }
   const unwrapWei = shortfall < wqomNow ? shortfall : wqomNow;
   return {
@@ -618,6 +656,8 @@ export function ql1KeepPlan(
     keepWei,
     unwrapWei,
     spendableWei: wqomNow - unwrapWei,
+    nativeWei: nativeNow,
+    wqomWei: wqomNow,
   };
 }
 

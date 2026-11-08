@@ -65,3 +65,4 @@ scripts/.build-threads/
 scripts/.build-resume/
 scripts/.build-arrival/
 scripts/.build-wqom/
+scripts/.build-qomstart/

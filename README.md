@@ -38,7 +38,12 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
   now shown as its own row in the HuntersDEX balance
   lists, and holding WQOM offers a mid-start straight at
   the QL1 swap step (same flow shape as a part that
-  arrived there by bridging). New: ONE app-wide QL1 gas
+  arrived there by bridging). Holding NATIVE QOM likewise
+  offers a direct start at the same swap step: the part
+  is born marked srcNativeQom, plans only against the
+  native balance above the gas keep, spends natively
+  (no allowance), and is keep-re-checked at broadcast
+  time (scripts/verify-qomstart.mjs, 24 checks). New: ONE app-wide QL1 gas
   keep, defined once in lib/hunters and used by planning,
   mid-starts, resumes, execution re-checks and the
   faucet-guidance judgment: a native-QOM reserve sized
