@@ -1,7 +1,21 @@
+import { CAT42 } from '../config';
 import type { AppContextValue } from '../context/AppContext';
 import { nameOwner, type TimelineItem } from './cawApi';
 import { isSelfFollowOwners, type CawAction } from './cawCore';
-import { nowSec, randomCawId, submitAction } from './wallet';
+import {
+  buildSuperlikeData,
+  cat42BalanceOf,
+  refreshSuperlikesFor,
+  superlikeBlockReason,
+  superlikeShortfall,
+} from './superlike';
+import {
+  nowSec,
+  randomCawId,
+  sendCalldata,
+  signerForHsChain,
+  submitAction,
+} from './wallet';
 
 /**
  * Shared "confirm → authenticate → sign & submit" flow for
@@ -106,4 +120,61 @@ export async function performAction(
   }
 
   return submitAction(secret.kind, secret.secret, action);
+}
+
+/**
+ * SuperLike （超いいね, v0.4.8): the fixed-price CAT42 tip bound
+ * to a post — see lib/superlike.ts for the binding design and
+ * its pre-design verification. NOT a CAW protocol action: the
+ * payment is an ordinary 42 Chain CAT42 transfer (with the
+ * marker as trailing calldata) from this wallet to the post
+ * author's owner address; the same key signs, gated by the
+ * same fresh authentication as every other send.
+ *
+ * Guards, all BEFORE anything is signed:
+ *  - the author's owner is resolved fresh (ownerOf) — an
+ *    unresolved author refuses the send rather than paying a
+ *    guessed address;
+ *  - self-SuperLike is blocked (Error('self-superlike')): the
+ *    post's name in my tokens, or the author owner being my
+ *    own address;
+ *  - the CAT42 balance is re-read fresh; short of the fixed
+ *    price is a hard stop (Error('shortfall'), the balance
+ *    attached as `balance`) — never a partial action.
+ * Throws Error('auth') / Error('locked') like performAction.
+ * On success the author's count scan is nudged (the count
+ * itself still comes from the chain scan, not from here) and
+ * the wallet balances refresh, so the spent CAT42 shows.
+ */
+export async function performSuperlike(
+  app: AppContextValue,
+  args: { target: TimelineItem },
+): Promise<string> {
+  if (!app.address) throw new Error('locked');
+  const authorOwner = await nameOwner(args.target.senderId);
+  const blocked = superlikeBlockReason({
+    senderId: args.target.senderId,
+    myTokenIds: app.myTokens.map((t) => t.id),
+    authorOwner,
+    myAddress: app.address,
+  });
+  if (blocked) throw new Error('self-superlike');
+  const balance = await cat42BalanceOf(app.address);
+  if (superlikeShortfall(balance)) {
+    throw Object.assign(new Error('shortfall'), { balance });
+  }
+  const data = buildSuperlikeData(authorOwner, args.target.cawId);
+  if (!data) throw new Error('bad-post');
+
+  const ok = await app.requireAuth();
+  if (!ok) throw new Error('auth');
+
+  const secret = app.getSecret();
+  if (!secret) throw new Error('locked');
+
+  const signer = signerForHsChain(secret.kind, secret.secret, 'infinite');
+  const hash = await sendCalldata(signer, CAT42, data);
+  refreshSuperlikesFor(authorOwner);
+  app.refreshBalances().catch(() => {});
+  return hash;
 }

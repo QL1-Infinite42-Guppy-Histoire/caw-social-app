@@ -26,14 +26,23 @@ import {
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
-import { fetchTimelinePage, type TimelineItem } from '../lib/cawApi';
+import {
+  fetchTimelinePage,
+  nameOwner,
+  resolveName,
+  type TimelineItem,
+} from '../lib/cawApi';
 import {
   insertOwnPost,
   reconcileOwnPosts,
   subscribeOwnPosts,
   visibleFeedItems,
 } from '../lib/feedSync';
-import { performAction } from '../lib/actionFlow';
+import { performAction, performSuperlike } from '../lib/actionFlow';
+import {
+  SUPERLIKE_AMOUNT_RAW,
+  SUPERLIKE_CAT42,
+} from '../lib/superlike';
 import { fmtAmountCard } from '../lib/cawCore';
 import {
   buildFollowIndex,
@@ -337,6 +346,71 @@ export default function TimelineScreen() {
     }
   }, [app, pending]);
 
+  /* ---------- SuperLike (v0.4.8) ---------- */
+  const [slItem, setSlItem] = useState<TimelineItem | null>(null);
+  const [slName, setSlName] = useState('');
+  const [slOwner, setSlOwner] = useState('');
+  const [slBusy, setSlBusy] = useState(false);
+
+  const handleSuperlike = useCallback(
+    (item: TimelineItem) => {
+      // Instant local verdicts first (performSuperlike re-checks
+      // everything against fresh chain reads before signing):
+      // my own names' posts are blocked, and a known-insufficient
+      // CAT42 balance is a hard stop with guidance — no sheet.
+      if (app.myTokens.some((t) => t.id === item.senderId)) {
+        setStatusByHash((prev) => ({
+          ...prev,
+          [item.hash]: tr('sl.self'),
+        }));
+        return;
+      }
+      if (app.cat42 !== null && app.cat42 < SUPERLIKE_AMOUNT_RAW) {
+        setStatusByHash((prev) => ({
+          ...prev,
+          [item.hash]: tr('sl.shortfall'),
+        }));
+        return;
+      }
+      resolveName(item.senderId)
+        .then((n) => setSlName(n ? '@' + n : ''))
+        .catch(() => setSlName(''));
+      nameOwner(item.senderId)
+        .then((o) =>
+          setSlOwner(o.slice(0, 6) + '…' + o.slice(-4)),
+        )
+        .catch(() => setSlOwner(''));
+      setSlItem(item);
+    },
+    [app],
+  );
+
+  const confirmSuperlike = useCallback(async () => {
+    if (!slItem) return;
+    const item = slItem;
+    setSlBusy(true);
+    setBusyByHash((prev) => ({ ...prev, [item.hash]: true }));
+    try {
+      await performSuperlike(app, { target: item });
+      setStatusByHash((prev) => ({
+        ...prev,
+        [item.hash]: tr('sl.done'),
+      }));
+    } catch (e) {
+      const msg =
+        e instanceof Error && e.message === 'self-superlike'
+          ? tr('sl.self')
+          : e instanceof Error && e.message === 'shortfall'
+            ? tr('sl.shortfall')
+            : tr('act.failed');
+      setStatusByHash((prev) => ({ ...prev, [item.hash]: msg }));
+    } finally {
+      setSlBusy(false);
+      setBusyByHash((prev) => ({ ...prev, [item.hash]: false }));
+      setSlItem(null);
+    }
+  }, [app, slItem]);
+
   /* ---------- wallet card identity + address chip (v0.3.4) ---------- */
   const actingCustom = acting ? app.customFor(acting.id) : undefined;
   const displayName = acting
@@ -626,6 +700,7 @@ export default function TimelineScreen() {
             onAction={handleAction}
             onOpenPost={openPostCb}
             onReply={openReplyCb}
+            onSuperlike={handleSuperlike}
             actionStatus={statusByHash[item.hash]}
             busy={!!busyByHash[item.hash]}
             liked={app.hasMyAction(1, item)}
@@ -697,6 +772,26 @@ export default function TimelineScreen() {
         onConfirm={confirmAction}
         onCancel={() => setPending(null)}
         busy={pending ? !!busyByHash[pending.item.hash] : false}
+      />
+      <ConfirmSheet
+        visible={!!slItem}
+        title={tr('sl.title')}
+        body={
+          slItem
+            ? tr('sl.body', {
+                name: slName || '—',
+                addr: slOwner || '—',
+                cost: String(SUPERLIKE_CAT42),
+                balance:
+                  cat42 !== null ? fmtAmountCard(cat42) : '—',
+              })
+            : ''
+        }
+        confirmLabel={tr('sl.confirm')}
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmSuperlike}
+        onCancel={() => setSlItem(null)}
+        busy={slBusy}
       />
       <Modal
         visible={!!recawChoice}

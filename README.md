@@ -30,8 +30,11 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
   With five frames the name card outgrows short screens, so
   the card is now height-capped at the content area and its
   content scrolls inside the card; the header stays outside
-  and tappable, exactly as v0.4.6 placed it. Nothing else
-  changes from v0.4.7. Verified by the v0.4.8 wiring guards
+  and tappable, exactly as v0.4.6 placed it. v0.4.8 also adds
+  **SuperLike （超いいね）**: a fixed 100 CAT42 tip to a post's
+  author, bound to the post by trailing calldata on the
+  transfer and counted back from the chain — see the
+  SuperLike section further down. Verified by the v0.4.8 wiring guards
   and stubbed-fetch behaviour checks in
   scripts/verify-fixes.mjs (67 checks), a live read of the
   new code path against 42 Chain, the i18n audit (66) and
@@ -799,6 +802,53 @@ lists and reaction summaries still read them), and a **Recaw row
 shows the original post** it points to, X-style, instead of a bare
 "recawed your post" line (with an explicit fallback when the
 original is not in the local index).
+
+## SuperLike (v0.4.8) — an app-original feature, not a CAW action
+
+A **SuperLike** is a fixed-price CAT42 tip — **100 CAT42**, paid
+from the sender's own wallet on 42 Chain to the post author's
+owner address — bound to one post and shown in the app as a ⭐
+count on that post. It is this app's own feature: the CAW
+protocol knows nothing about it, and sending one is NOT a CAW
+action (no QL1 post, no deposited-CAW cost).
+
+**The binding — trailing calldata on the transfer.** The payment
+is one ordinary CAT42 `transfer(author, 100 CAT42)` whose
+calldata carries the post binding appended after the standard
+arguments:
+
+```
+transfer calldata (68 bytes)
++ "SLK1"  (4-byte magic, 0x534c4b31)
++ cawId   (32 bytes — the post's CAW id)
+```
+
+This was verified before it was adopted (2026-11-09, both
+production 42 Chain RPCs, simulated from a holder of ~5.07M
+CAT42): `eth_call` returns `true` identically with and without
+the marker, and `eth_estimateGas` differs by exactly 576 gas —
+the intrinsic cost of 36 extra non-zero calldata bytes — so the
+contract executes the transfer (and emits its Transfer log)
+without ever reading the trailing bytes.
+
+**Reading rule (any client can implement it).** A post's
+SuperLike count is the number of CAT42 transfers TO the post
+author's owner address, at or after 42 Chain block 4,300,000,
+whose transaction input parses as the marked shape above AND
+whose amount is exactly 100 CAT42 (the Transfer log's value must
+agree). Counts come only from this chain data — the app keeps a
+per-author scan cursor on-device (the RPCs cap `eth_getLogs`
+ranges at 10,000 blocks) and never shows a locally invented
+number.
+
+**Guards.** SuperLike on your own names' posts is blocked, a
+CAT42 balance below the fixed price is a hard stop, and every
+send passes a confirmation sheet (price, author @name + address,
+current balance) and the app's fresh-authentication gate.
+
+**Honest interop note:** other clients see a plain CAT42
+transfer. Only readers of this convention attribute it to a
+post.
 
 ## Verification
 

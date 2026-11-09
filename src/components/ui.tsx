@@ -22,9 +22,15 @@ import {
   findPostByCawId,
   knownReplyCount,
   likesCount,
+  nameOwner,
   resolveName,
   txUrl,
 } from '../lib/cawApi';
+import {
+  subscribeSuperlike,
+  superlikeCount,
+  superlikeCountCached,
+} from '../lib/superlike';
 import { avatarSpec } from '../lib/cawCore';
 import { displayTextOf, parsePostText } from '../lib/postRef';
 import type { TimelineItem } from '../lib/cawApi';
@@ -192,6 +198,13 @@ export const S = StyleSheet.create({
 });
 
 /* ---------- line icons (same feather-style paths as the web) ---------- */
+export function StarIcon({ size = 18, color = '#536471', filled = false }: { size?: number; color?: string; filled?: boolean }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={filled ? color : 'none'} stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+    </Svg>
+  );
+}
 export function HeartIcon({ size = 18, color = '#536471', filled = false }: { size?: number; color?: string; filled?: boolean }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill={filled ? color : 'none'} stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -494,6 +507,8 @@ export function LoadMoreFooter({
 
 const LIKE_ON = '#e0245e';
 const RECAW_ON = '#00ba7c';
+/** SuperLike gold (v0.4.8) — distinct from like pink / recaw green. */
+const SUPERLIKE_ON = '#f5a623';
 
 /** The original post a like / share points at, shown as a quote box. */
 function TargetPostQuote({
@@ -667,6 +682,9 @@ export interface PostCardProps {
   onOpenPost?: (item: TimelineItem) => void;
   /** Reply button (v0.4.0): opens the composer targeted at this post. */
   onReply?: (item: TimelineItem) => void;
+  /** SuperLike button (v0.4.8): the fixed-price CAT42 tip flow.
+   *  Without a handler the ⭐ count still shows when it is > 0. */
+  onSuperlike?: (item: TimelineItem) => void;
   actionStatus?: string;
   busy?: boolean;
   /** This wallet already liked this post (remembered on the device). */
@@ -695,6 +713,7 @@ function RecawCard({
   onAction,
   onOpenPost,
   onReply,
+  onSuperlike,
   actionStatus,
   busy,
   liked,
@@ -754,6 +773,7 @@ function RecawCard({
             onAction={onAction}
             onOpenPost={onOpenPost}
             onReply={onReply}
+            onSuperlike={onSuperlike}
             busy={busy}
             liked={liked}
             recawed={recawed}
@@ -782,6 +802,7 @@ function PostCardBase({
   onAction,
   onOpenPost,
   onReply,
+  onSuperlike,
   actionStatus,
   busy,
   liked,
@@ -823,6 +844,37 @@ function PostCardBase({
     }
     return () => {
       live = false;
+    };
+  }, [item]);
+  /* SuperLike count (v0.4.8): counted from the author's marked
+   * CAT42 transfers on 42 Chain (lib/superlike.ts) — chain data
+   * only, never a local tally. null = not loaded yet. */
+  const [slCount, setSlCount] = useState<number | null>(null);
+  const slOwnerRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (item.type !== 0) return;
+    let live = true;
+    nameOwner(item.senderId)
+      .then((owner) => {
+        if (!live) return;
+        slOwnerRef.current = owner;
+        const cached = superlikeCountCached(owner, item.cawId);
+        if (cached !== null) setSlCount(cached);
+        return superlikeCount(owner, item.cawId).then((n) => {
+          if (live) setSlCount(n);
+        });
+      })
+      .catch(() => {});
+    const unsub = subscribeSuperlike(() => {
+      const owner = slOwnerRef.current;
+      if (owner) {
+        const c = superlikeCountCached(owner, item.cawId);
+        if (c !== null) setSlCount(c);
+      }
+    });
+    return () => {
+      live = false;
+      unsub();
     };
   }, [item]);
   // Keep the shown like count in step with my own like: +1 the moment
@@ -995,6 +1047,38 @@ function PostCardBase({
               <ReplyIcon size={16} color="#536471" />
               <Text style={[S.tiny, { marginStart: 4 }]}>
                 {replyCount > 0 ? replyCount.toString() : tr('tl.reply')}
+              </Text>
+            </Pressable>
+          ) : null}
+          {item.type === 0 &&
+          (onSuperlike || (slCount !== null && slCount > 0)) ? (
+            <Pressable
+              disabled={!onSuperlike || busy}
+              onPress={onSuperlike ? () => onSuperlike(item) : undefined}
+              style={({ pressed }) => [
+                S.row,
+                postStyles.actionBtn,
+                busy && S.disabled,
+                pressed && postStyles.actionBtnOn,
+              ]}
+            >
+              <StarIcon
+                size={16}
+                color={slCount ? SUPERLIKE_ON : '#536471'}
+                filled={!!slCount}
+              />
+              <Text
+                style={[
+                  S.tiny,
+                  { marginStart: 4 },
+                  slCount
+                    ? { color: SUPERLIKE_ON, fontWeight: '700' }
+                    : null,
+                ]}
+              >
+                {slCount !== null && slCount > 0
+                  ? slCount.toString()
+                  : tr('tl.superlike')}
               </Text>
             </Pressable>
           ) : null}

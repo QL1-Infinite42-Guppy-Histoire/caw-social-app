@@ -30,6 +30,7 @@ export interface ComposeTarget {
 }
 import { initDrafts } from '../lib/drafts';
 import { initFollowIndex } from '../lib/followIndex';
+import { initSuperlikeStore } from '../lib/superlike';
 import {
   directoryName,
   hydrateNameDirectory,
@@ -207,6 +208,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     initNameDirectory(storeKV);
     initFollowIndex(storeKV);
     initDrafts(storeKV);
+    initSuperlikeStore(storeKV);
     return () => {
       off1();
       off2();

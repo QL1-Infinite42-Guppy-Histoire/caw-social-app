@@ -87,6 +87,54 @@ export const ethCall42 = (to: string, data: string): Promise<string> =>
   rpc42('eth_call', [{ to, data }, 'latest']);
 
 /**
+ * Many 42 Chain calls in ONE HTTP request (JSON-RPC batch,
+ * same pattern as ethCallBatch): each endpoint is tried with
+ * the batched payload; if none answers with an array, the
+ * calls fall back to sequential rpc42 so the work still gets
+ * done. A per-call failure yields null in that slot.
+ */
+export async function rpc42Batch(
+  calls: { method: string; params: unknown[] }[],
+): Promise<any[]> {
+  if (calls.length === 0) return [];
+  for (const url of HS_CHAINS.infinite.rpcs) {
+    try {
+      const payload = calls.map((c, i) => ({
+        jsonrpc: '2.0',
+        id: i + 1,
+        method: c.method,
+        params: c.params,
+      }));
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await res.json();
+      if (!Array.isArray(j)) throw new Error('batch not supported');
+      const out: any[] = new Array(calls.length).fill(null);
+      for (const r of j) {
+        if (r && typeof r.id === 'number' && 'result' in r) {
+          out[r.id - 1] = r.result;
+        }
+      }
+      return out;
+    } catch {
+      /* try the next endpoint */
+    }
+  }
+  const out: any[] = [];
+  for (const c of calls) {
+    try {
+      out.push(await rpc42(c.method, c.params));
+    } catch {
+      out.push(null);
+    }
+  }
+  return out;
+}
+
+/**
  * Many eth_calls in ONE HTTP request (JSON-RPC batch). Public RPCs
  * accept batches; if this one refuses, fall back to sequential calls
  * so a search/index build still works, just slower.
