@@ -504,5 +504,51 @@ try {
   }
 }
 
+/* ---- v0.4.9: mint-name input validation. The minter accepts
+ * ONLY lowercase letters + digits (probed on-chain 2026-11-08;
+ * underscores are rejected) — the form must stop unusable
+ * characters at input time, never spend a chain check on them,
+ * and no copy anywhere may claim underscores are allowed. ---- */
+{
+  const ROOT = new URL('..', import.meta.url).pathname;
+  const getSrc = readFileSync(ROOT + 'src/screens/GetNameScreen.tsx', 'utf8');
+  const i18nSrc = readFileSync(ROOT + 'src/i18n.ts', 'utf8');
+
+  check('v0.4.9: valid names pass (lowercase, digits, mixed)',
+    core.isMintableUsername('neptune') === true &&
+    core.isMintableUsername('guppy42') === true &&
+    core.isMintableUsername('42') === true &&
+    core.isMintableUsername('a') === true);
+  check('v0.4.9: underscore is rejected (the minter refuses it on-chain)',
+    core.isMintableUsername('my_name') === false &&
+    core.isMintableUsername('_') === false);
+  check('v0.4.9: symbols, spaces and dots are rejected',
+    core.isMintableUsername('my name') === false &&
+    core.isMintableUsername('my-name') === false &&
+    core.isMintableUsername('my.name') === false &&
+    core.isMintableUsername('name!') === false);
+  check('v0.4.9: non-ASCII letters are rejected',
+    core.isMintableUsername('なまえ') === false &&
+    core.isMintableUsername('café') === false);
+  check('v0.4.9: uppercase fails the raw gate — the form lowercases as you type, so it never reaches the gate',
+    core.isMintableUsername('Neptune') === false &&
+    core.isMintableUsername('NEPTUNE') === false &&
+    /t\.toLowerCase\(\)/.test(getSrc) &&
+    /input\.trim\(\)\.toLowerCase\(\)/.test(getSrc));
+  check('v0.4.9: empty is rejected',
+    core.isMintableUsername('') === false);
+  const gateAt = getSrc.indexOf('!isMintableUsername(name)');
+  const chainAt = getSrc.indexOf('await checkName(name)');
+  check('v0.4.9: the format gate runs BEFORE the availability check (no chain reads for impossible names)',
+    gateAt > 0 && chainAt > gateAt);
+  check('v0.4.9: the rule shows live at input time (formatBad line under the field)',
+    /formatBad/.test(getSrc) && /tr\('get\.invalid'\)/.test(getSrc));
+  check('v0.4.9: no locale claims underscores are allowed any more',
+    !/underscore|アンダースコア|下划线|밑줄|guiones bajos|alt çizgi|زیرخط|garis bawah|gạch dưới|sublinhado|अंडरस्कोर|tirets bas/.test(i18nSrc));
+  check('v0.4.9: get.desc + get.invalid state the rule in all 13 locales',
+    (i18nSrc.match(/'get\.desc'/g) || []).length === 13 &&
+    (i18nSrc.match(/'get\.invalid'/g) || []).length === 13);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

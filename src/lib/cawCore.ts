@@ -212,6 +212,24 @@ export function svgFromImageUri(
   return trimmed.startsWith('<') && trimmed.includes('<svg') ? svg : null;
 }
 
+/**
+ * Mintable-username FORMAT (v0.4.9): the CawName minter accepts
+ * ONLY lowercase letters and digits — underscores and every
+ * other character are rejected on-chain (probed 2026-11-08;
+ * the web viewer enforces the same rule). This is the local,
+ * no-chain-read gate for the mint form: applied to the
+ * NORMALIZED name (trimmed + lowercased — the form lowercases
+ * as the user types), it keeps an impossible name out of the
+ * availability check entirely instead of letting it fail
+ * later. The chain's own isValidUsername stays as a second
+ * layer behind it (it may know further rules, e.g. length).
+ * Note the app's older copy claimed underscores were allowed;
+ * that was wrong and is corrected wherever it appeared.
+ */
+export function isMintableUsername(normalizedName: string): boolean {
+  return /^[a-z0-9]+$/.test(normalizedName);
+}
+
 /** Format an 18-decimal amount for display (up to 6 fraction digits). */
 export function fmtAmount(wei: bigint): string {
   const s = BigInt(wei).toString().padStart(19, '0');

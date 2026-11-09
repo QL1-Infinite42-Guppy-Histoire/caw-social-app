@@ -37,7 +37,14 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
   is corrected, so every name's on-chain card art now shows
   for every viewer. (Chosen profile pictures/headers are
   still stored only on the owner's own device — that part
-  is by design and unchanged.)
+  is by design and unchanged.) The mint form now also stops
+  unusable name characters at input time: the minter takes
+  lowercase letters and digits ONLY (underscores are
+  refused on-chain), so the form lowercases as you type,
+  shows the rule the moment an unusable character appears,
+  and never spends an availability check on an impossible
+  name — and the older copy that wrongly said underscores
+  were allowed is corrected in all 13 languages.
 
   v0.4.8 adds two balance frames to BOTH the Home wallet
   card and the header name card, in the same bordered-frame

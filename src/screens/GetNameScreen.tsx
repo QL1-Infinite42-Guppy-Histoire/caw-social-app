@@ -22,7 +22,13 @@ import {
   qcawAllowance,
   qcawBalance,
 } from '../lib/cawApi';
-import { encAddr, encStr, fmtAmount, word } from '../lib/cawCore';
+import {
+  encAddr,
+  encStr,
+  fmtAmount,
+  isMintableUsername,
+  word,
+} from '../lib/cawCore';
 import { HuntersSwapModal } from './HuntersSwapScreen';
 import { sendCalldata, signerFor } from '../lib/wallet';
 
@@ -69,6 +75,15 @@ export default function GetNameScreen() {
     setConfirm(null);
   };
 
+  // v0.4.9: the minter accepts ONLY lowercase letters + digits
+  // (underscores included in "no"). The input lowercases as the
+  // user types (the standing UX), and this live verdict shows
+  // the rule the moment an unusable character is present — the
+  // check below then refuses to spend chain reads on a name
+  // that can never be minted.
+  const formatBad =
+    input.length > 0 && !isMintableUsername(input.trim().toLowerCase());
+
   const doCheck = async () => {
     const name = input.trim().toLowerCase();
     setStatus(null);
@@ -76,7 +91,7 @@ export default function GetNameScreen() {
     setCheckedName('');
     setBalance(null);
     setAllowance(null);
-    if (!name) {
+    if (!name || !isMintableUsername(name)) {
       setCheck({ kind: 'invalid' });
       return;
     }
@@ -215,6 +230,13 @@ export default function GetNameScreen() {
           <Text style={S.darkBtnText}>{tr('get.check')}</Text>
         </Pressable>
       </View>
+
+      {/* v0.4.9: the character rule, live at input time — an
+          unusable character shows the plain message right away
+          instead of failing only at the check / the mint. */}
+      {formatBad ? (
+        <Text style={[S.err, { marginTop: 10 }]}>{tr('get.invalid')}</Text>
+      ) : null}
 
       {checking ? (
         <View style={[S.row, { marginTop: 14, gap: 8 }]}>
