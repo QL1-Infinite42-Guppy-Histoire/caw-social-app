@@ -430,6 +430,24 @@ export default function TimelineScreen() {
               {qom !== null ? fmtAmount(qom) : '—'} QOM
             </Text>
           </View>
+          <View style={{ flex: 1 }}>
+            {/* Deposited CAW (v0.4.5): the active name's in-name
+             * balance (cawBalanceOf, carried on the token from
+             * the same enumeration), labelled with the name
+             * card's shared string. No name yet -> the card's
+             * usual honest dash, like an unread balance. */}
+            <Text style={styles.statLabel} numberOfLines={2}>
+              {tr('card.inName')}
+            </Text>
+            <Text
+              style={styles.statSmall}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.45}
+            >
+              {acting ? fmtAmount(acting.balance) + ' CAW' : '—'}
+            </Text>
+          </View>
         </View>
         </Pressable>
         <View style={[S.row, { gap: 10, marginTop: 12 }]}>
