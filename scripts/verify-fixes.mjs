@@ -299,5 +299,84 @@ try {
     /nameCard: \{[^}]*marginTop: 10,/.test(appSrc));
 }
 
+/* ---- v0.4.7 (static + stubbed-fetch behaviour): a failed
+ * balance read must surface as "no read yet" (null -> the cards
+ * render "—"), NEVER as a numeric 0. Regression: in v0.4.6 the
+ * Home card showed "0 QOM" for a wallet holding ~594M QOM —
+ * walletBalances caught an eth_getBalance failure into 0n and
+ * refreshBalances stored it as if it were a real balance. ---- */
+{
+  const ROOT = new URL('..', import.meta.url).pathname;
+  const apiSrc = readFileSync(ROOT + 'src/lib/cawApi.ts', 'utf8');
+  const ctxSrc = readFileSync(ROOT + 'src/context/AppContext.tsx', 'utf8');
+  const tlSrc = readFileSync(ROOT + 'src/screens/TimelineScreen.tsx', 'utf8');
+  const appSrc = readFileSync(ROOT + 'App.tsx', 'utf8');
+
+  const wbAt = apiSrc.indexOf('export async function walletBalances');
+  const wbRegion = apiSrc.slice(wbAt, wbAt + 1400);
+  check('v0.4.7: walletBalances types its fields bigint | null (null = no successful read)',
+    /Promise<\{ qom: bigint \| null; qcaw: bigint \| null \}>/.test(wbRegion));
+  check('v0.4.7: walletBalances never converts a failed read into 0n',
+    wbAt >= 0 && !/catch\(\(\) => 0n\)/.test(wbRegion) &&
+    /catch\(\(\) => null\)/.test(wbRegion));
+  check('v0.4.7: refreshBalances stores only successful reads (a failure cannot clobber)',
+    /if \(b\.qom !== null\) setQom\(b\.qom\)/.test(ctxSrc) &&
+    /if \(b\.qcaw !== null\) setQcaw\(b\.qcaw\)/.test(ctxSrc));
+  check('v0.4.7: Home + name card QOM frames are fed by the live qom state, dash when unread',
+    /amount=\{qom !== null \? fmtAmountCard\(qom\) : null\}/.test(tlSrc) &&
+    /amount=\{qom !== null \? fmtAmountCard\(qom\) : null\}/.test(appSrc));
+
+  const realFetch = globalThis.fetch;
+  const ADDR = '0x0000000000000000000000000000000000000001';
+  const word = (n) => '0x' + n.toString(16).padStart(64, '0');
+  const stubFetch = (mode) => async (_url, opts) => {
+    if (mode === 'down') throw new Error('network down');
+    const body = JSON.parse(opts.body);
+    if (body.method === 'eth_getBalance') {
+      return {
+        json: async () =>
+          mode === 'rpcError'
+            ? { jsonrpc: '2.0', id: body.id, error: { message: 'boom' } }
+            : {
+                jsonrpc: '2.0',
+                id: body.id,
+                result: mode === 'zero' ? '0x0' : '0xde0b6b3a7640000',
+              },
+      };
+    }
+    return {
+      json: async () =>
+        mode === 'rpcError'
+          ? { jsonrpc: '2.0', id: body.id, error: { message: 'boom' } }
+          : { jsonrpc: '2.0', id: body.id, result: word(2000000000000000000n) },
+    };
+  };
+  try {
+    globalThis.fetch = stubFetch('ok');
+    const ok = await api.walletBalances(ADDR);
+    check('v0.4.7: successful reads return the real balances',
+      ok.qom === 1000000000000000000n && ok.qcaw === 2000000000000000000n,
+      'qom=' + String(ok.qom) + ' qcaw=' + String(ok.qcaw));
+    globalThis.fetch = stubFetch('zero');
+    const zero = await api.walletBalances(ADDR);
+    check('v0.4.7: a real on-chain zero stays a numeric 0 (not null, not a dash)',
+      zero.qom === 0n, 'qom=' + String(zero.qom));
+    globalThis.fetch = stubFetch('down');
+    const down = await api.walletBalances(ADDR);
+    check('v0.4.7: a failed read returns null — NEVER a numeric 0',
+      down.qom === null && down.qcaw === null,
+      'qom=' + String(down.qom) + ' qcaw=' + String(down.qcaw));
+    globalThis.fetch = stubFetch('rpcError');
+    const rerr = await api.walletBalances(ADDR);
+    check('v0.4.7: an RPC-error read returns null — NEVER a numeric 0',
+      rerr.qom === null && rerr.qcaw === null,
+      'qom=' + String(rerr.qom) + ' qcaw=' + String(rerr.qcaw));
+  } catch (e) {
+    check('v0.4.7: walletBalances failure semantics', false, String((e && e.message) || e));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

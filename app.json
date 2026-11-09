@@ -1,7 +1,7 @@
 {
   "expo": {
     "android": {
-      "versionCode": 28,
+      "versionCode": 29,
       "adaptiveIcon": {
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundColor": "#151426",
@@ -50,7 +50,7 @@
       "backgroundColor": "#151426"
     },
     "userInterfaceStyle": "light",
-    "version": "0.4.6",
+    "version": "0.4.7",
     "web": {
       "favicon": "./assets/icon.png"
     }

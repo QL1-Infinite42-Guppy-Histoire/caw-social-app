@@ -14,9 +14,23 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.4.6** — released 2026-11-09.
+- **現在版 / Current: v0.4.7** — released 2026-11-09.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.6/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.7/caw-social.apk
+  v0.4.7 is a one-line hotfix: the QOM balance on the Home
+  wallet card (and the name card) could show "0 QOM" in
+  v0.4.6 for a wallet that actually holds QOM. The balance
+  reader converted a failed eth_getBalance read into the
+  number 0, and once stored it looked like a real balance
+  and never healed. Failed reads now count as "no read yet":
+  the cards show the honest "—" until a read succeeds, a
+  later failure can never overwrite a good value, and the
+  native read retries. A real on-chain zero still shows 0.
+  Nothing else changes from v0.4.6. Verified by the v0.4.7
+  stubbed-fetch behaviour checks and static wiring guards
+  in scripts/verify-fixes.mjs, the i18n audit and the full
+  standing suite set, all green.
+
   v0.4.6 is a display-polish release from on-device
   screenshots of v0.4.5 (2026-11-09): (1) the balances on the
   name card and the Home wallet card are no longer a squeezed

@@ -281,8 +281,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const addr = addressRef.current;
     if (!addr) return;
     const b = await walletBalances(addr);
-    setQom(b.qom);
-    setQcaw(b.qcaw);
+    // v0.4.7: a null field means that read failed — never let it
+    // overwrite a good value, and before the first successful
+    // read the state stays null so the cards render "—", not 0.
+    if (b.qom !== null) setQom(b.qom);
+    if (b.qcaw !== null) setQcaw(b.qcaw);
   }, []);
 
   const refreshMyTokens = useCallback(async (): Promise<NameToken[]> => {

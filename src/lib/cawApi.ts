@@ -492,12 +492,22 @@ export function avatarFor(idIn: bigint): Promise<string | null> {
 /* ---------- balances & counts ---------- */
 export async function walletBalances(
   address: string,
-): Promise<{ qom: bigint; qcaw: bigint }> {
+): Promise<{ qom: bigint | null; qcaw: bigint | null }> {
+  // A field is null when its read never succeeded — the caller
+  // keeps whatever it already shows (or the honest "—" before the
+  // first read). v0.4.7: the pre-fix version caught failures into
+  // 0n, so one failed eth_getBalance at startup (the read races
+  // the feed + name-enumeration flood) painted a permanent-
+  // looking numeric "0 QOM" on the Home / name cards even though
+  // the wallet held QOM. A REAL on-chain zero still returns 0n —
+  // null is only ever "no successful read", never a value.
   const [qom, qcaw] = await Promise.all([
-    rpc('eth_getBalance', [address, 'latest'])
-      .then((h: string) => BigInt(h))
-      .catch(() => 0n),
-    readUint(QCAW, SEL.balanceOf + encAddr(address)).catch(() => 0n),
+    withRetry(() =>
+      rpc('eth_getBalance', [address, 'latest']).then((h: string) =>
+        BigInt(h),
+      ),
+    ).catch(() => null),
+    readUint(QCAW, SEL.balanceOf + encAddr(address)).catch(() => null),
   ]);
   return { qom, qcaw };
 }
