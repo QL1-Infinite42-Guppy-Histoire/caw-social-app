@@ -14,9 +14,31 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.4.8** — released 2026-11-09.
+- **現在版 / Current: v0.4.9** — released 2026-11-10.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.8/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.9/caw-social.apk
+  v0.4.9 changes the SuperLike price (user decision):
+  one SuperLike now costs **1,000 CAT42 in total — 500 to
+  the post's author and 500 burned** — sent as two transfers
+  (author first, so the ⭐ lands at once; then the burn). If
+  the burn leg ever fails after the author leg landed, the
+  app records the debt and the ⭐ on the post offers a
+  burn-only retry that can never pay the author twice; see
+  the SuperLike section further down. The SuperLike button
+  now also works on profile post lists and on the post
+  detail screen (v0.4.8 wired the feed cards only). The five
+  balance frames on both cards are a quarter shorter
+  (compact padding and type; same bordered look, same
+  order, same unread "—" rule). And a display bug is fixed:
+  other users' name-card avatars rendered as plain gray
+  circles — the card picture is a base64 SVG data URI and
+  the avatar decoded it as if it were percent-encoded, so
+  the renderer got base64 text instead of SVG; the decode
+  is corrected, so every name's on-chain card art now shows
+  for every viewer. (Chosen profile pictures/headers are
+  still stored only on the owner's own device — that part
+  is by design and unchanged.)
+
   v0.4.8 adds two balance frames to BOTH the Home wallet
   card and the header name card, in the same bordered-frame
   style as the existing three and in the same order on both
@@ -803,19 +825,35 @@ shows the original post** it points to, X-style, instead of a bare
 "recawed your post" line (with an explicit fallback when the
 original is not in the local index).
 
-## SuperLike (v0.4.8) — an app-original feature, not a CAW action
+## SuperLike (v0.4.8; price/split v0.4.9) — an app-original feature, not a CAW action
 
-A **SuperLike** is a fixed-price CAT42 tip — **100 CAT42**, paid
-from the sender's own wallet on 42 Chain to the post author's
-owner address — bound to one post and shown in the app as a ⭐
-count on that post. It is this app's own feature: the CAW
-protocol knows nothing about it, and sending one is NOT a CAW
-action (no QL1 post, no deposited-CAW cost).
+A **SuperLike** is a fixed-price CAT42 cheer — **1,000 CAT42
+in total** (v0.4.9; v0.4.8 shipped at 100, and no SuperLike
+was ever sent at that price, so the rule below is the only
+one) — paid from the sender's own wallet on 42 Chain as TWO
+transfers, in this order:
 
-**The binding — trailing calldata on the transfer.** The payment
-is one ordinary CAT42 `transfer(author, 100 CAT42)` whose
-calldata carries the post binding appended after the standard
-arguments:
+1. **500 CAT42 to the post author's owner address**, bound to
+   the post (trailing calldata, below) — sent first, so the
+   ⭐ count lands immediately;
+2. **500 CAT42 burned** — a plain transfer to
+   `0x000000000000000000000000000000000000dEaD`.
+
+It is shown in the app as a ⭐ count on the post. It is this
+app's own feature: the CAW protocol knows nothing about it,
+and sending one is NOT a CAW action (no QL1 post, no
+deposited-CAW cost).
+
+**If the burn leg fails** after the author leg landed, the
+app records the owed burn on-device; tapping the ⭐ on the
+post then offers a burn-only retry (the author is never paid
+twice for one SuperLike). The debt record is the only way
+into that retry.
+
+**The binding — trailing calldata on the author transfer.**
+The author leg is one ordinary CAT42 `transfer(author, 500
+CAT42)` whose calldata carries the post binding appended
+after the standard arguments:
 
 ```
 transfer calldata (68 bytes)
@@ -835,15 +873,18 @@ without ever reading the trailing bytes.
 SuperLike count is the number of CAT42 transfers TO the post
 author's owner address, at or after 42 Chain block 4,300,000,
 whose transaction input parses as the marked shape above AND
-whose amount is exactly 100 CAT42 (the Transfer log's value must
-agree). Counts come only from this chain data — the app keeps a
+whose amount is exactly 500 CAT42 (the Transfer log's value must
+agree). The burn leg carries no marker and is addressed to
+the burn address, so it never counts. Counts come only from
+this chain data — the app keeps a
 per-author scan cursor on-device (the RPCs cap `eth_getLogs`
 ranges at 10,000 blocks) and never shows a locally invented
 number.
 
 **Guards.** SuperLike on your own names' posts is blocked, a
-CAT42 balance below the fixed price is a hard stop, and every
-send passes a confirmation sheet (price, author @name + address,
+CAT42 balance below the 1,000 total is a hard stop, and every
+send passes a confirmation sheet (the split — total, author
+share, burn share — the author @name + address, and the
 current balance) and the app's fresh-authentication gate.
 
 **Honest interop note:** other clients see a plain CAT42

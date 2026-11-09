@@ -1,10 +1,19 @@
 #!/usr/bin/env node
 /**
- * SuperLike verification (v0.4.8). Behaviour where the module
- * allows it (marker codec, guard decisions, the count scanner
- * against a stubbed 42 Chain RPC), statics for the RN-bound
- * wiring (performSuperlike / TimelineScreen / PostCard), and
- * the live tolerance probe's numbers as a fixture.
+ * SuperLike verification (v0.4.8; price/split v0.4.9). Behaviour
+ * where the module allows it (marker codec, burn codec, guard
+ * decisions, the pending-burn store, the count scanner against
+ * a stubbed 42 Chain RPC), statics for the RN-bound wiring
+ * (performSuperlike / performSuperlikeBurn / TimelineScreen /
+ * ProfileScreen / PostDetailScreen / PostCard), and the live
+ * tolerance probe's numbers as a fixture.
+ *
+ * v0.4.9 price: 1,000 CAT42 total = 500 to the author (marked
+ * leg, sent first) + 500 burned (plain leg). The count rule is
+ * exactly-500: no SuperLike exists on-chain at the old v0.4.8
+ * price (the shipped scanner verified count 0), so there is
+ * no legacy 100 rule to honour — a marked 100 transfer must
+ * NOT count, and this suite pins that.
  *
  * The tolerance fixture: on 2026-11-09 both production 42
  * Chain RPCs were probed with a simulated 100 CAT42 transfer
@@ -18,6 +27,8 @@
  * eth_simulateV1 and debug_traceCall are disabled on both
  * endpoints, so logs could not be captured from simulation;
  * the Transfer log is emitted by the same untouched execution.
+ * (The probe predates the v0.4.9 price change; the marker
+ * mechanics are amount-independent.)
  */
 import { execFileSync } from 'node:child_process';
 import {
@@ -99,7 +110,7 @@ const P2 = '0x' + '22'.repeat(32);
     mark.to.toLowerCase() === OWNER.toLowerCase(),
     'round-trip: recipient survives',
   );
-  ok(mark.amount === 100n * 10n ** 18n, 'round-trip: amount is 100 CAT42');
+  ok(mark.amount === 500n * 10n ** 18n, 'round-trip: amount is the 500 CAT42 author share');
   ok(mark.cawId === P1, 'round-trip: cawId survives');
   ok(SL.buildSuperlikeData(OWNER, '0x1234') === null, 'bad cawId refused');
   // the EXACT calldata shape used in the live tolerance probe
@@ -135,11 +146,45 @@ const P2 = '0x' + '22'.repeat(32);
     'probe fixture: gas delta = intrinsic cost of 36 nonzero bytes only',
   );
   ok(
-    SL.SUPERLIKE_AMOUNT_RAW === 100n * 10n ** 18n &&
-      SL.SUPERLIKE_CAT42 === 100,
-    'the fixed price constant is 100 CAT42',
+    SL.SUPERLIKE_TOTAL_CAT42 === 1000 &&
+      SL.SUPERLIKE_AUTHOR_CAT42 === 500 &&
+      SL.SUPERLIKE_BURN_CAT42 === 500 &&
+      SL.SUPERLIKE_TOTAL_RAW === 1000n * 10n ** 18n &&
+      SL.SUPERLIKE_AUTHOR_RAW === 500n * 10n ** 18n &&
+      SL.SUPERLIKE_BURN_RAW === 500n * 10n ** 18n &&
+      SL.SUPERLIKE_AUTHOR_RAW + SL.SUPERLIKE_BURN_RAW ===
+        SL.SUPERLIKE_TOTAL_RAW,
+    'v0.4.9 price constants: 1,000 total = 500 author + 500 burn',
+  );
+  ok(
+    SL.SUPERLIKE_BURN_ADDRESS ===
+      '0x000000000000000000000000000000000000dEaD',
+    'the burn address is the established 0x…dEaD',
   );
   ok(CFG.CAT42 === '0x7386719EBbBeB4d810fF89027Bfb8A1CDf696310', 'CAT42 target');
+}
+
+/* ---------- the burn leg codec ---------- */
+{
+  const burn = SL.buildBurnData();
+  ok(
+    (burn.length - 2) / 2 === 68,
+    'burn transfer is a plain 68-byte transfer (no marker)',
+  );
+  ok(burn.startsWith('0xa9059cbb'), 'burn data starts with the transfer selector');
+  ok(
+    '0x' + burn.slice(34, 74) ===
+      '0x000000000000000000000000000000000000dead',
+    'burn recipient is 0x…dEaD',
+  );
+  ok(
+    BigInt('0x' + burn.slice(74, 138)) === 500n * 10n ** 18n,
+    'burn amount is exactly 500 CAT42',
+  );
+  ok(
+    SL.parseSuperlikeInput(burn) === null,
+    'the burn leg never parses as a SuperLike (no marker)',
+  );
 }
 
 /* ---------- guard decisions ---------- */
@@ -172,9 +217,15 @@ const P2 = '0x' + '22'.repeat(32);
     }) === null,
     'guard: someone else\u2019s post allowed',
   );
-  ok(SL.superlikeShortfall(99n * 10n ** 18n) === true, 'shortfall: 99 < 100');
-  ok(SL.superlikeShortfall(100n * 10n ** 18n) === false, 'shortfall: exactly 100 ok');
+  ok(SL.superlikeShortfall(999n * 10n ** 18n) === true, 'shortfall: 999 < 1,000 total');
+  ok(SL.superlikeShortfall(1000n * 10n ** 18n) === false, 'shortfall: exactly 1,000 ok');
+  ok(
+    SL.superlikeShortfall(500n * 10n ** 18n) === true,
+    'shortfall: the author share alone (500) is NOT enough — the burn must be covered too',
+  );
   ok(SL.superlikeShortfall(0n) === true, 'shortfall: 0 blocked');
+  ok(SL.superlikeBurnShortfall(499n * 10n ** 18n) === true, 'burn shortfall: 499 < 500');
+  ok(SL.superlikeBurnShortfall(500n * 10n ** 18n) === false, 'burn shortfall: exactly 500 ok');
 }
 
 /* ---------- the count scanner (stubbed 42 Chain RPC) ---------- */
@@ -182,6 +233,15 @@ const P2 = '0x' + '22'.repeat(32);
   const START = SL.SUPERLIKE_START_BLOCK;
   const HEAD = START + 9500; // two chunks: 9000 + 500
   const word = (n) => '0x' + n.toString(16).padStart(64, '0');
+  // txE: a marked input at the OLD v0.4.8 amount (100 CAT42),
+  // amount word rewritten by hand — under the v0.4.9
+  // exactly-500 rule it must NOT count (no SuperLike was ever
+  // sent at 100, so there is no legacy to honour).
+  const marked100 = (() => {
+    const d = SL.buildSuperlikeData(OWNER, P1);
+    const amt = (100n * 10n ** 18n).toString(16).padStart(64, '0');
+    return d.slice(0, 74) + amt + d.slice(138);
+  })();
   const txIn = {
     txA: SL.buildSuperlikeData(OWNER, P1),
     txB: SL.buildSuperlikeData(OWNER, P1), // amount fixed by builder; B is made wrong-amount below via log mismatch instead
@@ -190,14 +250,16 @@ const P2 = '0x' + '22'.repeat(32);
       '0xa9059cbb' +
       '0'.repeat(24) +
       OWNER.slice(2).toLowerCase() +
-      (100n * 10n ** 18n).toString(16).padStart(64, '0'),
+      (500n * 10n ** 18n).toString(16).padStart(64, '0'),
+    txE: marked100,
   };
-  // txB: a marked input whose LOG value disagrees (50 CAT42) -> excluded
+  // txB: a marked input whose LOG value disagrees (250 CAT42) -> excluded
   const logsChunk1 = [
-    { transactionHash: 'txA', data: word(100n * 10n ** 18n) },
-    { transactionHash: 'txB', data: word(50n * 10n ** 18n) },
-    { transactionHash: 'txC', data: word(100n * 10n ** 18n) },
-    { transactionHash: 'txD', data: word(100n * 10n ** 18n) },
+    { transactionHash: 'txA', data: word(500n * 10n ** 18n) },
+    { transactionHash: 'txB', data: word(250n * 10n ** 18n) },
+    { transactionHash: 'txC', data: word(500n * 10n ** 18n) },
+    { transactionHash: 'txD', data: word(500n * 10n ** 18n) },
+    { transactionHash: 'txE', data: word(100n * 10n ** 18n) },
   ];
   let getLogsCalls = 0;
   const kvMem = new Map();
@@ -228,7 +290,7 @@ const P2 = '0x' + '22'.repeat(32);
     return { json: async () => ({ jsonrpc: '2.0', id: body.id, ...answer(body) }) };
   };
   const n1 = await SL.superlikeCount(OWNER, P1);
-  ok(n1 === 1, 'scanner: P1 counts only the exact marked 100 CAT42 transfer');
+  ok(n1 === 1, 'scanner: P1 counts only the exact marked 500 CAT42 transfer (log-mismatch, plain and legacy-100 all excluded)');
   const n2 = await SL.superlikeCount(OWNER, P2);
   ok(n2 === 1, 'scanner: P2 counted from the same scan');
   ok(SL.superlikeCountCached(OWNER, P1) === 1, 'scanner: cached count readable');
@@ -267,7 +329,7 @@ const P2 = '0x' + '22'.repeat(32);
         if (from === START) {
           return {
             result: [
-              { transactionHash: 'txA', data: word(100n * 10n ** 18n) },
+              { transactionHash: 'txA', data: word(500n * 10n ** 18n) },
             ],
           };
         }
@@ -300,11 +362,50 @@ const P2 = '0x' + '22'.repeat(32);
   ok(recEnd.to === HEAD, 'failure: cursor reaches the head after recovery');
 }
 
+/* ---------- pending burns: the debt record ---------- */
+{
+  const me = '0x90359C6913915B9824b9ce8Abf4b85B30A5cF8cC';
+  const kvMem = new Map();
+  SL.initSuperlikeStore({
+    getItem: async (k) => kvMem.get(k) ?? null,
+    setItem: async (k, v) => void kvMem.set(k, v),
+  });
+  ok(
+    (await SL.pendingBurnFor(me, P1)) === null,
+    'pending burn: none recorded initially',
+  );
+  await SL.recordPendingBurn(me, { cawId: P1, author: OWNER, ts: 1794300000 });
+  const rec = await SL.pendingBurnFor(me, P1);
+  ok(
+    !!rec && rec.author === OWNER && rec.cawId === P1,
+    'pending burn: the debt is readable after recording',
+  );
+  ok(
+    (await SL.pendingBurnFor(me, P2)) === null,
+    'pending burn: a different post owes nothing',
+  );
+  ok(
+    (await SL.pendingBurnFor(OWNER, P1)) === null,
+    'pending burn: a different sender owes nothing',
+  );
+  const savedBurns = JSON.parse(kvMem.get('caw-superlike-burn-v1'));
+  ok(
+    Object.values(savedBurns).some((v) => v.cawId === P1 && v.author === OWNER),
+    'pending burn: persisted to the on-device KV (survives restarts)',
+  );
+  await SL.clearPendingBurn(me, P1);
+  ok(
+    (await SL.pendingBurnFor(me, P1)) === null,
+    'pending burn: cleared once the burn lands',
+  );
+}
+
 /* ---------- wiring statics ---------- */
 {
   const flowAll = readFileSync(ROOT + '/src/lib/actionFlow.ts', 'utf8');
   const flow = flowAll.slice(
     flowAll.indexOf('export async function performSuperlike'),
+    flowAll.indexOf('export async function performSuperlikeBurn'),
   );
   const iSelf = flow.indexOf("Error('self-superlike')");
   const iShort = flow.indexOf("Error('shortfall')");
@@ -313,6 +414,7 @@ const P2 = '0x' + '22'.repeat(32);
   ok(iShort > 0 && iShort < iSend, 'performSuperlike: shortfall stop precedes the send');
   ok(flow.includes('cat42BalanceOf'), 'performSuperlike: fresh CAT42 balance read');
   ok(flow.includes('buildSuperlikeData'), 'performSuperlike: marked calldata built');
+  ok(flow.includes('buildBurnData'), 'performSuperlike: burn calldata built');
   ok(
     flow.includes("signerForHsChain(secret.kind, secret.secret, 'infinite')"),
     'performSuperlike: signs on 42 Chain with the wallet key',
@@ -320,12 +422,75 @@ const P2 = '0x' + '22'.repeat(32);
   ok(flow.includes('requireAuth'), 'performSuperlike: fresh auth gate');
   ok(
     flow.includes('refreshSuperlikesFor'),
-    'performSuperlike: author scan nudged after success',
+    'performSuperlike: author scan nudged after the author leg',
+  );
+  const iAuthorSend = flow.indexOf('sendCalldata(signer, CAT42, authorData)');
+  const iBurnSend = flow.indexOf('sendCalldata(signer, CAT42, burnData)');
+  ok(
+    iAuthorSend > 0 && iBurnSend > iAuthorSend,
+    'performSuperlike: the author leg is sent BEFORE the burn leg',
+  );
+  ok(
+    flow.includes('recordPendingBurn') && flow.includes("Error('burn-pending')"),
+    'performSuperlike: a failed burn leg records the debt and reports burn-pending',
+  );
+  const burnFlow = flowAll.slice(
+    flowAll.indexOf('export async function performSuperlikeBurn'),
+  );
+  ok(
+    burnFlow.includes('pendingBurnFor') &&
+      burnFlow.includes("Error('no-pending-burn')"),
+    'performSuperlikeBurn: refuses without a recorded debt',
+  );
+  ok(
+    burnFlow.includes('buildBurnData()') && burnFlow.includes('clearPendingBurn'),
+    'performSuperlikeBurn: sends the burn and clears the debt',
+  );
+  ok(
+    !burnFlow.includes('buildSuperlikeData'),
+    'performSuperlikeBurn: can NEVER rebuild/resend the author leg',
+  );
+  ok(
+    burnFlow.includes('superlikeBurnShortfall') && burnFlow.includes('requireAuth'),
+    'performSuperlikeBurn: fresh burn-share balance gate + auth gate',
   );
   const tl = readFileSync(ROOT + '/src/screens/TimelineScreen.tsx', 'utf8');
   ok(tl.includes('onSuperlike={handleSuperlike}'), 'TimelineScreen passes the handler');
   ok(tl.includes("tr('sl.body'"), 'TimelineScreen sheet shows cost/recipient/balance');
   ok(tl.includes("tr('sl.shortfall')"), 'TimelineScreen surfaces the shortfall guidance');
+  ok(
+    tl.includes('SUPERLIKE_TOTAL_CAT42') && tl.includes('SUPERLIKE_AUTHOR_CAT42') &&
+      tl.includes('SUPERLIKE_BURN_CAT42'),
+    'TimelineScreen sheet shows the split (total / author / burn)',
+  );
+  ok(
+    tl.includes('pendingBurnFor') && tl.includes('performSuperlikeBurn') &&
+      tl.includes("tr('sl.burnBody'"),
+    'TimelineScreen offers the burn-only retry sheet',
+  );
+  const pf = readFileSync(ROOT + '/src/screens/ProfileScreen.tsx', 'utf8');
+  ok(
+    pf.includes('onSuperlike={handleSuperlike}'),
+    'ProfileScreen post list passes the SuperLike handler (v0.4.9)',
+  );
+  ok(
+    pf.includes('performSuperlike') && pf.includes("tr('sl.body'") &&
+      pf.includes("tr('sl.self'") && pf.includes("tr('sl.shortfall'"),
+    'ProfileScreen carries the same sheet + guards as the feed',
+  );
+  ok(
+    pf.includes('pendingBurnFor') && pf.includes('performSuperlikeBurn'),
+    'ProfileScreen offers the burn-only retry too',
+  );
+  const pd = readFileSync(ROOT + '/src/screens/PostDetailScreen.tsx', 'utf8');
+  ok(
+    (pd.match(/onSuperlike=\{handleSuperlike\}/g) || []).length === 2,
+    'PostDetailScreen wires SuperLike on the post and its replies (v0.4.9)',
+  );
+  ok(
+    pd.includes('performSuperlike') && pd.includes('performSuperlikeBurn'),
+    'PostDetailScreen carries the send + burn-retry flow',
+  );
   const ui = readFileSync(ROOT + '/src/components/ui.tsx', 'utf8');
   ok(ui.includes('StarIcon'), 'PostCard renders the star treatment');
   ok(ui.includes('superlikeCount('), 'PostCard reads the chain count');

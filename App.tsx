@@ -307,7 +307,7 @@ function NameCard({ onClose }: { onClose: () => void }) {
        * five frames the card outgrows short screens, so the
        * overlay below caps its height and this content scrolls
        * inside the card; the header stays outside, untouched. */}
-      <View style={{ marginTop: 14, gap: 8 }}>
+      <View style={{ marginTop: 14, gap: 6 }}>
         <BalanceFrame
           label="CAW"
           amount={qcaw !== null ? fmtAmountCard(qcaw) : null}

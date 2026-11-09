@@ -18,7 +18,13 @@
  * audited keccak256 instead of the hand-rolled one); every preimage is
  * assembled byte-for-byte the same way.
  */
-import { getBytes, keccak256, toUtf8Bytes, toUtf8String } from 'ethers';
+import {
+  decodeBase64,
+  getBytes,
+  keccak256,
+  toUtf8Bytes,
+  toUtf8String,
+} from 'ethers';
 
 export interface CawAction {
   /** 0 = post, 1 = like, 2 = share (reCaw), 3 = follow, 4 = unfollow */
@@ -160,6 +166,50 @@ export function avatarSpec(
   const letter = name ? name.charAt(0).toUpperCase() : '?';
   const seed = name ? name.toLowerCase() : 'id:' + id.toString();
   return { letter, bg: AVATAR_COLORS[avatarHash(seed) % AVATAR_COLORS.length] };
+}
+
+/**
+ * Decode a card image URI to its SVG text (v0.4.9 fix).
+ *
+ * The CAW_NAME card image is `data:image/svg+xml;base64,<…>` —
+ * the payload is BASE64, not percent-encoding. The pre-fix
+ * Avatar ran decodeURIComponent over the payload, which returns
+ * the base64 text unchanged; react-native-svg's parser rejects
+ * that text, <SvgXml> renders nothing, and because the element
+ * was already assigned, the initial-letter fallback never ran —
+ * every name without an on-device custom picture showed as a
+ * plain gray circle (user report, 2026-11-10; reproduced
+ * off-device against live tokenURI data for tokens 1/190/410
+ * with the library's own parser). Own names were unaffected
+ * only because their device-local custom picture short-circuits
+ * this path.
+ *
+ * Returns the SVG text, or null when the URI is not an SVG data
+ * URI or does not decode to something that looks like SVG —
+ * callers then fall through to the raster branch / letter
+ * fallback instead of rendering a dead element.
+ */
+export function svgFromImageUri(
+  img: string | null | undefined,
+): string | null {
+  if (!img) return null;
+  let svg: string | null = null;
+  try {
+    if (img.startsWith('data:image/svg+xml;base64,')) {
+      svg = toUtf8String(decodeBase64(img.slice(img.indexOf(',') + 1)));
+    } else if (img.startsWith('data:image/svg+xml')) {
+      const comma = img.indexOf(',');
+      if (comma < 0) return null;
+      svg = decodeURIComponent(img.slice(comma + 1));
+    } else {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  if (!svg) return null;
+  const trimmed = svg.trim();
+  return trimmed.startsWith('<') && trimmed.includes('<svg') ? svg : null;
 }
 
 /** Format an 18-decimal amount for display (up to 6 fraction digits). */

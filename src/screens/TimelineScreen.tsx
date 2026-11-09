@@ -38,10 +38,17 @@ import {
   subscribeOwnPosts,
   visibleFeedItems,
 } from '../lib/feedSync';
-import { performAction, performSuperlike } from '../lib/actionFlow';
 import {
-  SUPERLIKE_AMOUNT_RAW,
-  SUPERLIKE_CAT42,
+  performAction,
+  performSuperlike,
+  performSuperlikeBurn,
+} from '../lib/actionFlow';
+import {
+  pendingBurnFor,
+  SUPERLIKE_AUTHOR_CAT42,
+  SUPERLIKE_BURN_CAT42,
+  SUPERLIKE_TOTAL_CAT42,
+  SUPERLIKE_TOTAL_RAW,
 } from '../lib/superlike';
 import { fmtAmountCard } from '../lib/cawCore';
 import {
@@ -365,7 +372,29 @@ export default function TimelineScreen() {
         }));
         return;
       }
-      if (app.cat42 !== null && app.cat42 < SUPERLIKE_AMOUNT_RAW) {
+      // v0.4.9: a SuperLike whose author leg landed but whose
+      // burn is still owed opens the BURN-ONLY sheet instead —
+      // its retry can never pay the author twice.
+      if (app.address) {
+        pendingBurnFor(app.address, item.cawId)
+          .then((pending) => {
+            if (pending) {
+              setSlBurnItem(item);
+              return;
+            }
+            openSuperlikeSheet(item);
+          })
+          .catch(() => openSuperlikeSheet(item));
+        return;
+      }
+      openSuperlikeSheet(item);
+    },
+    [app],
+  );
+
+  const openSuperlikeSheet = useCallback(
+    (item: TimelineItem) => {
+      if (app.cat42 !== null && app.cat42 < SUPERLIKE_TOTAL_RAW) {
         setStatusByHash((prev) => ({
           ...prev,
           [item.hash]: tr('sl.shortfall'),
@@ -402,7 +431,9 @@ export default function TimelineScreen() {
           ? tr('sl.self')
           : e instanceof Error && e.message === 'shortfall'
             ? tr('sl.shortfall')
-            : tr('act.failed');
+            : e instanceof Error && e.message === 'burn-pending'
+              ? tr('sl.burnPending')
+              : tr('act.failed');
       setStatusByHash((prev) => ({ ...prev, [item.hash]: msg }));
     } finally {
       setSlBusy(false);
@@ -410,6 +441,34 @@ export default function TimelineScreen() {
       setSlItem(null);
     }
   }, [app, slItem]);
+
+  /* ---------- pending-burn retry (v0.4.9) ---------- */
+  const [slBurnItem, setSlBurnItem] = useState<TimelineItem | null>(null);
+  const [slBurnBusy, setSlBurnBusy] = useState(false);
+
+  const confirmBurn = useCallback(async () => {
+    if (!slBurnItem) return;
+    const item = slBurnItem;
+    setSlBurnBusy(true);
+    setBusyByHash((prev) => ({ ...prev, [item.hash]: true }));
+    try {
+      await performSuperlikeBurn(app, { target: item });
+      setStatusByHash((prev) => ({
+        ...prev,
+        [item.hash]: tr('sl.burnDone'),
+      }));
+    } catch (e) {
+      const msg =
+        e instanceof Error && e.message === 'shortfall'
+          ? tr('sl.burnShortfall')
+          : tr('sl.burnPending');
+      setStatusByHash((prev) => ({ ...prev, [item.hash]: msg }));
+    } finally {
+      setSlBurnBusy(false);
+      setBusyByHash((prev) => ({ ...prev, [item.hash]: false }));
+      setSlBurnItem(null);
+    }
+  }, [app, slBurnItem]);
 
   /* ---------- wallet card identity + address chip (v0.3.4) ---------- */
   const actingCustom = acting ? app.customFor(acting.id) : undefined;
@@ -496,7 +555,7 @@ export default function TimelineScreen() {
          * SuperLike currency, labelled as such. They follow
          * the v0.4.7 rule exactly: unread/failed reads render
          * the dash, never a numeric 0. */}
-        <View style={{ marginTop: 12, gap: 8 }}>
+        <View style={{ marginTop: 12, gap: 6 }}>
           <BalanceFrame
             label={tr('home.qcaw')}
             amount={qcaw !== null ? fmtAmountCard(qcaw) : null}
@@ -781,7 +840,9 @@ export default function TimelineScreen() {
             ? tr('sl.body', {
                 name: slName || '—',
                 addr: slOwner || '—',
-                cost: String(SUPERLIKE_CAT42),
+                total: String(SUPERLIKE_TOTAL_CAT42),
+                author: String(SUPERLIKE_AUTHOR_CAT42),
+                burn: String(SUPERLIKE_BURN_CAT42),
                 balance:
                   cat42 !== null ? fmtAmountCard(cat42) : '—',
               })
@@ -792,6 +853,24 @@ export default function TimelineScreen() {
         onConfirm={confirmSuperlike}
         onCancel={() => setSlItem(null)}
         busy={slBusy}
+      />
+      <ConfirmSheet
+        visible={!!slBurnItem}
+        title={tr('sl.burnTitle')}
+        body={
+          slBurnItem
+            ? tr('sl.burnBody', {
+                burn: String(SUPERLIKE_BURN_CAT42),
+                balance:
+                  cat42 !== null ? fmtAmountCard(cat42) : '—',
+              })
+            : ''
+        }
+        confirmLabel={tr('sl.burnConfirm')}
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmBurn}
+        onCancel={() => setSlBurnItem(null)}
+        busy={slBurnBusy}
       />
       <Modal
         visible={!!recawChoice}

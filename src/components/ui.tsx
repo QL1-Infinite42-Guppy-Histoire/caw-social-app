@@ -31,7 +31,7 @@ import {
   superlikeCount,
   superlikeCountCached,
 } from '../lib/superlike';
-import { avatarSpec } from '../lib/cawCore';
+import { avatarSpec, svgFromImageUri } from '../lib/cawCore';
 import { displayTextOf, parsePostText } from '../lib/postRef';
 import type { TimelineItem } from '../lib/cawApi';
 import type { ProfileCustom } from '../lib/profileCustom';
@@ -315,23 +315,29 @@ export function BalanceFrame({
 }
 
 const balanceStyles = StyleSheet.create({
+  /* Compacted in v0.4.9 (user report: five frames ate too much
+   * vertical space on both cards): vertical padding 9 -> 5,
+   * amount 20 -> 17, label/unit 12.5 -> 11.5, amount margin
+   * 2 -> 1 — roughly a quarter shorter per frame. The bordered
+   * frame, radius, colours, truncation and the unread "—" rule
+   * are unchanged. */
   frame: {
     borderWidth: 1,
     borderColor: '#d9dee2',
     borderRadius: 12,
     backgroundColor: '#fff',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
   },
-  label: { fontSize: 12.5, color: '#536471', fontWeight: '600' },
+  label: { fontSize: 11.5, color: '#536471', fontWeight: '600' },
   amount: {
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: '800',
     color: '#0f1419',
-    marginTop: 2,
+    marginTop: 1,
     fontVariant: ['tabular-nums'],
   },
-  unit: { fontSize: 12.5, fontWeight: '600', color: '#536471' },
+  unit: { fontSize: 11.5, fontWeight: '600', color: '#536471' },
 });
 
 /* ---------- avatar (the name's card picture) ---------- */
@@ -371,12 +377,17 @@ function AvatarBase({
   if (customUri) {
     inner = <Image source={{ uri: customUri }} style={{ width: size, height: size }} />;
   }
-  if (!inner && img && img.startsWith('data:image/svg+xml')) {
-    try {
-      const svg = decodeURIComponent(img.split(',').slice(1).join(','));
+  if (!inner && img) {
+    // The card image is a BASE64 svg data URI — decode it with
+    // svgFromImageUri (v0.4.9; the pre-fix decodeURIComponent
+    // handed the raw base64 text to <SvgXml>, which rendered
+    // nothing and blocked the letter fallback: plain gray
+    // circles for every name without an on-device custom
+    // picture). A URI that does not decode to SVG falls
+    // through to the raster / letter branches below.
+    const svg = svgFromImageUri(img);
+    if (svg) {
       inner = <SvgXml xml={svg} width={size} height={size} />;
-    } catch {
-      inner = null;
     }
   }
   if (!inner && img) {

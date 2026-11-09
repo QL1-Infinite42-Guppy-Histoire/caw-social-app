@@ -393,6 +393,7 @@ try {
   const tlSrc = readFileSync(ROOT + 'src/screens/TimelineScreen.tsx', 'utf8');
   const appSrc = readFileSync(ROOT + 'App.tsx', 'utf8');
   const i18nSrc = readFileSync(ROOT + 'src/i18n.ts', 'utf8');
+  const uiSrc = readFileSync(ROOT + 'src/components/ui.tsx', 'utf8');
 
   const wbAt = apiSrc.indexOf('export async function walletBalances');
   const wbEnd = apiSrc.indexOf('export const followerCount');
@@ -424,6 +425,27 @@ try {
   check('v0.4.8: name card content scrolls inside a height-capped card',
     /maxHeight: cardMaxH/.test(appSrc) &&
     /<ScrollView[^>]*>[\s\S]{0,200}<NameCard/.test(appSrc));
+
+  /* v0.4.9: the five frames are compacted (user: they ate too
+   * much vertical space). Pin the compact metrics inside the
+   * balanceStyles block specifically, and that BOTH cards keep
+   * all five frames in the same order with a tightened stack. */
+  const balBlock = uiSrc.slice(
+    uiSrc.indexOf('const balanceStyles'),
+    uiSrc.indexOf('const balanceStyles') + 900,
+  );
+  check('v0.4.9: BalanceFrame compacted (paddingVertical 5, amount 17, label 11.5)',
+    /paddingVertical: 5/.test(balBlock) &&
+    /fontSize: 17/.test(balBlock) &&
+    /fontSize: 11\.5/.test(balBlock) &&
+    /paddingHorizontal: 12/.test(balBlock));
+  check('v0.4.9: BalanceFrame keeps the bordered look + unread dash rule',
+    /borderColor: '#d9dee2'/.test(balBlock) &&
+    /amount === null \? '—'/.test(uiSrc));
+  check('v0.4.9: both cards still render all five frames, stack gap tightened to 6',
+    (tlSrc.match(/<BalanceFrame/g) || []).length === 5 &&
+    (appSrc.match(/<BalanceFrame/g) || []).length === 5 &&
+    /marginTop: 12, gap: 6/.test(tlSrc) && /marginTop: 14, gap: 6/.test(appSrc));
 
   const realFetch = globalThis.fetch;
   const ADDR = '0x0000000000000000000000000000000000000001';

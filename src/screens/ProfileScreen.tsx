@@ -44,8 +44,19 @@ import {
   subscribeFollowIndex,
   type FollowLists,
 } from '../lib/followIndex';
-import { performAction } from '../lib/actionFlow';
-import { fmtAmount } from '../lib/cawCore';
+import {
+  performAction,
+  performSuperlike,
+  performSuperlikeBurn,
+} from '../lib/actionFlow';
+import {
+  pendingBurnFor,
+  SUPERLIKE_AUTHOR_CAT42,
+  SUPERLIKE_BURN_CAT42,
+  SUPERLIKE_TOTAL_CAT42,
+  SUPERLIKE_TOTAL_RAW,
+} from '../lib/superlike';
+import { fmtAmount, fmtAmountCard } from '../lib/cawCore';
 import {
   deleteProfileImage,
   pickAndStoreProfileImage,
@@ -379,6 +390,118 @@ export default function ProfileScreen({
     }
   }, [app, pending]);
 
+  /* ---------- SuperLike (v0.4.9: wired here too — v0.4.8 had
+   * the send flow only on the feed cards, so profile post
+   * lists showed the ⭐ count with no way to send one) ----------
+   * Same flow, guards and sheets as the timeline: own-post
+   * block, known-shortfall hard stop, pending-burn retry that
+   * can only send the burn leg. performSuperlike re-checks
+   * everything against fresh chain reads before signing. */
+  const [slItem, setSlItem] = useState<TimelineItem | null>(null);
+  const [slName, setSlName] = useState('');
+  const [slOwner, setSlOwner] = useState('');
+  const [slBusy, setSlBusy] = useState(false);
+  const [slBurnItem, setSlBurnItem] = useState<TimelineItem | null>(null);
+  const [slBurnBusy, setSlBurnBusy] = useState(false);
+
+  const openSuperlikeSheet = useCallback(
+    (item: TimelineItem) => {
+      if (app.cat42 !== null && app.cat42 < SUPERLIKE_TOTAL_RAW) {
+        setStatusByHash((prev) => ({
+          ...prev,
+          [item.hash]: tr('sl.shortfall'),
+        }));
+        return;
+      }
+      resolveName(item.senderId)
+        .then((n) => setSlName(n ? '@' + n : ''))
+        .catch(() => setSlName(''));
+      nameOwner(item.senderId)
+        .then((o) => setSlOwner(o.slice(0, 6) + '…' + o.slice(-4)))
+        .catch(() => setSlOwner(''));
+      setSlItem(item);
+    },
+    [app],
+  );
+
+  const handleSuperlike = useCallback(
+    (item: TimelineItem) => {
+      if (app.myTokens.some((t) => t.id === item.senderId)) {
+        setStatusByHash((prev) => ({
+          ...prev,
+          [item.hash]: tr('sl.self'),
+        }));
+        return;
+      }
+      if (app.address) {
+        pendingBurnFor(app.address, item.cawId)
+          .then((pending) => {
+            if (pending) {
+              setSlBurnItem(item);
+              return;
+            }
+            openSuperlikeSheet(item);
+          })
+          .catch(() => openSuperlikeSheet(item));
+        return;
+      }
+      openSuperlikeSheet(item);
+    },
+    [app, openSuperlikeSheet],
+  );
+
+  const confirmSuperlike = useCallback(async () => {
+    if (!slItem) return;
+    const item = slItem;
+    setSlBusy(true);
+    setBusyByHash((prev) => ({ ...prev, [item.hash]: true }));
+    try {
+      await performSuperlike(app, { target: item });
+      setStatusByHash((prev) => ({
+        ...prev,
+        [item.hash]: tr('sl.done'),
+      }));
+    } catch (e) {
+      const msg =
+        e instanceof Error && e.message === 'self-superlike'
+          ? tr('sl.self')
+          : e instanceof Error && e.message === 'shortfall'
+            ? tr('sl.shortfall')
+            : e instanceof Error && e.message === 'burn-pending'
+              ? tr('sl.burnPending')
+              : tr('act.failed');
+      setStatusByHash((prev) => ({ ...prev, [item.hash]: msg }));
+    } finally {
+      setSlBusy(false);
+      setBusyByHash((prev) => ({ ...prev, [item.hash]: false }));
+      setSlItem(null);
+    }
+  }, [app, slItem]);
+
+  const confirmBurn = useCallback(async () => {
+    if (!slBurnItem) return;
+    const item = slBurnItem;
+    setSlBurnBusy(true);
+    setBusyByHash((prev) => ({ ...prev, [item.hash]: true }));
+    try {
+      await performSuperlikeBurn(app, { target: item });
+      setStatusByHash((prev) => ({
+        ...prev,
+        [item.hash]: tr('sl.burnDone'),
+      }));
+    } catch (e) {
+      const msg =
+        e instanceof Error && e.message === 'shortfall'
+          ? tr('sl.burnShortfall')
+          : tr('sl.burnPending');
+      setStatusByHash((prev) => ({ ...prev, [item.hash]: msg }));
+    } finally {
+      setSlBurnBusy(false);
+      setBusyByHash((prev) => ({ ...prev, [item.hash]: false }));
+      setSlBurnItem(null);
+    }
+  }, [app, slBurnItem]);
+
   const confirmFollow = useCallback(async () => {
     if (profileId === null) return;
     setFollowBusy(true);
@@ -616,6 +739,7 @@ export default function ProfileScreen({
             lang={lang}
             onOpenProfile={(name) => app.openProfile(name)}
             onAction={handleAction}
+            onSuperlike={handleSuperlike}
             onOpenPost={(it) => app.openPost(it)}
             onReply={(it) => app.openCompose({ kind: 'reply', post: it })}
             actionStatus={statusByHash[item.hash]}
@@ -675,6 +799,46 @@ export default function ProfileScreen({
         onConfirm={confirmAction}
         onCancel={() => setPending(null)}
         busy={pending ? !!busyByHash[pending.item.hash] : false}
+      />
+      <ConfirmSheet
+        visible={!!slItem}
+        title={tr('sl.title')}
+        body={
+          slItem
+            ? tr('sl.body', {
+                name: slName || '—',
+                addr: slOwner || '—',
+                total: String(SUPERLIKE_TOTAL_CAT42),
+                author: String(SUPERLIKE_AUTHOR_CAT42),
+                burn: String(SUPERLIKE_BURN_CAT42),
+                balance:
+                  app.cat42 !== null ? fmtAmountCard(app.cat42) : '—',
+              })
+            : ''
+        }
+        confirmLabel={tr('sl.confirm')}
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmSuperlike}
+        onCancel={() => setSlItem(null)}
+        busy={slBusy}
+      />
+      <ConfirmSheet
+        visible={!!slBurnItem}
+        title={tr('sl.burnTitle')}
+        body={
+          slBurnItem
+            ? tr('sl.burnBody', {
+                burn: String(SUPERLIKE_BURN_CAT42),
+                balance:
+                  app.cat42 !== null ? fmtAmountCard(app.cat42) : '—',
+              })
+            : ''
+        }
+        confirmLabel={tr('sl.burnConfirm')}
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmBurn}
+        onCancel={() => setSlBurnItem(null)}
+        busy={slBurnBusy}
       />
       <Modal
         visible={!!recawChoice}

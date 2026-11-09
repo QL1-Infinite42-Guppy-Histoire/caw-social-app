@@ -3,10 +3,15 @@ import type { AppContextValue } from '../context/AppContext';
 import { nameOwner, type TimelineItem } from './cawApi';
 import { isSelfFollowOwners, type CawAction } from './cawCore';
 import {
+  buildBurnData,
   buildSuperlikeData,
   cat42BalanceOf,
+  clearPendingBurn,
+  pendingBurnFor,
+  recordPendingBurn,
   refreshSuperlikesFor,
   superlikeBlockReason,
+  superlikeBurnShortfall,
   superlikeShortfall,
 } from './superlike';
 import {
@@ -123,13 +128,15 @@ export async function performAction(
 }
 
 /**
- * SuperLike （超いいね, v0.4.8): the fixed-price CAT42 tip bound
- * to a post — see lib/superlike.ts for the binding design and
- * its pre-design verification. NOT a CAW protocol action: the
- * payment is an ordinary 42 Chain CAT42 transfer (with the
- * marker as trailing calldata) from this wallet to the post
- * author's owner address; the same key signs, gated by the
- * same fresh authentication as every other send.
+ * SuperLike （超いいね, v0.4.8; price/split v0.4.9): the
+ * fixed-price CAT42 tip bound to a post — see lib/superlike.ts
+ * for the binding design and its pre-design verification. NOT
+ * a CAW protocol action: the payment is two ordinary 42 Chain
+ * CAT42 transfers from this wallet — 500 to the post author's
+ * owner address FIRST (with the marker as trailing calldata,
+ * so the ⭐ count lands immediately), then a plain 500 to the
+ * burn address. The same key signs both, gated by the same
+ * fresh authentication as every other send.
  *
  * Guards, all BEFORE anything is signed:
  *  - the author's owner is resolved fresh (ownerOf) — an
@@ -138,10 +145,16 @@ export async function performAction(
  *  - self-SuperLike is blocked (Error('self-superlike')): the
  *    post's name in my tokens, or the author owner being my
  *    own address;
- *  - the CAT42 balance is re-read fresh; short of the fixed
- *    price is a hard stop (Error('shortfall'), the balance
+ *  - the CAT42 balance is re-read fresh; short of the 1,000
+ *    total is a hard stop (Error('shortfall'), the balance
  *    attached as `balance`) — never a partial action.
  * Throws Error('auth') / Error('locked') like performAction.
+ *
+ * If the burn leg fails AFTER the author leg landed, the debt
+ * is recorded (pendingBurnFor) and Error('burn-pending') is
+ * thrown — the author keeps the share, the count stands, and
+ * the only way forward is performSuperlikeBurn, which can
+ * never resend the author leg.
  * On success the author's count scan is nudged (the count
  * itself still comes from the chain scan, not from here) and
  * the wallet balances refresh, so the spent CAT42 shows.
@@ -149,7 +162,7 @@ export async function performAction(
 export async function performSuperlike(
   app: AppContextValue,
   args: { target: TimelineItem },
-): Promise<string> {
+): Promise<{ authorHash: string; burnHash: string }> {
   if (!app.address) throw new Error('locked');
   const authorOwner = await nameOwner(args.target.senderId);
   const blocked = superlikeBlockReason({
@@ -163,8 +176,9 @@ export async function performSuperlike(
   if (superlikeShortfall(balance)) {
     throw Object.assign(new Error('shortfall'), { balance });
   }
-  const data = buildSuperlikeData(authorOwner, args.target.cawId);
-  if (!data) throw new Error('bad-post');
+  const authorData = buildSuperlikeData(authorOwner, args.target.cawId);
+  if (!authorData) throw new Error('bad-post');
+  const burnData = buildBurnData();
 
   const ok = await app.requireAuth();
   if (!ok) throw new Error('auth');
@@ -173,8 +187,58 @@ export async function performSuperlike(
   if (!secret) throw new Error('locked');
 
   const signer = signerForHsChain(secret.kind, secret.secret, 'infinite');
-  const hash = await sendCalldata(signer, CAT42, data);
+  // Leg 1 — the author, marked. If this throws, nothing else ran.
+  const authorHash = await sendCalldata(signer, CAT42, authorData);
   refreshSuperlikesFor(authorOwner);
+  // Leg 2 — the burn, plain. Its failure leaves an honest debt,
+  // never a second author payment.
+  let burnHash: string;
+  try {
+    burnHash = await sendCalldata(signer, CAT42, burnData);
+  } catch {
+    await recordPendingBurn(app.address, {
+      cawId: args.target.cawId,
+      author: authorOwner,
+      ts: nowSec(),
+    });
+    app.refreshBalances().catch(() => {});
+    throw new Error('burn-pending');
+  }
+  app.refreshBalances().catch(() => {});
+  return { authorHash, burnHash };
+}
+
+/**
+ * The pending-burn retry (v0.4.9): sends ONLY the burn leg of
+ * a SuperLike whose author leg already landed (see
+ * performSuperlike). The pending record is required — without
+ * it there is nothing to finish (Error('no-pending-burn')) —
+ * and the burn calldata is the only thing this function can
+ * build, so the author leg cannot be resent from here. The
+ * CAT42 balance is re-read fresh; short of the burn share is
+ * a hard stop (Error('shortfall')) and the debt stays recorded.
+ */
+export async function performSuperlikeBurn(
+  app: AppContextValue,
+  args: { target: TimelineItem },
+): Promise<string> {
+  if (!app.address) throw new Error('locked');
+  const pending = await pendingBurnFor(app.address, args.target.cawId);
+  if (!pending) throw new Error('no-pending-burn');
+  const balance = await cat42BalanceOf(app.address);
+  if (superlikeBurnShortfall(balance)) {
+    throw Object.assign(new Error('shortfall'), { balance });
+  }
+
+  const ok = await app.requireAuth();
+  if (!ok) throw new Error('auth');
+
+  const secret = app.getSecret();
+  if (!secret) throw new Error('locked');
+
+  const signer = signerForHsChain(secret.kind, secret.secret, 'infinite');
+  const hash = await sendCalldata(signer, CAT42, buildBurnData());
+  await clearPendingBurn(app.address, args.target.cawId);
   app.refreshBalances().catch(() => {});
   return hash;
 }

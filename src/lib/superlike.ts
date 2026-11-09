@@ -4,10 +4,26 @@
  * from the reader to a post's author, bound to the post
  * on-chain, and shown in the app as a ⭐ count on the post.
  *
- * THE BINDING (single atomic transaction — the shipped design):
- * the CAT42 `transfer(author, 100 CAT42)` carries the post
- * binding as TRAILING CALLDATA after the ordinary transfer
- * arguments:
+ * PRICE (v0.4.9, user decision 2026-11-10): one SuperLike costs
+ * 1,000 CAT42 in total, split in two transactions sent in this
+ * order:
+ *   1. AUTHOR leg — 500 CAT42 to the post's author, carrying
+ *      the post binding as trailing calldata (below). Sent
+ *      first so the ⭐ count lands immediately.
+ *   2. BURN leg — a plain 500 CAT42 transfer to the burn
+ *      address 0x…dEaD (no marker; it belongs to no post).
+ * If the burn leg fails after the author leg landed, the pair
+ * is left in an honest PENDING-BURN state (recorded on-device,
+ * see the pending-burn store below): the only retry offered
+ * sends the burn leg alone — the author is never paid twice
+ * for one SuperLike. (v0.4.8 shipped a single 100 CAT42 marked
+ * transfer; no SuperLike was ever sent under that price — the
+ * count scan verified 0 — so v0.4.9 switches the price and the
+ * count rule cleanly, with no legacy amount to honour.)
+ *
+ * THE BINDING (the author leg): the CAT42
+ * `transfer(author, 500 CAT42)` carries the post binding as
+ * TRAILING CALLDATA after the ordinary transfer arguments:
  *
  *     transfer calldata (68 bytes)
  *     + MAGIC  "SLK1" (4 bytes, 0x534c4b31)
@@ -36,7 +52,8 @@
  * RPCs cap eth_getLogs ranges at 10,000), fetches each
  * transfer's transaction input in batches, and counts the
  * transfers whose input carries the marker for a given cawId
- * AND whose amount is exactly the fixed price. Progress is
+ * AND whose amount is exactly the author share (500 CAT42).
+ * Progress is
  * kept per author (last scanned block + counts) in the
  * on-device KV store, so repeat reads only scan new blocks.
  * A chunk that fails stops the scan WITHOUT advancing the
@@ -56,9 +73,22 @@ import { ethCall42, rpc42, rpc42Batch } from './cawApi';
 import { decUintRet, encAddr } from './cawCore';
 import type { KVStorage } from './myActions';
 
-/** The fixed price of one SuperLike, in whole CAT42. */
-export const SUPERLIKE_CAT42 = 100;
-export const SUPERLIKE_AMOUNT_RAW = BigInt(SUPERLIKE_CAT42) * 10n ** 18n;
+/** The fixed price of one SuperLike, in whole CAT42 (v0.4.9):
+ *  1,000 total = 500 to the author + 500 burned. */
+export const SUPERLIKE_TOTAL_CAT42 = 1000;
+export const SUPERLIKE_AUTHOR_CAT42 = 500;
+export const SUPERLIKE_BURN_CAT42 = 500;
+export const SUPERLIKE_TOTAL_RAW =
+  BigInt(SUPERLIKE_TOTAL_CAT42) * 10n ** 18n;
+export const SUPERLIKE_AUTHOR_RAW =
+  BigInt(SUPERLIKE_AUTHOR_CAT42) * 10n ** 18n;
+export const SUPERLIKE_BURN_RAW =
+  BigInt(SUPERLIKE_BURN_CAT42) * 10n ** 18n;
+
+/** The project's established burn address (the CAT42 claim
+ *  site's fee burn uses the same address). */
+export const SUPERLIKE_BURN_ADDRESS =
+  '0x000000000000000000000000000000000000dEaD';
 
 /** Trailing-calldata magic: ASCII "SLK1". */
 export const SUPERLIKE_MAGIC = '534c4b31';
@@ -94,9 +124,22 @@ export function buildSuperlikeData(to: string, cawId: string): string | null {
   if (!id) return null;
   const base = ERC20_IFACE.encodeFunctionData('transfer', [
     to,
-    SUPERLIKE_AMOUNT_RAW,
+    SUPERLIKE_AUTHOR_RAW,
   ]);
   return base + SUPERLIKE_MAGIC + id;
+}
+
+/**
+ * The burn leg's transaction data: a PLAIN CAT42 transfer of
+ * the burn share to the burn address — deliberately no marker,
+ * so the scanner never mistakes it for an author leg (it is
+ * also addressed to the burn address, not to any author).
+ */
+export function buildBurnData(): string {
+  return ERC20_IFACE.encodeFunctionData('transfer', [
+    SUPERLIKE_BURN_ADDRESS,
+    SUPERLIKE_BURN_RAW,
+  ]);
 }
 
 export interface SuperlikeMark {
@@ -152,9 +195,16 @@ export function superlikeBlockReason(args: {
   return null;
 }
 
-/** True when the balance cannot cover one SuperLike. */
+/** True when the balance cannot cover one whole SuperLike
+ *  (author share + burn share, v0.4.9). */
 export function superlikeShortfall(balance: bigint): boolean {
-  return balance < SUPERLIKE_AMOUNT_RAW;
+  return balance < SUPERLIKE_TOTAL_RAW;
+}
+
+/** True when the balance cannot cover just the burn leg —
+ *  the gate for the pending-burn retry. */
+export function superlikeBurnShortfall(balance: bigint): boolean {
+  return balance < SUPERLIKE_BURN_RAW;
 }
 
 /** A trustworthy CAT42 balance read (throws on RPC failure). */
@@ -262,10 +312,10 @@ async function absorb(rec: SlRecord, ownerKey: string, logs: RawLog[]): Promise<
     const mark = parseSuperlikeInput(input);
     if (!mark) continue;
     if (mark.to.toLowerCase() !== ownerKey) continue;
-    if (mark.amount !== SUPERLIKE_AMOUNT_RAW) continue;
+    if (mark.amount !== SUPERLIKE_AUTHOR_RAW) continue;
     // The log's own value word must agree with the marked amount.
     try {
-      if (BigInt(log.data) !== SUPERLIKE_AMOUNT_RAW) continue;
+      if (BigInt(log.data) !== SUPERLIKE_AUTHOR_RAW) continue;
     } catch {
       continue;
     }
@@ -368,4 +418,98 @@ export function refreshSuperlikesFor(owner: string): void {
   scanAuthor(owner.toLowerCase())
     .then(() => notify())
     .catch(() => {});
+}
+
+/* ---------- pending burns (v0.4.9) ---------- */
+/**
+ * When the author leg of a SuperLike has landed but the burn
+ * leg has not, the pair is owed a burn. That debt is recorded
+ * here (same on-device KV as the counts, its own key) so it
+ * survives restarts and the retry can be offered honestly:
+ * the retry sends ONLY the burn leg — the record's existence
+ * is the proof the author was already paid, and nothing in the
+ * retry path can rebuild or resend the author leg.
+ */
+const BURN_KV_KEY = 'caw-superlike-burn-v1';
+
+export interface PendingBurn {
+  /** The post the SuperLike belongs to (0x + 64 hex). */
+  cawId: string;
+  /** The author who already received the author share. */
+  author: string;
+  /** Unix seconds when the author leg landed. */
+  ts: number;
+}
+
+const burnRecords = new Map<string, PendingBurn>();
+let burnLoaded: Promise<void> | null = null;
+
+function burnKey(sender: string, cawId: string): string | null {
+  const id = normCawId(cawId);
+  if (!id || !sender) return null;
+  return sender.toLowerCase() + ':' + '0x' + id;
+}
+
+function ensureBurnLoaded(): Promise<void> {
+  if (!burnLoaded) {
+    burnLoaded = (async () => {
+      if (!kv) return;
+      try {
+        const raw = await kv.getItem(BURN_KV_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as Record<string, PendingBurn>;
+        for (const [k, v] of Object.entries(parsed)) {
+          if (v && typeof v.cawId === 'string' && typeof v.author === 'string') {
+            burnRecords.set(k, v);
+          }
+        }
+      } catch {
+        /* a corrupt record just means no pending burn is shown */
+      }
+    })();
+  }
+  return burnLoaded;
+}
+
+async function persistBurns(): Promise<void> {
+  if (!kv) return;
+  try {
+    await kv.setItem(BURN_KV_KEY, JSON.stringify(Object.fromEntries(burnRecords)));
+  } catch {
+    /* the in-memory record still stands for this session */
+  }
+}
+
+/** The pending burn owed for one post by one sender, if any. */
+export async function pendingBurnFor(
+  sender: string,
+  cawId: string,
+): Promise<PendingBurn | null> {
+  const key = burnKey(sender, cawId);
+  if (!key) return null;
+  await ensureBurnLoaded();
+  return burnRecords.get(key) ?? null;
+}
+
+/** Record that an author leg landed and its burn is now owed. */
+export async function recordPendingBurn(
+  sender: string,
+  rec: PendingBurn,
+): Promise<void> {
+  const key = burnKey(sender, rec.cawId);
+  if (!key) return;
+  await ensureBurnLoaded();
+  burnRecords.set(key, rec);
+  await persistBurns();
+}
+
+/** Clear the debt once the burn leg has landed. */
+export async function clearPendingBurn(
+  sender: string,
+  cawId: string,
+): Promise<void> {
+  const key = burnKey(sender, cawId);
+  if (!key) return;
+  await ensureBurnLoaded();
+  if (burnRecords.delete(key)) await persistBurns();
 }

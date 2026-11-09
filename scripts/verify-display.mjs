@@ -25,6 +25,18 @@
  *      "neptune" and no row is labelled "loveforqom";
  *   4. the fallback law: usernames(id − 1) == card(id);
  *   5. avatarSpec letters derive from the card name.
+ *   6. (v0.4.9) the avatar PICTURE path for a NON-own name: the
+ *      card image is a base64 SVG data URI; svgFromImageUri
+ *      must decode it to real SVG carrying the name's own
+ *      text. The pre-fix Avatar ran decodeURIComponent over
+ *      the base64 payload and handed base64 text to the SVG
+ *      renderer, which rendered nothing — and because the
+ *      element was already assigned, the letter fallback
+ *      never ran: plain gray circles for every name without
+ *      an on-device custom picture (user report, 2026-11-10).
+ *      Also pinned: another user's device-local customization
+ *      is ABSENT here (by design — it lives only on their
+ *      phone), never faked.
  *
  * No keys, no sends — reads and local logic only.
  */
@@ -59,6 +71,7 @@ execFileSync(
   [
     'tsc', '--ignoreConfig',
     'src/config.ts', 'src/lib/cawCore.ts', 'src/lib/cawApi.ts',
+    'src/lib/profileCustom.ts',
     '--outDir', BUILD, '--module', 'commonjs', '--target', 'es2022',
     '--esModuleInterop', '--skipLibCheck',
   ],
@@ -66,6 +79,7 @@ execFileSync(
 );
 const core = require(BUILD + '/lib/cawCore.js');
 const api = require(BUILD + '/lib/cawApi.js');
+const { ProfileCustomStore } = require(BUILD + '/lib/profileCustom.js');
 const { CAW_NAME } = require(BUILD + '/config.js');
 
 const WALLET_A = '0x75bb70588b1de571487C4e6dd62546765B7c55e2'; // owns 189 (card: dreamin)
@@ -160,6 +174,70 @@ try {
     pic ? pic.slice(0, 32) + '…' : 'null');
 } catch (e) {
   check('avatar checks', false, String((e && e.message) || e));
+}
+
+/* ---------- 6. (v0.4.9) the card picture DECODE — non-own names ---------- */
+{
+  check('static: Avatar decodes the card picture via svgFromImageUri (ui.tsx)',
+    /svgFromImageUri\(img\)/.test(uiSrc));
+  check('static: the base64-as-percent-encoding decode is gone from the avatar path',
+    !/decodeURIComponent\(img\.split/.test(uiSrc));
+
+  // Pure fixtures first (no chain): the two data-URI shapes and
+  // the honest-null cases that must fall through to the letter.
+  const svgText = '<svg xmlns="http://www.w3.org/2000/svg" width="270" height="270"><text>guppy</text></svg>';
+  const b64 = Buffer.from(svgText, 'utf8').toString('base64');
+  check('decode: base64 SVG data URI -> the SVG text itself',
+    core.svgFromImageUri('data:image/svg+xml;base64,' + b64) === svgText);
+  check('decode: percent-encoded SVG data URI -> the SVG text itself',
+    core.svgFromImageUri('data:image/svg+xml,' + encodeURIComponent(svgText)) === svgText);
+  check('decode: garbage base64 -> null (letter fallback, not a dead element)',
+    core.svgFromImageUri('data:image/svg+xml;base64,!!!not-base64!!!') === null);
+  check('decode: base64 of non-SVG text -> null',
+    core.svgFromImageUri('data:image/svg+xml;base64,' +
+      Buffer.from('hello world', 'utf8').toString('base64')) === null);
+  check('decode: a remote URL is not an SVG data URI -> null',
+    core.svgFromImageUri('https://example.com/a.png') === null);
+  check('decode: null / empty -> null',
+    core.svgFromImageUri(null) === null && core.svgFromImageUri('') === null);
+
+  // The live path for names owned by OTHER wallets (this device
+  // holds neither): avatarFor reads the card, svgFromImageUri
+  // must yield the real card art carrying the name's own text.
+  try {
+    for (const [id, want] of [[410n, 'guppy'], [190n, 'neptune']]) {
+      const pic = await api.avatarFor(id);
+      const svg = pic ? core.svgFromImageUri(pic) : null;
+      check(`live: avatar of non-own #${id} decodes to its card SVG ("${want}")`,
+        typeof svg === 'string' && svg.trim().startsWith('<svg') &&
+          svg.includes('>' + want + '<'),
+        svg ? svg.slice(0, 40) + '…' : 'null');
+    }
+  } catch (e) {
+    check('live non-own avatar decode', false, String((e && e.message) || e));
+  }
+
+  // By design, NOT a bug: profile customization lives only on
+  // the owner's device. A store holding a custom for #190 must
+  // answer "nothing" for #410 — absent, never faked.
+  try {
+    const kvMem = new Map([
+      ['caw-profile-customs', JSON.stringify({
+        '190': { avatarPath: 'file:///device/only-mine.png', displayName: 'Mine' },
+      })],
+    ]);
+    const store = new ProfileCustomStore();
+    await store.init({
+      getItem: async (k) => kvMem.get(k) ?? null,
+      setItem: async (k, v) => void kvMem.set(k, v),
+    });
+    check('customs: my own name keeps its on-device custom picture',
+      !!store.get(190n) && store.get(190n).avatarPath === 'file:///device/only-mine.png');
+    check('customs: another user\u2019s name has NO custom on this device (absent, not faked)',
+      store.get(410n) === undefined);
+  } catch (e) {
+    check('customs absence', false, String((e && e.message) || e));
+  }
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
