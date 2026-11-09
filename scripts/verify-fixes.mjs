@@ -262,12 +262,12 @@ try {
   check('v0.4.6: BalanceFrame component exists (bordered frame, label over amount)',
     /export function BalanceFrame/.test(uiSrc) &&
     /borderColor: '#d9dee2'/.test(uiSrc) && /borderRadius: 12/.test(uiSrc));
-  check('v0.4.6: Home card renders the three balances as frames with fmtAmountCard',
-    (tlSrc.match(/<BalanceFrame/g) || []).length === 3 &&
+  check('v0.4.6+v0.4.8: Home card renders its balances as frames with fmtAmountCard (3 -> 5)',
+    (tlSrc.match(/<BalanceFrame/g) || []).length === 5 &&
     /fmtAmountCard\(qcaw\)/.test(tlSrc) &&
     /fmtAmountCard\(acting\.balance\)/.test(tlSrc));
-  check('v0.4.6: name card renders the three balances as frames with fmtAmountCard',
-    (appSrc.match(/<BalanceFrame/g) || []).length === 3 &&
+  check('v0.4.6+v0.4.8: name card renders its balances as frames with fmtAmountCard (3 -> 5)',
+    (appSrc.match(/<BalanceFrame/g) || []).length === 5 &&
     /fmtAmountCard\(acting\.balance\)/.test(appSrc));
   check('v0.4.6: Home card has no faucet button (Deposit replaced it)',
     !/FaucetButton/.test(tlSrc) && !/faucet\.title/.test(tlSrc));
@@ -313,9 +313,10 @@ try {
   const appSrc = readFileSync(ROOT + 'App.tsx', 'utf8');
 
   const wbAt = apiSrc.indexOf('export async function walletBalances');
-  const wbRegion = apiSrc.slice(wbAt, wbAt + 1400);
+  const wbEnd = apiSrc.indexOf('export const followerCount');
+  const wbRegion = apiSrc.slice(wbAt, wbEnd > wbAt ? wbEnd : wbAt + 1400);
   check('v0.4.7: walletBalances types its fields bigint | null (null = no successful read)',
-    /Promise<\{ qom: bigint \| null; qcaw: bigint \| null \}>/.test(wbRegion));
+    /Promise<\{\s*qom: bigint \| null;\s*qcaw: bigint \| null;/.test(wbRegion));
   check('v0.4.7: walletBalances never converts a failed read into 0n',
     wbAt >= 0 && !/catch\(\(\) => 0n\)/.test(wbRegion) &&
     /catch\(\(\) => null\)/.test(wbRegion));
@@ -373,6 +374,109 @@ try {
       'qom=' + String(rerr.qom) + ' qcaw=' + String(rerr.qcaw));
   } catch (e) {
     check('v0.4.7: walletBalances failure semantics', false, String((e && e.message) || e));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+/* ---- v0.4.8 (static + stubbed-fetch behaviour): the two new
+ * 42 Chain balance frames — native [42] and CAT42 (the
+ * SuperLike currency) — on BOTH cards, under the exact v0.4.7
+ * rule: unread/failed -> null -> "—", never a numeric 0; a
+ * real on-chain zero stays 0. Reads go through the HuntersSwap
+ * endpoint table (HS_CHAINS.infinite), no new endpoint. ---- */
+{
+  const ROOT = new URL('..', import.meta.url).pathname;
+  const apiSrc = readFileSync(ROOT + 'src/lib/cawApi.ts', 'utf8');
+  const cfgSrc = readFileSync(ROOT + 'src/config.ts', 'utf8');
+  const ctxSrc = readFileSync(ROOT + 'src/context/AppContext.tsx', 'utf8');
+  const tlSrc = readFileSync(ROOT + 'src/screens/TimelineScreen.tsx', 'utf8');
+  const appSrc = readFileSync(ROOT + 'App.tsx', 'utf8');
+  const i18nSrc = readFileSync(ROOT + 'src/i18n.ts', 'utf8');
+
+  const wbAt = apiSrc.indexOf('export async function walletBalances');
+  const wbEnd = apiSrc.indexOf('export const followerCount');
+  const wbRegion = apiSrc.slice(wbAt, wbEnd > wbAt ? wbEnd : wbAt + 3200);
+  check('v0.4.8: walletBalances types the 42 Chain fields bigint | null',
+    /f42: bigint \| null;\s*cat42: bigint \| null;/.test(wbRegion));
+  check('v0.4.8: [42] is a native eth_getBalance over the 42 Chain RPC helper',
+    /rpc42\('eth_getBalance'/.test(wbRegion));
+  check('v0.4.8: CAT42 is an ERC-20 balanceOf over the 42 Chain call helper',
+    /ethCall42\(CAT42, SEL\.balanceOf/.test(wbRegion));
+  check('v0.4.8: the 42 Chain RPC helper reads the HuntersSwap endpoint table',
+    /HS_CHAINS\.infinite\.rpcs/.test(apiSrc));
+  check('v0.4.8: CAT42 contract is the SuperLike token address in config',
+    /CAT42 = '0x7386719EBbBeB4d810fF89027Bfb8A1CDf696310'/.test(cfgSrc));
+  check('v0.4.8: refreshBalances stores the 42 Chain reads only on success',
+    /if \(b\.f42 !== null\) setF42\(b\.f42\)/.test(ctxSrc) &&
+    /if \(b\.cat42 !== null\) setCat42\(b\.cat42\)/.test(ctxSrc));
+  check('v0.4.8: Home card [42] + CAT42 frames are fed by live state, dash when unread',
+    /amount=\{f42 !== null \? fmtAmountCard\(f42\) : null\}/.test(tlSrc) &&
+    /amount=\{cat42 !== null \? fmtAmountCard\(cat42\) : null\}/.test(tlSrc));
+  check('v0.4.8: name card [42] + CAT42 frames are fed by live state, dash when unread',
+    /amount=\{f42 !== null \? fmtAmountCard\(f42\) : null\}/.test(appSrc) &&
+    /amount=\{cat42 !== null \? fmtAmountCard\(cat42\) : null\}/.test(appSrc));
+  check('v0.4.8: both cards use the shared SuperLike label key',
+    /tr\('card\.cat42'\)/.test(tlSrc) && /tr\('card\.cat42'\)/.test(appSrc));
+  check('v0.4.8: new label keys exist in all 13 language dicts',
+    (i18nSrc.match(/'card\.cat42'/g) || []).length === 13 &&
+    (i18nSrc.match(/'card\.f42'/g) || []).length === 13);
+  check('v0.4.8: name card content scrolls inside a height-capped card',
+    /maxHeight: cardMaxH/.test(appSrc) &&
+    /<ScrollView[^>]*>[\s\S]{0,200}<NameCard/.test(appSrc));
+
+  const realFetch = globalThis.fetch;
+  const ADDR = '0x0000000000000000000000000000000000000001';
+  const word = (n) => '0x' + n.toString(16).padStart(64, '0');
+  const stubFetch = (mode) => async (_url, opts) => {
+    if (mode === 'down') throw new Error('network down');
+    const body = JSON.parse(opts.body);
+    if (body.method === 'eth_getBalance') {
+      return {
+        json: async () =>
+          mode === 'rpcError'
+            ? { jsonrpc: '2.0', id: body.id, error: { message: 'boom' } }
+            : {
+                jsonrpc: '2.0',
+                id: body.id,
+                result: mode === 'zero' ? '0x0' : '0xde0b6b3a7640000',
+              },
+      };
+    }
+    return {
+      json: async () =>
+        mode === 'rpcError'
+          ? { jsonrpc: '2.0', id: body.id, error: { message: 'boom' } }
+          : {
+              jsonrpc: '2.0',
+              id: body.id,
+              result: word(mode === 'zero' ? 0n : 2000000000000000000n),
+            },
+    };
+  };
+  try {
+    globalThis.fetch = stubFetch('ok');
+    const ok = await api.walletBalances(ADDR);
+    check('v0.4.8: successful reads return the real 42 Chain balances',
+      ok.f42 === 1000000000000000000n && ok.cat42 === 2000000000000000000n,
+      'f42=' + String(ok.f42) + ' cat42=' + String(ok.cat42));
+    globalThis.fetch = stubFetch('zero');
+    const zero = await api.walletBalances(ADDR);
+    check('v0.4.8: a real on-chain zero stays a numeric 0 for [42] and CAT42',
+      zero.f42 === 0n && zero.cat42 === 0n,
+      'f42=' + String(zero.f42) + ' cat42=' + String(zero.cat42));
+    globalThis.fetch = stubFetch('down');
+    const down = await api.walletBalances(ADDR);
+    check('v0.4.8: failed 42 Chain reads return null — NEVER a numeric 0',
+      down.f42 === null && down.cat42 === null,
+      'f42=' + String(down.f42) + ' cat42=' + String(down.cat42));
+    globalThis.fetch = stubFetch('rpcError');
+    const rerr = await api.walletBalances(ADDR);
+    check('v0.4.8: RPC-error 42 Chain reads return null — NEVER a numeric 0',
+      rerr.f42 === null && rerr.cat42 === null,
+      'f42=' + String(rerr.f42) + ' cat42=' + String(rerr.cat42));
+  } catch (e) {
+    check('v0.4.8: walletBalances 42 Chain failure semantics', false, String((e && e.message) || e));
   } finally {
     globalThis.fetch = realFetch;
   }

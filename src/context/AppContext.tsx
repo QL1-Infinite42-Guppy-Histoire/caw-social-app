@@ -83,6 +83,11 @@ export interface AppContextValue {
   /* balances */
   qom: bigint | null;
   qcaw: bigint | null;
+  /** The same wallet's 42 Chain balances (v0.4.8): native [42]
+   *  and CAT42 (SuperLike). Same null rule as qom/qcaw — null is
+   *  "no successful read yet", never a value. */
+  f42: bigint | null;
+  cat42: bigint | null;
   refreshBalances: () => Promise<void>;
   /* acting (posting) name, remembered per account like the web version */
   actingId: bigint | null;
@@ -167,6 +172,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [unlockMethod, setUnlockMethod] = useState<UnlockMethod>('biometric');
   const [qom, setQom] = useState<bigint | null>(null);
   const [qcaw, setQcaw] = useState<bigint | null>(null);
+  const [f42, setF42] = useState<bigint | null>(null);
+  const [cat42, setCat42] = useState<bigint | null>(null);
   const [actingId, setActingId] = useState<bigint | null>(null);
   const [myTokens, setMyTokens] = useState<NameToken[]>([]);
   const [myTokensReady, setMyTokensReady] = useState(false);
@@ -286,6 +293,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // read the state stays null so the cards render "—", not 0.
     if (b.qom !== null) setQom(b.qom);
     if (b.qcaw !== null) setQcaw(b.qcaw);
+    if (b.f42 !== null) setF42(b.f42);
+    if (b.cat42 !== null) setCat42(b.cat42);
   }, []);
 
   const refreshMyTokens = useCallback(async (): Promise<NameToken[]> => {
@@ -548,6 +557,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setWallets([]);
     setQom(null);
     setQcaw(null);
+    setF42(null);
+    setCat42(null);
     setMyTokens([]);
     setMyTokensReady(false);
     tokensPaintedFor.current = null;
@@ -600,6 +611,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     getSecret: () => secretRef.current,
     qom,
     qcaw,
+    f42,
+    cat42,
     refreshBalances,
     actingId,
     myTokens,

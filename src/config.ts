@@ -16,6 +16,9 @@ export const CAW_NAME = '0x864f08Af11F6DC2c0De42562e4664d4f033D393f';
 export const CAW_ACTIONS = '0x95c2AFEc2dE8b09323Cdc7E40Bcce42C3C49E496';
 export const MINTER = '0xFC2f8743E3b09a6c973B114c3a082433e974eD9f';
 export const QCAW = '0xd2140E16aDf37194036865E90BbCA1139b739d0D';
+/** CAT42 on 42 Chain (18 decimals) — the SuperLike currency.
+ *  Same contract the aggregator engine lists (aggEngine tokens). */
+export const CAT42 = '0x7386719EBbBeB4d810fF89027Bfb8A1CDf696310';
 export const ACTION_SELECTOR = '0x84e33f2f';
 
 /** Function selectors used by the app (same values as the web front end). */

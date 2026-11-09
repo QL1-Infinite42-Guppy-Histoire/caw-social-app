@@ -14,9 +14,29 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.4.7** — released 2026-11-09.
+- **現在版 / Current: v0.4.8** — released 2026-11-09.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.7/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.8/caw-social.apk
+  v0.4.8 adds two balance frames to BOTH the Home wallet
+  card and the header name card, in the same bordered-frame
+  style as the existing three and in the same order on both
+  cards: the wallet's native [42] on 42 Chain, and its CAT42
+  — the SuperLike currency, labelled as such in all 13
+  languages. The reads reuse the HuntersSwap 42 Chain
+  endpoint table (no new endpoint) and follow the v0.4.7
+  rule exactly: an unread or failed read shows the honest
+  "—", never a numeric 0, a failed refresh never overwrites
+  a good value, and a real on-chain zero still shows 0.
+  With five frames the name card outgrows short screens, so
+  the card is now height-capped at the content area and its
+  content scrolls inside the card; the header stays outside
+  and tappable, exactly as v0.4.6 placed it. Nothing else
+  changes from v0.4.7. Verified by the v0.4.8 wiring guards
+  and stubbed-fetch behaviour checks in
+  scripts/verify-fixes.mjs (67 checks), a live read of the
+  new code path against 42 Chain, the i18n audit (66) and
+  the full standing suite set, all green.
+
   v0.4.7 is a one-line hotfix: the QOM balance on the Home
   wallet card (and the name card) could show "0 QOM" in
   v0.4.6 for a wallet that actually holds QOM. The balance

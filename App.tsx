@@ -5,8 +5,10 @@ import {
   Easing,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
@@ -187,7 +189,7 @@ function Header({
  */
 function NameCard({ onClose }: { onClose: () => void }) {
   const app = useApp();
-  const { address, myTokens, actingId, qcaw, qom } = app;
+  const { address, myTokens, actingId, qcaw, qom, f42, cat42 } = app;
   const acting =
     myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
   const custom = acting ? app.customFor(acting.id) : undefined;
@@ -298,7 +300,13 @@ function NameCard({ onClose }: { onClose: () => void }) {
        * acting.balance = cawBalanceOf from the same enumeration
        * the profile and My Names read — same source, same
        * freshness. Amounts are fmtAmountCard (display-only,
-       * truncated to 2 decimals). */}
+       * truncated to 2 decimals).
+       * v0.4.8: the two 42 Chain frames join in the same order
+       * as the Home card: native [42], then CAT42 (SuperLike),
+       * with the v0.4.7 unread rule — the dash, never a 0. With
+       * five frames the card outgrows short screens, so the
+       * overlay below caps its height and this content scrolls
+       * inside the card; the header stays outside, untouched. */}
       <View style={{ marginTop: 14, gap: 8 }}>
         <BalanceFrame
           label="CAW"
@@ -314,6 +322,16 @@ function NameCard({ onClose }: { onClose: () => void }) {
           label={tr('card.inName')}
           amount={fmtAmountCard(acting.balance)}
           unit="CAW"
+        />
+        <BalanceFrame
+          label={tr('card.f42')}
+          amount={f42 !== null ? fmtAmountCard(f42) : null}
+          unit="42"
+        />
+        <BalanceFrame
+          label={tr('card.cat42')}
+          amount={cat42 !== null ? fmtAmountCard(cat42) : null}
+          unit="CAT42"
         />
       </View>
 
@@ -385,6 +403,15 @@ function Main() {
   const [cardOpen, setCardOpen] = useState(false);
   const [cardMounted, setCardMounted] = useState(false);
   const cardAnim = useRef(new Animated.Value(0)).current;
+  /* v0.4.8: five balance frames make the name card taller than
+   * short screens. The content column's measured height caps the
+   * card (its ScrollView then scrolls INSIDE the card — the
+   * header above stays put and tappable). Until the first layout
+   * lands, fall back to a window-height fraction. */
+  const { height: winH } = useWindowDimensions();
+  const [contentH, setContentH] = useState(0);
+  const cardMaxH =
+    (contentH > 0 ? contentH : Math.round(winH * 0.86)) - 10;
   useEffect(() => {
     if (cardOpen) setCardMounted(true);
     Animated.timing(cardAnim, {
@@ -486,7 +513,10 @@ function Main() {
         onBrandPress={() => setCardOpen((o) => !o)}
         cardOpen={cardOpen}
       />
-      <View style={{ flex: 1 }}>
+      <View
+        style={{ flex: 1 }}
+        onLayout={(e) => setContentH(e.nativeEvent.layout.height)}
+      >
         {tab === 'home' && <TimelineScreen />}
         {tab === 'get' && <GetNameScreen />}
         {tab === 'mine' && <MyNamesScreen />}
@@ -521,6 +551,11 @@ function Main() {
               style={[
                 styles.nameCard,
                 {
+                  // v0.4.8: capped at the content column's
+                  // height (minus the card's 10px top margin);
+                  // the ScrollView inside scrolls the card's
+                  // content when five frames don't fit.
+                  maxHeight: cardMaxH,
                   opacity: cardAnim,
                   transform: [
                     {
@@ -536,7 +571,13 @@ function Main() {
                 },
               ]}
             >
-              <NameCard onClose={() => setCardOpen(false)} />
+              <ScrollView
+                style={{ maxHeight: cardMaxH - 32 }}
+                showsVerticalScrollIndicator={false}
+                bounces={false}
+              >
+                <NameCard onClose={() => setCardOpen(false)} />
+              </ScrollView>
             </Animated.View>
           </View>
         ) : null}

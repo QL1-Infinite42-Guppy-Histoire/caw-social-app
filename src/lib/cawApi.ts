@@ -5,7 +5,8 @@
  */
 import { decodeBase64, toUtf8String } from 'ethers';
 
-import { API, CAW_ACTIONS, CAW_NAME, EXPLORER, MINTER, QCAW, RPC, SEL } from '../config';
+import { API, CAT42, CAW_ACTIONS, CAW_NAME, EXPLORER, MINTER, QCAW, RPC, SEL } from '../config';
+import { HS_CHAINS } from './chains';
 import {
   CawAction,
   NameToken,
@@ -49,6 +50,41 @@ export async function rpc(method: string, params: unknown[]): Promise<any> {
 
 export const ethCall = (to: string, data: string): Promise<string> =>
   rpc('eth_call', [{ to, data }, 'latest']);
+
+/* ---------- 42 Chain reads (v0.4.8) ---------- */
+let rpc42Seq = 0;
+/**
+ * JSON-RPC against 42 Chain, through the endpoint table the app
+ * already uses for HuntersDEX (HS_CHAINS.infinite — no new
+ * endpoint is introduced). Each listed RPC is tried in order;
+ * the last error is thrown when all of them fail.
+ */
+export async function rpc42(method: string, params: unknown[]): Promise<any> {
+  let lastErr: unknown = null;
+  for (const url of HS_CHAINS.infinite.rpcs) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: ++rpc42Seq,
+          method,
+          params,
+        }),
+      });
+      const j = await res.json();
+      if (j.error) throw new Error(j.error.message || 'rpc error');
+      return j.result;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr;
+}
+
+export const ethCall42 = (to: string, data: string): Promise<string> =>
+  rpc42('eth_call', [{ to, data }, 'latest']);
 
 /**
  * Many eth_calls in ONE HTTP request (JSON-RPC batch). Public RPCs
@@ -492,7 +528,12 @@ export function avatarFor(idIn: bigint): Promise<string | null> {
 /* ---------- balances & counts ---------- */
 export async function walletBalances(
   address: string,
-): Promise<{ qom: bigint | null; qcaw: bigint | null }> {
+): Promise<{
+  qom: bigint | null;
+  qcaw: bigint | null;
+  f42: bigint | null;
+  cat42: bigint | null;
+}> {
   // A field is null when its read never succeeded — the caller
   // keeps whatever it already shows (or the honest "—" before the
   // first read). v0.4.7: the pre-fix version caught failures into
@@ -501,15 +542,30 @@ export async function walletBalances(
   // looking numeric "0 QOM" on the Home / name cards even though
   // the wallet held QOM. A REAL on-chain zero still returns 0n —
   // null is only ever "no successful read", never a value.
-  const [qom, qcaw] = await Promise.all([
+  // v0.4.8 adds the same wallet's two 42 Chain balances under the
+  // identical rule: the native [42] (eth_getBalance via rpc42)
+  // and CAT42, the SuperLike currency (ERC-20 balanceOf via
+  // ethCall42). Both are retried like the native QL1 read — the
+  // startup flood races these endpoints too.
+  const [qom, qcaw, f42, cat42] = await Promise.all([
     withRetry(() =>
       rpc('eth_getBalance', [address, 'latest']).then((h: string) =>
         BigInt(h),
       ),
     ).catch(() => null),
     readUint(QCAW, SEL.balanceOf + encAddr(address)).catch(() => null),
+    withRetry(() =>
+      rpc42('eth_getBalance', [address, 'latest']).then((h: string) =>
+        BigInt(h),
+      ),
+    ).catch(() => null),
+    withRetry(() =>
+      ethCall42(CAT42, SEL.balanceOf + encAddr(address)).then((h) =>
+        decUintRet(h),
+      ),
+    ).catch(() => null),
   ]);
-  return { qom, qcaw };
+  return { qom, qcaw, f42, cat42 };
 }
 
 export const followerCount = (id: bigint): Promise<bigint> =>

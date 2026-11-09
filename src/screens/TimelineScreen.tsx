@@ -59,7 +59,7 @@ let feedCache: {
 export default function TimelineScreen() {
   const insets = useSafeAreaInsets();
   const app = useApp();
-  const { lang, address, qom, qcaw, myTokens, actingId } = app;
+  const { lang, address, qom, qcaw, f42, cat42, myTokens, actingId } = app;
 
   const [items, setItems] = useState<TimelineItem[]>(
     () => feedCache?.items ?? [],
@@ -407,15 +407,21 @@ export default function TimelineScreen() {
             </Text>
           </Pressable>
         </View>
-        {/* Balances (v0.4.6): three full-width bordered frames,
-         * the same BalanceFrame the name card uses — the
-         * v0.4.5 three-across row squeezed the labels until
-         * they wrapped/truncated and the amounts overflowed
-         * (user screenshots, 2026-11-09). Amounts are
-         * fmtAmountCard: display-only, truncated to 2 decimals.
-         * The deposited CAW is the active name's in-name
-         * balance (cawBalanceOf, carried on the token from the
-         * same enumeration); no name yet -> the honest dash. */}
+        {/* Balances (v0.4.6): full-width bordered frames, the
+         * same BalanceFrame the name card uses — the v0.4.5
+         * three-across row squeezed the labels until they
+         * wrapped/truncated and the amounts overflowed (user
+         * screenshots, 2026-11-09). Amounts are fmtAmountCard:
+         * display-only, truncated to 2 decimals. The deposited
+         * CAW is the active name's in-name balance
+         * (cawBalanceOf, carried on the token from the same
+         * enumeration); no name yet -> the honest dash.
+         * v0.4.8: the same wallet's two 42 Chain balances join
+         * underneath, in the same frames and the same order as
+         * the name card: native [42], then CAT42 — the
+         * SuperLike currency, labelled as such. They follow
+         * the v0.4.7 rule exactly: unread/failed reads render
+         * the dash, never a numeric 0. */}
         <View style={{ marginTop: 12, gap: 8 }}>
           <BalanceFrame
             label={tr('home.qcaw')}
@@ -431,6 +437,16 @@ export default function TimelineScreen() {
             label={tr('card.inName')}
             amount={acting ? fmtAmountCard(acting.balance) : null}
             unit="CAW"
+          />
+          <BalanceFrame
+            label={tr('card.f42')}
+            amount={f42 !== null ? fmtAmountCard(f42) : null}
+            unit="42"
+          />
+          <BalanceFrame
+            label={tr('card.cat42')}
+            amount={cat42 !== null ? fmtAmountCard(cat42) : null}
+            unit="CAT42"
           />
         </View>
         </Pressable>
