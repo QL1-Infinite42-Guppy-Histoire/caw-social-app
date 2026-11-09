@@ -294,6 +294,18 @@ function NameCard({ onClose }: { onClose: () => void }) {
             {qom !== null ? fmtAmount(qom) : '—'}
           </Text>
         </View>
+        <View style={{ flex: 1 }}>
+          {/* The active name's deposited CAW (v0.4.5 addition):
+           * acting.balance IS cawBalanceOf from the same
+           * enumeration the profile and My Names read — same
+           * source, same freshness. */}
+          <Text style={styles.cardStatLabel} numberOfLines={2}>
+            {tr('card.inName')}
+          </Text>
+          <Text style={styles.cardStat} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.5}>
+            {fmtAmount(acting.balance)}
+          </Text>
+        </View>
       </View>
 
       {/* Notifications (v0.4.5 addition): same destination as
