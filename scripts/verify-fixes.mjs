@@ -285,6 +285,18 @@ try {
     /export function SettingsIcon/.test(uiSrc));
   check('v0.4.6: Home card button labels are single-line shrink-to-fit (no vertical split)',
     (tlSrc.match(/numberOfLines=\{1\}/g) || []).length >= 3);
+  check('v0.4.6: name-card overlay is NOT measured/anchored to the SafeAreaView (no headerH)',
+    !/headerH/.test(appSrc));
+  check('v0.4.6: card overlay anchors to the content column top (top: 0 below the header)',
+    /cardOverlay: \{\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*position: 'absolute',\s*\n\s*top: 0,/.test(appSrc) ||
+    /cardOverlay: \{[^}]*position: 'absolute',[^}]*top: 0,/.test(appSrc));
+  check('v0.4.6: overlay renders after the tab screens, inside their container (header outside it)',
+    appSrc.indexOf('styles.cardOverlay') > appSrc.indexOf("tab === 'settings'"));
+  check('v0.4.6: header brand tap toggles the card (re-tap closes it while open)',
+    /setCardOpen\(\(o\) => !o\)/.test(appSrc));
+  check('v0.4.6: card keeps a visible gap under the header (marginTop 10, slide -6 max)',
+    /nameCard: \{\s*\n\s*marginHorizontal: 12,\s*\n\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*marginTop: 10,/.test(appSrc) ||
+    /nameCard: \{[^}]*marginTop: 10,/.test(appSrc));
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

@@ -36,7 +36,13 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
   vertically on device). (3) The bottom tab bar has its
   icons back — house / search / person / gear in the app's
   feather-style vector set, above the labels, coloured with
-  them. Verified by the fmtAmountCard unit checks in
+  them. (4) The open name card no longer crowds the header:
+  it hangs a clear 10px below the header's bottom edge, the
+  dim backdrop covers only the content area, and the header
+  stays tappable while the card is open (re-tapping the
+  brand closes it) — v0.4.5 anchored the overlay to the
+  SafeAreaView with a measured header height, and the
+  safe-area inset offset it up over the header. Verified by the fmtAmountCard unit checks in
   scripts/verify-core.mjs, the v0.4.6 wiring checks in
   scripts/verify-fixes.mjs, the i18n audit and the full
   standing suite set, all green.

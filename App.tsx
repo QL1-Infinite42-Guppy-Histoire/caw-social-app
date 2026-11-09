@@ -384,7 +384,6 @@ function Main() {
   // closes it.
   const [cardOpen, setCardOpen] = useState(false);
   const [cardMounted, setCardMounted] = useState(false);
-  const [headerH, setHeaderH] = useState(0);
   const cardAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (cardOpen) setCardMounted(true);
@@ -483,57 +482,65 @@ function Main() {
 
   return (
     <SafeAreaView style={S.screen} edges={['top', 'bottom']}>
-      <View
-        onLayout={(e) => {
-          const h = e.nativeEvent.layout.height;
-          if (h > 0 && Math.abs(h - headerH) > 0.5) setHeaderH(h);
-        }}
-      >
-        <Header
-          onBrandPress={() => setCardOpen((o) => !o)}
-          cardOpen={cardOpen}
-        />
-      </View>
+      <Header
+        onBrandPress={() => setCardOpen((o) => !o)}
+        cardOpen={cardOpen}
+      />
       <View style={{ flex: 1 }}>
         {tab === 'home' && <TimelineScreen />}
         {tab === 'get' && <GetNameScreen />}
         {tab === 'mine' && <MyNamesScreen />}
         {tab === 'settings' && <SettingsScreen />}
+        {cardMounted ? (
+          /* The name-card overlay: mounted INSIDE the content
+           * column, which begins exactly under the header — so
+           * the overlay's top IS the header's bottom edge on
+           * every device, with no measurement involved, and the
+           * card (marginTop in nameCard) hangs below it with a
+           * clear gap. The header lives OUTSIDE this box: the
+           * backdrop can never cover it, the brand stays
+           * tappable while the card is open, and re-tapping it
+           * closes the card (the toggle in Header). The
+           * transparent backdrop takes every outside tap inside
+           * the content area and closes the card; later siblings
+           * (tab bar, compose button) still receive their own
+           * taps — and switching tabs closes the card anyway.
+           * v0.4.5 anchored the overlay to the SafeAreaView with
+           * a measured header height; the safe-area inset offset
+           * the two coordinate systems, so the card crept up over
+           * the header and its backdrop swallowed header taps
+           * (user screenshot, 2026-11-09). The card itself only
+           * fades/slides; nothing underneath moves. */
+          <View style={styles.cardOverlay}>
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => setCardOpen(false)}
+              accessibilityRole="button"
+            />
+            <Animated.View
+              style={[
+                styles.nameCard,
+                {
+                  opacity: cardAnim,
+                  transform: [
+                    {
+                      translateY: cardAnim.interpolate({
+                        inputRange: [0, 1],
+                        // -6 against the card's 10px top margin:
+                        // even mid-slide the card's top edge
+                        // stays below the header's bottom edge.
+                        outputRange: [-6, 0],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+            >
+              <NameCard onClose={() => setCardOpen(false)} />
+            </Animated.View>
+          </View>
+        ) : null}
       </View>
-      {cardMounted ? (
-        /* The name-card overlay (v0.4.5): starts exactly under
-         * the header, so the header row (bell, language) stays
-         * live above it; the transparent backdrop takes every
-         * outside tap and closes the card. Later siblings (tab
-         * bar, compose button) still receive their own taps —
-         * and switching tabs closes the card anyway. The card
-         * itself only fades/slides; nothing underneath moves. */
-        <View style={[styles.cardOverlay, { top: headerH }]}>
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={() => setCardOpen(false)}
-            accessibilityRole="button"
-          />
-          <Animated.View
-            style={[
-              styles.nameCard,
-              {
-                opacity: cardAnim,
-                transform: [
-                  {
-                    translateY: cardAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-10, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <NameCard onClose={() => setCardOpen(false)} />
-          </Animated.View>
-        </View>
-      ) : null}
       {tab === 'home' && !profileName && (
         <Pressable
           // v0.1.5 fix: the fixed bottom:76 left the compose button
@@ -658,14 +665,19 @@ const styles = StyleSheet.create({
   brand: { fontSize: 19, fontWeight: '800', color: '#0f1419' },
   /* Name card (v0.4.5) */
   cardOverlay: {
+    // Anchored to the content column (see Main), so top: 0 is
+    // the header's bottom edge — never over the header.
     position: 'absolute',
+    top: 0,
     start: 0,
     end: 0,
     bottom: 0,
   },
   nameCard: {
     marginHorizontal: 12,
-    marginTop: 6,
+    // The visible gap between the header's bottom edge and the
+    // card's top edge (v0.4.6; was 6 in v0.4.5).
+    marginTop: 10,
     backgroundColor: '#fff',
     borderRadius: 16,
     borderWidth: 1,
