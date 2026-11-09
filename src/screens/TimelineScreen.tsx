@@ -360,6 +360,19 @@ export default function TimelineScreen() {
   const header = (
     <View>
       <View style={styles.walletCard}>
+        {/* v0.4.5: the card's display area (identity + balances)
+         * opens my own profile. The Send / Faucet row below is a
+         * sibling, NOT part of this Pressable, and the address
+         * chip inside keeps its own copy action — nested
+         * Pressables answer their own taps, so nothing steals
+         * from anything. */}
+        <Pressable
+          onPress={
+            acting ? () => app.openProfile(acting.username) : undefined
+          }
+          style={({ pressed }) => [pressed && { opacity: 0.8 }]}
+          accessibilityRole="button"
+        >
         <View style={[S.row, { alignItems: 'center', gap: 10 }]}>
           {acting ? (
             <Avatar
@@ -418,7 +431,28 @@ export default function TimelineScreen() {
             </Text>
           </View>
         </View>
+        </Pressable>
         <View style={[S.row, { gap: 10, marginTop: 12 }]}>
+          {/* v0.4.5 (spec change): the profile jump is a VISIBLE
+           * button — the main path to my page, so a beginner sees
+           * the tappable place instead of having to discover the
+           * card-body tap above. Same button shape/size as its
+           * neighbours (44dp target, clear 10px gaps), with an
+           * accent label so it reads as navigation, not an action
+           * on the money. */}
+          <Pressable
+            style={[S.ghostBtn, { flex: 1 }]}
+            onPress={
+              acting ? () => app.openProfile(acting.username) : undefined
+            }
+            accessibilityRole="button"
+          >
+            <Text
+              style={[S.ghostBtnText, { color: ACCENT, fontWeight: '800' }]}
+            >
+              {tr('home.profile')}
+            </Text>
+          </Pressable>
           <Pressable
             style={[S.ghostBtn, { flex: 1 }]}
             onPress={() => setSendOpen(true)}

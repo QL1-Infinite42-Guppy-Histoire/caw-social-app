@@ -1,12 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Animated,
   BackHandler,
+  Easing,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { StatusBar } from 'expo-status-bar';
 import {
   SafeAreaProvider,
@@ -17,7 +21,8 @@ import {
 import { ACCENT } from './src/config';
 import { AppProvider, useApp } from './src/context/AppContext';
 import { LANGS, tr } from './src/i18n';
-import { AppLogo, PasswordPrompt, S } from './src/components/ui';
+import { AppLogo, Avatar, PasswordPrompt, S } from './src/components/ui';
+import { fmtAmount } from './src/lib/cawCore';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import UnlockScreen from './src/screens/UnlockScreen';
 import TimelineScreen from './src/screens/TimelineScreen';
@@ -51,7 +56,13 @@ function LangToggle() {
   );
 }
 
-function Header() {
+function Header({
+  onBrandPress,
+  cardOpen,
+}: {
+  onBrandPress?: () => void;
+  cardOpen?: boolean;
+}) {
   const { address, myTokens } = useApp();
   const [inboxOpen, setInboxOpen] = useState(false);
   /* Unread-reaction bell (v0.3.7): the v0.3.4 Home mini header
@@ -95,13 +106,32 @@ function Header() {
 
   return (
     <View style={styles.header}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
+      {/* v0.4.5: tapping the brand (logo + title) toggles the name
+       * card under the header. The bell and the language selector
+       * are siblings of this Pressable and keep their own taps. */}
+      <Pressable
+        onPress={onBrandPress}
+        style={({ pressed }) => [
+          { flexDirection: 'row', alignItems: 'center', gap: 9 },
+          pressed && { opacity: 0.7 },
+        ]}
+        accessibilityRole="button"
+      >
+        {/* The logo artwork itself is the app's real asset,
+         * untouched — the only addition is the small chevron
+         * beside the title text, marking the brand as the
+         * name-card toggle. */}
         <AppLogo size={34} />
         <View>
-          <Text style={styles.brand}>{tr('app.name')}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Text style={styles.brand}>{tr('app.name')}</Text>
+            <Text style={{ fontSize: 11, color: '#536471', fontWeight: '700' }}>
+              {cardOpen ? '▴' : '▾'}
+            </Text>
+          </View>
           <Text style={S.tiny}>{tr('app.tagline')}</Text>
         </View>
-      </View>
+      </Pressable>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
         <Pressable
           onPress={() => setInboxOpen(true)}
@@ -134,9 +164,163 @@ function Header() {
   );
 }
 
-// Height of the bottom tab bar below: navItem paddingVertical 12+12
-// plus the ~17px label line, plus the 1px top border.
-const TAB_BAR_HEIGHT = 42;
+/**
+ * The name card (v0.4.5): drops down under the brand header when
+ * the brand is tapped. It is an OVERLAY — the feed underneath
+ * never moves. Shows the active CAW name the way the Home wallet
+ * card does (custom avatar / display name when set, address
+ * chip, CAW + QOM balances), lets the user switch the active
+ * name (the same chooseActing the My Names screen uses), and
+ * jumps to the profile. A wallet with no name yet gets the
+ * plain state plus the way to the Get-a-name tab.
+ */
+function NameCard({ onClose }: { onClose: () => void }) {
+  const app = useApp();
+  const { address, myTokens, actingId, qcaw, qom } = app;
+  const acting =
+    myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
+  const custom = acting ? app.customFor(acting.id) : undefined;
+  const [copied, setCopied] = useState(false);
+
+  if (!acting) {
+    return (
+      <View>
+        <Text style={S.body}>{tr('mine.none')}</Text>
+        <Pressable
+          style={[S.bigBtn, { marginTop: 12 }]}
+          onPress={() => {
+            onClose();
+            app.setTab('get');
+          }}
+        >
+          <Text style={S.bigBtnText}>{tr('nav.getName')}</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const displayName = custom?.displayName
+    ? custom.displayName
+    : '@' + acting.username;
+  const chipAddress = address
+    ? address.slice(0, 6) + '…' + address.slice(-4)
+    : '—';
+  const others = myTokens.filter((t) => t.id !== acting.id);
+
+  return (
+    <View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <Avatar
+          nameId={acting.id}
+          size={52}
+          customUri={custom?.avatarPath}
+        />
+        <View style={{ flex: 1 }}>
+          {/* X-style order (user, 2026-11-09): the DISPLAY NAME is
+           * the big primary line; the @handle and the name number
+           * share the smaller line under it. */}
+          <Text style={styles.cardName} numberOfLines={1}>
+            {displayName}
+          </Text>
+          <Text style={S.small} numberOfLines={1}>
+            {custom?.displayName ? '@' + acting.username + ' · ' : ''}
+            {'#' + acting.id.toString()}
+          </Text>
+          <Pressable
+            onPress={async () => {
+              if (!address) return;
+              await Clipboard.setStringAsync(address);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            }}
+            style={({ pressed }) => [
+              styles.addrChip,
+              { alignSelf: 'flex-start', marginTop: 5 },
+              pressed && { backgroundColor: '#e3e8ea' },
+            ]}
+            accessibilityRole="button"
+          >
+            <Text style={styles.addrChipText}>
+              {copied ? '✓' : chipAddress + ' 📋'}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={{ flexDirection: 'row', gap: 16, marginTop: 14 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.cardStatLabel}>CAW</Text>
+          <Text style={styles.cardStat} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.5}>
+            {qcaw !== null ? fmtAmount(qcaw) : '—'}
+          </Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.cardStatLabel}>QOM</Text>
+          <Text style={styles.cardStat} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.5}>
+            {qom !== null ? fmtAmount(qom) : '—'}
+          </Text>
+        </View>
+      </View>
+
+      {others.length > 0 ? (
+        <View style={styles.cardSwitchBox}>
+          <ScrollView style={{ maxHeight: 168 }} nestedScrollEnabled>
+            {others.map((t) => {
+              const c = app.customFor(t.id);
+              return (
+                <Pressable
+                  key={t.id.toString()}
+                  onPress={() => app.chooseActing(t.id)}
+                  style={({ pressed }) => [
+                    styles.cardSwitchRow,
+                    pressed && { backgroundColor: '#f7f9f9' },
+                  ]}
+                  accessibilityRole="button"
+                >
+                  <Avatar nameId={t.id} size={30} customUri={c?.avatarPath} />
+                  <Text style={[S.body, { flex: 1 }]} numberOfLines={1}>
+                    {c?.displayName ? c.displayName : '@' + t.username}
+                  </Text>
+                  <Text style={S.small}>{fmtAmount(t.balance)} CAW</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+          <Pressable
+            onPress={() => {
+              onClose();
+              app.setTab('mine');
+            }}
+            style={({ pressed }) => [
+              styles.cardSwitchRow,
+              pressed && { backgroundColor: '#f7f9f9' },
+            ]}
+            accessibilityRole="button"
+          >
+            <Text style={[S.body, { color: ACCENT, fontWeight: '700' }]}>
+              {tr('nav.myNames')}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      <Pressable
+        style={[S.bigBtn, { marginTop: 14 }]}
+        onPress={() => {
+          onClose();
+          app.openProfile(acting.username);
+        }}
+      >
+        <Text style={S.bigBtnText}>{tr('home.profile')}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+// Height of the bottom tab bar below: navItem paddingVertical
+// 17+17 plus the ~20px label line (15px labels since v0.4.5),
+// plus the 1px top border.
+const TAB_BAR_HEIGHT = 55;
 
 function Main() {
   const app = useApp();
@@ -144,6 +328,24 @@ function Main() {
   // HuntersSwap opens from the tab bar's center action button. It is
   // an ACTION, not a tab: opening/closing it never changes `tab`.
   const [hsOpen, setHsOpen] = React.useState(false);
+  // Name card (v0.4.5): dropped from the brand header. Mounted
+  // only while open or animating shut; navigating anywhere
+  // closes it.
+  const [cardOpen, setCardOpen] = useState(false);
+  const [cardMounted, setCardMounted] = useState(false);
+  const [headerH, setHeaderH] = useState(0);
+  const cardAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (cardOpen) setCardMounted(true);
+    Animated.timing(cardAnim, {
+      toValue: cardOpen ? 1 : 0,
+      duration: 180,
+      easing: Easing.out(Easing.ease),
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (finished && !cardOpen) setCardMounted(false);
+    });
+  }, [cardOpen, cardAnim]);
   const {
     tab,
     setTab,
@@ -158,6 +360,10 @@ function Main() {
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (cardOpen) {
+        setCardOpen(false);
+        return true;
+      }
       if (hsOpen) {
         setHsOpen(false);
         return true;
@@ -177,7 +383,12 @@ function Main() {
       return false;
     });
     return () => sub.remove();
-  }, [hsOpen, composeOpen, profileName, postDetail, closeCompose, closeProfile, closePost]);
+  }, [cardOpen, hsOpen, composeOpen, profileName, postDetail, closeCompose, closeProfile, closePost]);
+
+  // Navigating anywhere closes the name card (v0.4.5).
+  useEffect(() => {
+    setCardOpen(false);
+  }, [tab, profileName, postDetail, composeOpen, hsOpen]);
 
   const tabs: { key: typeof tab; label: string }[] = [
     { key: 'home', label: tr('nav.home') },
@@ -188,13 +399,57 @@ function Main() {
 
   return (
     <SafeAreaView style={S.screen} edges={['top', 'bottom']}>
-      <Header />
+      <View
+        onLayout={(e) => {
+          const h = e.nativeEvent.layout.height;
+          if (h > 0 && Math.abs(h - headerH) > 0.5) setHeaderH(h);
+        }}
+      >
+        <Header
+          onBrandPress={() => setCardOpen((o) => !o)}
+          cardOpen={cardOpen}
+        />
+      </View>
       <View style={{ flex: 1 }}>
         {tab === 'home' && <TimelineScreen />}
         {tab === 'get' && <GetNameScreen />}
         {tab === 'mine' && <MyNamesScreen />}
         {tab === 'settings' && <SettingsScreen />}
       </View>
+      {cardMounted ? (
+        /* The name-card overlay (v0.4.5): starts exactly under
+         * the header, so the header row (bell, language) stays
+         * live above it; the transparent backdrop takes every
+         * outside tap and closes the card. Later siblings (tab
+         * bar, compose button) still receive their own taps —
+         * and switching tabs closes the card anyway. The card
+         * itself only fades/slides; nothing underneath moves. */
+        <View style={[styles.cardOverlay, { top: headerH }]}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setCardOpen(false)}
+            accessibilityRole="button"
+          />
+          <Animated.View
+            style={[
+              styles.nameCard,
+              {
+                opacity: cardAnim,
+                transform: [
+                  {
+                    translateY: cardAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-10, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <NameCard onClose={() => setCardOpen(false)} />
+          </Animated.View>
+        </View>
+      ) : null}
       {tab === 'home' && !profileName && (
         <Pressable
           // v0.1.5 fix: the fixed bottom:76 left the compose button
@@ -222,7 +477,7 @@ function Main() {
             <Text
               numberOfLines={1}
               adjustsFontSizeToFit
-              minimumFontScale={0.75}
+              minimumFontScale={0.6}
               style={[
                 styles.navLabel,
                 tab === t.key && styles.navLabelOn,
@@ -256,7 +511,7 @@ function Main() {
             <Text
               numberOfLines={1}
               adjustsFontSizeToFit
-              minimumFontScale={0.75}
+              minimumFontScale={0.6}
               style={[
                 styles.navLabel,
                 tab === t.key && styles.navLabelOn,
@@ -353,6 +608,51 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   brand: { fontSize: 19, fontWeight: '800', color: '#0f1419' },
+  /* Name card (v0.4.5) */
+  cardOverlay: {
+    position: 'absolute',
+    start: 0,
+    end: 0,
+    bottom: 0,
+  },
+  nameCard: {
+    marginHorizontal: 12,
+    marginTop: 6,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#eff3f4',
+    padding: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 10,
+  },
+  cardName: { fontSize: 18, fontWeight: '800', color: '#0f1419' },
+  addrChip: {
+    backgroundColor: '#f0f3f5',
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  addrChipText: { fontSize: 12, color: '#536471', fontWeight: '600' },
+  cardStatLabel: { fontSize: 12, color: '#536471', fontWeight: '600' },
+  cardStat: { fontSize: 16, fontWeight: '800', color: '#0f1419', marginTop: 2 },
+  cardSwitchBox: {
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#eff3f4',
+    paddingTop: 6,
+  },
+  cardSwitchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 4,
+    borderRadius: 10,
+  },
   bellBtn: {
     width: 40,
     height: 40,
@@ -401,13 +701,19 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -2 },
     zIndex: 10,
   },
-  navItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
+  // v0.4.5: the bar grew — labels 12px -> 15px and taller items
+  // (17+17 padding + the label line = 55px total, TAB_BAR_HEIGHT),
+  // so every tab is a comfortable >=48dp tap target. The bottom
+  // safe-area inset is still the SafeAreaView's job (edges), so
+  // gesture-nav and 3-button-nav devices get exactly one inset,
+  // as before — nothing here adds bottom padding of its own.
+  navItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 17 },
   // The center slot is narrower than the label slots so the four
-  // labels get the room; the 56px circle still fits inside it on
+  // labels get the room; the 62px circle still fits inside it on
   // standard-width phones and never overlaps a label.
-  navItemCenter: { flex: 0.8, alignItems: 'center', justifyContent: 'center', paddingVertical: 12 },
+  navItemCenter: { flex: 0.8, alignItems: 'center', justifyContent: 'center', paddingVertical: 17 },
   navLabel: {
-    fontSize: 12,
+    fontSize: 15,
     color: '#536471',
     fontWeight: '600',
     textAlign: 'center',
@@ -418,19 +724,19 @@ const styles = StyleSheet.create({
   tradeBtn: {
     // Absolutely positioned inside its (normal-height) tab slot, so
     // the bar keeps its usual height (TAB_BAR_HEIGHT stays valid
-    // and the compose FAB offset is untouched) while the circle
-    // floats above the bar: top -22 -> spans y -22..34 of the 42px
+    // and the compose FAB offset follows it) while the circle
+    // floats above the bar: top -25 -> spans y -25..37 of the 55px
     // bar, never reaching the system navigation underneath.
     position: 'absolute',
-    top: -22,
+    top: -25,
     // Physical left/marginLeft on purpose: the math (50% - half
     // the width) centers the circle in BOTH layout directions,
     // so the center tab button stays exactly centered under RTL.
     left: '50%',
-    marginLeft: -28,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    marginLeft: -31,
+    width: 62,
+    height: 62,
+    borderRadius: 31,
     backgroundColor: ACCENT,
     alignItems: 'center',
     justifyContent: 'center',
@@ -442,7 +748,7 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
   },
-  tradeBtnText: { color: '#fff', fontSize: 25, lineHeight: 28, fontWeight: '800' },
+  tradeBtnText: { color: '#fff', fontSize: 27, lineHeight: 30, fontWeight: '800' },
   fab: {
     position: 'absolute',
     // Logical end (v0.3.9 RTL): bottom-right in LTR, bottom-left

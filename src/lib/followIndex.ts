@@ -242,6 +242,11 @@ export function followListsOf(idIn: bigint): FollowLists {
   for (const [key, rec] of pairs) {
     if (rec.t !== 3) continue;
     const [s, r] = key.split('->');
+    // Self-follows (a name following itself) exist on-chain from
+    // before the app blocked them (v0.4.5); they are display noise
+    // — the name is neither its own follower nor its own follow —
+    // so derived lists never show them.
+    if (s === r) continue;
     if (s === id) following.push({ id: BigInt(r), rec });
     if (r === id) followers.push({ id: BigInt(s), rec });
   }
@@ -257,6 +262,7 @@ export function followListsOf(idIn: bigint): FollowLists {
 
 /** Is (sender -> receiver) currently a follow, per the index? */
 export function isFollowingIndexed(sender: bigint, receiver: bigint): boolean {
+  if (sender === receiver) return false; // self-follows never count
   const rec = pairs.get(pairKey(sender, receiver));
   return !!rec && rec.t === 3;
 }
@@ -319,6 +325,12 @@ export async function refinedFollowListsOf(
     refine(base.followers, false),
   ]);
   return { following, followers };
+}
+
+/** Feed items through the pair merge directly (tests — the live
+ *  build path goes through buildFollowIndex's page walk). */
+export function mergeFollowItemsForTest(items: TimelineItem[]): void {
+  for (const it of items) mergeItem(it);
 }
 
 /** Drop the in-memory index (tests). */

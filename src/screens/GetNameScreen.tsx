@@ -166,6 +166,16 @@ export default function GetNameScreen() {
       await sendCalldata(signer, MINTER, SEL.mint + encStr(checkedName));
       setStatus({ text: tr('get.done'), tone: 'ok' });
       setConfirm(null);
+      // v0.4.5: a successful mint resets the form to its initial
+      // state — the typed name, its check result, the NFT preview
+      // and the step panel all clear (the success line above
+      // stays). On failure nothing here runs, so the typed name
+      // and its panel stay for a retry, as before.
+      setInput('');
+      setCheck(null);
+      setCheckedName('');
+      setBalance(null);
+      setAllowance(null);
       clearNameCaches();
       await app.refreshMyTokens();
       await app.refreshBalances();

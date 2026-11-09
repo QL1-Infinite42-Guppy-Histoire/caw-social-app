@@ -12,7 +12,9 @@ import React, {
 
 import { Lang, getLang, isLang, setLang, tr } from '../i18n';
 import {
+  nameCountOf,
   setActionObserver,
+  subscribeOwnedTokens,
   tokensOf,
   walletBalances,
   type TimelineItem,
@@ -28,7 +30,11 @@ export interface ComposeTarget {
 }
 import { initDrafts } from '../lib/drafts';
 import { initFollowIndex } from '../lib/followIndex';
-import { initNameDirectory } from '../lib/nameDirectory';
+import {
+  directoryName,
+  hydrateNameDirectory,
+  initNameDirectory,
+} from '../lib/nameDirectory';
 import type { MyActionKind } from '../lib/myActions';
 import type { ProfileCustom } from '../lib/profileCustom';
 import { applyLayoutDirection } from '../lib/rtl';
@@ -81,6 +87,10 @@ export interface AppContextValue {
   /* acting (posting) name, remembered per account like the web version */
   actingId: bigint | null;
   myTokens: NameToken[];
+  /** True once a fresh enumeration for the CURRENT wallet has
+   *  completed (v0.4.5). Until then an empty myTokens means
+   *  "still reading", never "this wallet has no names". */
+  myTokensReady: boolean;
   refreshMyTokens: () => Promise<NameToken[]>;
   chooseActing: (id: bigint) => void;
   /* my like / share / follow state, remembered on this device */
@@ -151,6 +161,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [qcaw, setQcaw] = useState<bigint | null>(null);
   const [actingId, setActingId] = useState<bigint | null>(null);
   const [myTokens, setMyTokens] = useState<NameToken[]>([]);
+  const [myTokensReady, setMyTokensReady] = useState(false);
+  /** Which wallet the saved my-names snapshot was last painted
+   *  for (v0.4.5), so a wallet switch re-paints from its own
+   *  snapshot instead of reusing the previous wallet's. */
+  const tokensPaintedFor = useRef<string | null>(null);
+  const myTokensRef = useRef<NameToken[]>([]);
+  useEffect(() => {
+    myTokensRef.current = myTokens;
+  }, [myTokens]);
   const [tab, setTab] = useState<Tab>('home');
   const [profileName, setProfileName] = useState<string | null>(null);
   const [postDetail, setPostDetail] = useState<TimelineItem | null>(null);
@@ -181,7 +200,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (address) myActionStore.init(storeKV, address).catch(() => {});
+    // A new wallet's list is "not read yet" until its own fresh
+    // enumeration completes (v0.4.5).
+    setMyTokensReady(false);
   }, [address]);
+
+  /* Progressive my-names (v0.4.5): the enumeration reports the
+   * names it has already proven (snapshot-shaped partial lists);
+   * paint them as they land for the CURRENT wallet. A partial is
+   * only ever more complete than the one before, so a simple
+   * (count, named-count) comparison keeps the freshest. */
+  useEffect(() => {
+    return subscribeOwnedTokens((owner, toks) => {
+      const addr = addressRef.current;
+      if (!addr || owner.toLowerCase() !== addr.toLowerCase()) return;
+      setMyTokens((prev) => {
+        const score = (l: NameToken[]) =>
+          l.length * 100000 + l.filter((t) => t.username).length;
+        return score(toks) >= score(prev) ? toks : prev;
+      });
+    });
+  }, []);
 
   /* ---------- boot ---------- */
   useEffect(() => {
@@ -240,9 +279,62 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshMyTokens = useCallback(async (): Promise<NameToken[]> => {
     const addr = addressRef.current;
     if (!addr) return [];
-    const toks = await tokensOf(addr);
+    // Paint the last saved snapshot first (v0.4.5): a returning
+    // wallet sees its names at once and the fresh enumeration
+    // below replaces them. A snapshot never marks the list
+    // "ready" — only a completed fresh read does.
+    if (tokensPaintedFor.current !== addr.toLowerCase()) {
+      tokensPaintedFor.current = addr.toLowerCase();
+      try {
+        const raw = await AsyncStorage.getItem(
+          'caw-mytokens-v1-' + addr.toLowerCase(),
+        );
+        if (raw) {
+          const arr = JSON.parse(raw) as {
+            id: string;
+            balance: string;
+            username: string;
+          }[];
+          if (Array.isArray(arr) && arr.length > 0) {
+            setMyTokens(
+              arr.map((t) => ({
+                id: BigInt(t.id),
+                balance: BigInt(t.balance || '0'),
+                username: t.username || '',
+              })),
+            );
+          }
+        }
+      } catch {
+        /* a broken snapshot just means a cold paint */
+      }
+    }
+    await hydrateNameDirectory().catch(() => {});
+    const toks = await tokensOf(addr, { nameOf: directoryName });
+    // A resolved [] can mean a TRUE zero — or a failed enumeration
+    // (tokensOf resolves [] on a transient RPC failure, and until
+    // v0.4.5 the screen called both "no names"). One cheap
+    // balanceOf probe tells them apart: only a proven zero may
+    // clear what is painted or mark the list ready.
+    if (toks.length === 0) {
+      const probe = await nameCountOf(addr).catch(() => null);
+      if (probe !== 0n) {
+        return myTokensRef.current;
+      }
+    }
     setMyTokens(toks);
+    setMyTokensReady(true);
     myActionStore.registerOwnIds(toks.map((t) => t.id));
+    AsyncStorage.setItem(
+      'caw-mytokens-v1-' + addr.toLowerCase(),
+      JSON.stringify(
+        toks.map((t) => ({
+          id: t.id.toString(),
+          balance: t.balance.toString(),
+          username: t.username,
+        })),
+      ),
+    ).catch(() => {});
     // restore the remembered acting name when still owned (web behaviour)
     try {
       const saved = await AsyncStorage.getItem(actingKey(addr));
@@ -444,6 +536,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setQom(null);
     setQcaw(null);
     setMyTokens([]);
+    setMyTokensReady(false);
+    tokensPaintedFor.current = null;
     setActingId(null);
     setLocked(false);
     setTab('home');
@@ -489,6 +583,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshBalances,
     actingId,
     myTokens,
+    myTokensReady,
     refreshMyTokens,
     chooseActing,
     hasMyAction,

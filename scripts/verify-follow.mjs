@@ -227,5 +227,67 @@ nameDir.initNameDirectory(memKV());
   );
 }
 
+/* ---- 6. Self-follows (v0.4.5): blocked by ownership, and
+ *        existing on-chain self-follows never derived ---- */
+{
+  const {
+    followListsOf: listsOf,
+    isFollowingIndexed: isFolIdx,
+    mergeFollowItemsForTest: mergeItems,
+    resetFollowIndexForTest: resetIdx,
+  } = require(BUILD + '/lib/followIndex.js');
+  const { isSelfFollowOwners } = require(BUILD + '/lib/cawCore.js');
+  const OA = '0xAbC0000000000000000000000000000000000001';
+  check(
+    'selffollow: same owner (any case) is a self-follow',
+    isSelfFollowOwners(OA, OA.toLowerCase()) === true,
+  );
+  check(
+    'selffollow: different owners are not',
+    isSelfFollowOwners(OA, '0x0000000000000000000000000000000000000002') ===
+      false,
+  );
+  check(
+    'selffollow: an unread owner decides nothing',
+    isSelfFollowOwners(null, OA) === false &&
+      isSelfFollowOwners(OA, undefined) === false,
+  );
+
+  resetIdx();
+  const F = (s, r, b) => ({
+    type: 3,
+    senderId: BigInt(s),
+    receiverId: BigInt(r),
+    block: b,
+    txIndex: 0,
+    hash: '0xf' + b,
+  });
+  // 7->7 and 8->8 exist on-chain (pre-fix accidents); 7<->8 is real.
+  mergeItems([F(7, 7, 100), F(7, 8, 101), F(8, 7, 102), F(8, 8, 103)]);
+  const l7 = listsOf(7n);
+  const l8 = listsOf(8n);
+  const asStrings = (a) => a.map(String).join(',');
+  check(
+    'selffollow: own name absent from own following list',
+    l7.following.length === 1 && l7.following[0] === 8n,
+    asStrings(l7.following),
+  );
+  check(
+    'selffollow: own name absent from own followers list',
+    l7.followers.length === 1 && l7.followers[0] === 8n,
+    asStrings(l7.followers),
+  );
+  check(
+    'selffollow: the other side sees only the real pair too',
+    l8.following.length === 1 &&
+      l8.following[0] === 7n &&
+      l8.followers.length === 1 &&
+      l8.followers[0] === 7n,
+  );
+  check('selffollow: isFollowingIndexed(self) is false', isFolIdx(7n, 7n) === false);
+  check('selffollow: a normal follow is still indexed', isFolIdx(7n, 8n) === true);
+  resetIdx();
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

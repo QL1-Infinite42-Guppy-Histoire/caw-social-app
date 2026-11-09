@@ -110,6 +110,8 @@ export default function ProfileScreen({
 
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState('');
+  const [editBio, setEditBio] = useState('');
+  const [editNote, setEditNote] = useState('');
   const [editBusy, setEditBusy] = useState(false);
 
   const acting =
@@ -120,6 +122,14 @@ export default function ProfileScreen({
     !!address &&
     !!owner &&
     address.toLowerCase() === owner.toLowerCase();
+  // The same verdict from the wallet's own loaded name list —
+  // synchronous, no chain read to wait for (v0.4.5). The edit
+  // entry and the follow-button suppression key off (isOwn ||
+  // isMine): a name this wallet holds must never offer a follow
+  // button, even while the ownerOf read is still in flight (that
+  // gap is how an own profile briefly wore a "Following" pill).
+  const isMine =
+    profileId !== null && myTokens.some((t) => t.id === profileId);
 
   // On-device custom look (off-chain) — only ever set for my own names.
   const custom = profileId !== null ? app.customFor(profileId) : undefined;
@@ -128,20 +138,25 @@ export default function ProfileScreen({
 
   const openEditor = useCallback(() => {
     setEditName(custom && custom.displayName ? custom.displayName : '');
+    setEditBio(custom && custom.bio ? custom.bio : '');
+    setEditNote('');
     setEditOpen(true);
   }, [custom]);
 
-  const saveDisplayName = useCallback(async () => {
+  /** One save for both text fields (display name + bio, v0.4.5). */
+  const saveTexts = useCallback(async () => {
     if (profileId === null) return;
     setEditBusy(true);
     try {
       await app.saveCustom(profileId, {
         displayName: editName.trim(),
+        bio: editBio.trim(),
       });
+      setEditNote('');
     } finally {
       setEditBusy(false);
     }
-  }, [app, profileId, editName]);
+  }, [app, profileId, editName, editBio]);
 
   const pickImage = useCallback(
     async (kind: 'avatar' | 'header') => {
@@ -159,9 +174,15 @@ export default function ProfileScreen({
             profileId,
             kind === 'avatar' ? { avatarPath: uri } : { headerPath: uri },
           );
+          setEditNote('');
         }
+        // uri === null: the user cancelled (or denied the photo
+        // permission) — not an error, nothing to report.
       } catch {
-        /* picking failed — leave the current look as it is */
+        // Storing the picked picture failed. Until v0.4.5 this was
+        // swallowed silently, which read as "the setting does not
+        // work"; say so on screen instead.
+        setEditNote(tr('custom.pickFail'));
       } finally {
         setEditBusy(false);
       }
@@ -179,6 +200,8 @@ export default function ProfileScreen({
         deleteProfileImage(old.headerPath);
       }
       setEditName('');
+      setEditBio('');
+      setEditNote('');
     } finally {
       setEditBusy(false);
     }
@@ -373,7 +396,9 @@ export default function ProfileScreen({
       const msg =
         e instanceof Error && e.message === 'need-name'
           ? tr('compose.needName')
-          : tr('act.failed');
+          : e instanceof Error && e.message === 'self-follow'
+            ? tr('act.selfFollow')
+            : tr('act.failed');
       setFollowStatus(msg);
     } finally {
       setFollowBusy(false);
@@ -472,7 +497,7 @@ export default function ProfileScreen({
           ) : null}
         </View>
         <View style={styles.headerAction}>
-          {isOwn ? (
+          {isOwn || isMine ? (
             <Pressable
               style={({ pressed }) => [
                 S.ghostBtn,
@@ -511,7 +536,11 @@ export default function ProfileScreen({
           <Text style={styles.username}>@{resolvedName}</Text>
         )}
 
-        {isOwn ? (
+        {custom && custom.bio ? (
+          <Text style={[S.body, { marginTop: 8 }]}>{custom.bio}</Text>
+        ) : null}
+
+        {isOwn || isMine ? (
           <Text style={[S.ok, { marginTop: 6 }]}>{tr('profile.yourName')}</Text>
         ) : null}
         {followStatus ? (
@@ -839,10 +868,20 @@ export default function ProfileScreen({
               maxLength={40}
               autoCorrect={false}
             />
+            <Text style={[S.h2, { marginTop: 18 }]}>{tr('custom.bio')}</Text>
+            <TextInput
+              style={[S.input, { marginTop: 8, minHeight: 72, textAlignVertical: 'top' }]}
+              value={editBio}
+              onChangeText={setEditBio}
+              placeholder={tr('custom.bioPh')}
+              maxLength={160}
+              multiline
+              autoCorrect={false}
+            />
             <Pressable
               style={[S.bigBtn, { marginTop: 12 }, editBusy && S.disabled]}
               disabled={editBusy}
-              onPress={saveDisplayName}
+              onPress={saveTexts}
             >
               <Text style={S.bigBtnText}>{tr('custom.save')}</Text>
             </Pressable>
@@ -869,6 +908,10 @@ export default function ProfileScreen({
                 {custom && custom.headerPath ? '' : '（' + tr('custom.notSet') + '）'}
               </Text>
             </Pressable>
+
+            {editNote ? (
+              <Text style={[S.err, { marginTop: 14 }]}>{editNote}</Text>
+            ) : null}
 
             <View style={{ height: 18 }} />
             <Pressable

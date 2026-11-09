@@ -190,83 +190,176 @@ export async function readCardName(idIn: bigint): Promise<string> {
  * name read leaves the username empty (the UI shows "#id") rather
  * than somebody else's name.
  */
-async function enumerateOwnedTokens(owner: string): Promise<NameToken[]> {
-  const count = Number(
-    await withRetry(() =>
-      readUint(CAW_NAME, SEL.balanceOf + encAddr(owner)),
-    ),
-  );
-  const out: NameToken[] = [];
-  const seen = new Set<string>();
-  const limit = Math.min(count, 1000);
-  // One token's full check (index → ownerOf proof → card name →
-  // balance). The checks for different tokens are independent, so
-  // they run in parallel chunks — a wallet with dozens of names used
-  // to need 4 sequential round trips per name.
-  const oneToken = async (i: number): Promise<NameToken | null> => {
-    let id: bigint;
-    try {
-      id = await withRetry(
-        () =>
-          readUint(
-            CAW_NAME,
-            SEL.tokenOfOwnerByIndex + encAddr(owner) + word(i),
-          ),
-        2,
-        400,
-      );
-    } catch {
-      return null; // a hole in the list must not kill the whole list
-    }
-    let realOwner: string;
-    try {
-      realOwner = await withRetry(
-        () => readAddr(CAW_NAME, SEL.ownerOf + word(id)),
-        2,
-        400,
-      );
-    } catch {
-      return null; // cannot prove ownership — leave it out
-    }
-    if (realOwner.toLowerCase() !== owner.toLowerCase()) return null;
-    let username = '';
-    try {
-      username = (await readCardName(id)) || '';
-    } catch {
-      username = '';
-    }
-    let balance = 0n;
-    try {
-      balance = await readUint(CAW_NAME, SEL.cawBalanceOf + word(id));
-    } catch {
-      balance = 0n; // a balance hiccup must not drop the name itself
-    }
-    return { id, balance, username };
+/* Partial-result listeners for the enumeration below (v0.4.5):
+ * the same subscribe pattern the follow index uses, so screens
+ * can paint proven names as soon as the batched reads land
+ * instead of waiting for every name's card read. */
+const ownedListeners = new Set<
+  (owner: string, tokens: NameToken[]) => void
+>();
+export function subscribeOwnedTokens(
+  fn: (owner: string, tokens: NameToken[]) => void,
+): () => void {
+  ownedListeners.add(fn);
+  return () => {
+    ownedListeners.delete(fn);
   };
-  for (let base = 0; base < limit; base += 6) {
-    const chunk: Promise<NameToken | null>[] = [];
-    for (let i = base; i < Math.min(base + 6, limit); i++) {
-      chunk.push(oneToken(i));
-    }
-    for (const t of await Promise.all(chunk)) {
-      if (!t) continue;
-      const k = t.id.toString();
-      if (seen.has(k)) continue;
-      seen.add(k);
-      out.push(t);
+}
+function notifyOwned(owner: string, tokens: NameToken[]): void {
+  for (const fn of [...ownedListeners]) {
+    try {
+      fn(owner, tokens);
+    } catch {
+      /* a broken listener must not break the enumeration */
     }
   }
-  out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return out;
+}
+
+/** How many names a wallet holds, straight from the chain (one
+ *  read). Lets callers tell a TRUE empty list apart from an
+ *  enumeration that has not finished or failed. */
+export async function nameCountOf(owner: string): Promise<bigint> {
+  return withRetry(() =>
+    readUint(CAW_NAME, SEL.balanceOf + encAddr(owner)),
+  );
+}
+
+const BATCH = 60;
+
+async function enumerateOwnedTokens(
+  owner: string,
+  opts?: { nameOf?: (id: bigint) => string | undefined },
+): Promise<NameToken[]> {
+  const count = Number(await nameCountOf(owner));
+  const limit = Math.min(count, 1000);
+  if (limit === 0) return [];
+
+  // Wave 1 — every enumeration index, batched: one HTTP request
+  // per BATCH indices instead of one round trip per name. (The
+  // pre-v0.4.5 walk chained index → ownerOf → card → balance
+  // sequentially per token in chunks of 6; a 60-name wallet
+  // needed ~50 round trips and tens of seconds.)
+  const ids: (bigint | null)[] = new Array(limit).fill(null);
+  for (let base = 0; base < limit; base += BATCH) {
+    const calls: { to: string; data: string }[] = [];
+    for (let i = base; i < Math.min(base + BATCH, limit); i++) {
+      calls.push({
+        to: CAW_NAME,
+        data: SEL.tokenOfOwnerByIndex + encAddr(owner) + word(i),
+      });
+    }
+    const res = await ethCallBatch(calls);
+    res.forEach((r, j) => {
+      if (!r) return;
+      try {
+        ids[base + j] = decUintRet(r);
+      } catch {
+        /* a hole in the list must not kill the whole list */
+      }
+    });
+  }
+
+  // Wave 2 — the ownerOf proof + the in-name balance for every
+  // candidate id, again batched (two calls per id in one list).
+  const uniq: bigint[] = [];
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (id === null) continue;
+    const k = id.toString();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    uniq.push(id);
+  }
+  const owners = new Map<string, string>();
+  const balances = new Map<string, bigint>();
+  for (let base = 0; base < uniq.length; base += BATCH / 2) {
+    const slice = uniq.slice(base, base + BATCH / 2);
+    const calls: { to: string; data: string }[] = [];
+    for (const id of slice) {
+      calls.push({ to: CAW_NAME, data: SEL.ownerOf + word(id) });
+      calls.push({ to: CAW_NAME, data: SEL.cawBalanceOf + word(id) });
+    }
+    const res = await ethCallBatch(calls);
+    slice.forEach((id, j) => {
+      const k = id.toString();
+      const o = res[j * 2];
+      if (o) {
+        try {
+          owners.set(k, decAddrRet(o));
+        } catch {
+          /* unproven — filtered below */
+        }
+      }
+      const b = res[j * 2 + 1];
+      if (b) {
+        try {
+          balances.set(k, decUintRet(b));
+        } catch {
+          /* a balance hiccup must not drop the name itself */
+        }
+      }
+    });
+  }
+
+  // Ownership proof, exactly as before: an id is included ONLY
+  // when ownerOf really returns this wallet.
+  const proven: NameToken[] = [];
+  for (const id of uniq) {
+    const k = id.toString();
+    const realOwner = owners.get(k);
+    if (!realOwner || realOwner.toLowerCase() !== owner.toLowerCase()) {
+      continue;
+    }
+    proven.push({ id, balance: balances.get(k) ?? 0n, username: '' });
+  }
+  proven.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  // Paint what is already proven; names fill in below.
+  notifyOwned(owner, proven);
+
+  // Names: the on-device directory answers most ids from its
+  // persisted copy; only a miss pays for a card read. (Never
+  // resolveName here — its fallback consults tokensOf, which is
+  // this very enumeration.)
+  const named: NameToken[] = new Array(proven.length);
+  for (let base = 0; base < proven.length; base += 8) {
+    const slice = proven.slice(base, base + 8);
+    const resolved = await Promise.all(
+      slice.map(async (t): Promise<NameToken> => {
+        let username = opts?.nameOf?.(t.id) || '';
+        if (!username) {
+          try {
+            username = (await readCardName(t.id)) || '';
+          } catch {
+            username = '';
+          }
+        }
+        return { ...t, username };
+      }),
+    );
+    resolved.forEach((t, j) => {
+      named[base + j] = t;
+    });
+    // Progress = the FULL proven list with the names resolved so
+    // far filled in (never a shrinking prefix subset, which the
+    // painter would have to discard as "less complete").
+    notifyOwned(
+      owner,
+      proven.map((t, i) => named[i] ?? t),
+    );
+  }
+  return named;
 }
 
 const ownerTokensCache = new Map<string, Promise<NameToken[]>>();
-export function tokensOf(owner: string): Promise<NameToken[]> {
+export function tokensOf(
+  owner: string,
+  opts?: { nameOf?: (id: bigint) => string | undefined },
+): Promise<NameToken[]> {
   const key = owner.toLowerCase();
   if (!ownerTokensCache.has(key)) {
     const p = (async (): Promise<NameToken[]> => {
       try {
-        return await enumerateOwnedTokens(owner);
+        return await enumerateOwnedTokens(owner, opts);
       } catch {
         // Do not let one transient RPC failure poison the whole
         // session: drop the cache entry so the next call retries.

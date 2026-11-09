@@ -124,6 +124,23 @@ function fakeKV() {
   const c3 = new ProfileCustomStore();
   await c3.init(kv);
   check('custom: clear persists across restart', !hasCustom(c3.get(189n)));
+
+  // Bio (v0.4.5): per-name text in the same device-local store.
+  await c3.set(189n, { bio: 'Guide collector. QL1 / 42.' });
+  const withBio = c3.get(189n);
+  check('custom: bio sets and counts as a customization',
+    !!withBio && withBio.bio === 'Guide collector. QL1 / 42.' && hasCustom(withBio));
+  check('custom: bio is per-name', !hasCustom(c3.get(190n)));
+  const c4 = new ProfileCustomStore();
+  await c4.init(kv);
+  check('custom: bio survives restart',
+    !!c4.get(189n) && c4.get(189n).bio === 'Guide collector. QL1 / 42.');
+  await c4.set(189n, { displayName: 'Nepi' });
+  await c4.set(189n, { bio: '' });
+  check('custom: empty bio removes just the bio',
+    !!c4.get(189n) && !c4.get(189n).bio && c4.get(189n).displayName === 'Nepi');
+  await c4.clear(189n);
+  check('custom: clear removes the bio too', !hasCustom(c4.get(189n)));
 }
 
 /* ================= Bug 2a: full-batch decoding on the corpus ================= */

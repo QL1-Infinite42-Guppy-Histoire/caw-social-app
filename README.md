@@ -14,9 +14,49 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.4.4** — released 2026-11-08.
+- **現在版 / Current: v0.4.5** — released 2026-11-09.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.4/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.5/caw-social.apk
+  v0.4.5 is a fixes-and-polish release from user reports
+  (2026-11-09): (1) you can no longer follow your own CAW
+  name — the follow is blocked when it is sent, own profiles
+  no longer show a follow button, and self-follows already
+  on-chain are ignored in the follow lists/counts (nothing
+  is force-removed). (2) Profile customization audited and
+  repaired: the editor is reachable from your own profile
+  whenever the signed-in wallet holds the name (it used to
+  wait on a chain read that could lag), picture-pick
+  failures now say so instead of failing silently, and a
+  per-name bio (device-local, like the rest) can be set,
+  shown on the profile, and reset. (3) After a successful
+  name mint the form clears itself (name, check result,
+  preview, step panel); a failed mint keeps the text.
+  (4) The bottom tab bar is bigger: 15px labels, taller
+  items (55px), a 62px center button; the safe-area
+  handling is unchanged. (5) Tapping the "CAW Social"
+  brand header drops down your name card (avatar, display
+  name, @name and number, address chip, CAW/QOM balances,
+  active-name switching, profile jump; a plain get-a-name
+  state when the wallet has no name). The header itself
+  stays always visible, logo untouched. (6) The Home
+  wallet card has a visible "Profile" button (the card
+  body still taps through too; Send/Faucet keep their own
+  taps). (7) "My names" reads far faster — batched chain
+  reads, the proven names paint first and their names fill
+  in progressively, the last list is kept on-device and
+  shown instantly on return, and an unfinished read shows
+  a loading state instead of "no names". That last point
+  was also a correctness bug: a wallet holding 60 names
+  could be told it had none whenever the old sequential
+  enumeration failed partway (verified on-chain: the
+  reporter's wallet 0x0Cdd…b86B holds 60 names; #190
+  neptune now belongs to their other wallet, so its
+  absence there is correct). Verified by
+  scripts/verify-follow.mjs (30 checks incl. self-follow
+  cases), scripts/verify-fixes.mjs (31 checks incl. bio
+  persistence across restarts) and the full standing
+  suite set, all green.
+
   v0.4.4 fixes a HuntersDEX cash-out that could not
   bridge QOM from QL1 to 42 Chain (user report
   2026-11-08 12:16 JST): the sell's QL1 swap leg paid

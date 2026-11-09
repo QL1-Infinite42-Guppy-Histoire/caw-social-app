@@ -44,6 +44,13 @@ export function initNameDirectory(storage: KVStorage): void {
   kv = storage;
 }
 
+/** Load the persisted directory into memory without fetching
+ *  anything (idempotent). Lets bulk readers answer name lookups
+ *  from the on-device copy before paying for chain reads. */
+export async function hydrateNameDirectory(): Promise<void> {
+  await hydrate();
+}
+
 async function hydrate(): Promise<void> {
   if (hydrated) return;
   hydrated = true;
@@ -136,6 +143,22 @@ export function directoryStatus(): DirectoryProgress & { ready: boolean } {
     total: Math.max(fetchedUpTo, names.length - 1),
     ready: fetchedUpTo > 0,
   };
+}
+
+/**
+ * The directory's already-fetched name for one id, synchronously
+ * (undefined when the directory has not covered the id yet). The
+ * directory reads names from the same card family as readCardName,
+ * so this is a safe cache answer for bulk readers (v0.4.5: the
+ * my-names enumeration consults it before paying for a tokenURI
+ * read per name).
+ */
+export function directoryName(idIn: bigint): string | undefined {
+  const id = Number(idIn);
+  if (!Number.isSafeInteger(id) || id < 1 || id > fetchedUpTo) {
+    return undefined;
+  }
+  return names[id] || undefined;
 }
 
 /** All fetched entries (id order). */

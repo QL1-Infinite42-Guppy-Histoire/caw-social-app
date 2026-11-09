@@ -1,7 +1,8 @@
 /**
  * Off-chain profile customization (v0.1.1, user-approved): a display
- * name, a profile picture and a header picture that live ONLY on this
- * device. Usernames on the chain are fixed at mint and never change —
+ * name, a profile picture, a header picture and (v0.4.5) a short bio
+ * text that live ONLY on this device. Usernames on the chain are
+ * fixed at mint and never change —
  * this store never touches chain data; it only changes how this phone
  * shows the user's own names.
  *
@@ -19,12 +20,16 @@ export interface ProfileCustom {
   avatarPath?: string;
   /** file:// URI of the stored header picture copy */
   headerPath?: string;
+  /** Short self-introduction text for this name (v0.4.5). Like the
+   *  other fields it lives only on this device — the chain has no
+   *  bio field — and it is keyed per name token id, like the rest. */
+  bio?: string;
 }
 
 const STORAGE_KEY = 'caw-profile-customs';
 
 export function hasCustom(c: ProfileCustom | undefined | null): boolean {
-  return !!(c && (c.displayName || c.avatarPath || c.headerPath));
+  return !!(c && (c.displayName || c.avatarPath || c.headerPath || c.bio));
 }
 
 /** The name to show: the custom display name when set, else "@username". */
@@ -60,6 +65,7 @@ export class ProfileCustomStore {
                 clean.avatarPath = c.avatarPath;
               if (typeof c.headerPath === 'string' && c.headerPath)
                 clean.headerPath = c.headerPath;
+              if (typeof c.bio === 'string' && c.bio) clean.bio = c.bio;
               if (hasCustom(clean)) this.map.set(k, clean);
             }
           }
@@ -96,6 +102,10 @@ export class ProfileCustomStore {
     if (patch.headerPath !== undefined) {
       if (patch.headerPath) next.headerPath = patch.headerPath;
       else delete next.headerPath;
+    }
+    if (patch.bio !== undefined) {
+      if (patch.bio) next.bio = patch.bio;
+      else delete next.bio;
     }
     if (hasCustom(next)) this.map.set(key, next);
     else this.map.delete(key);

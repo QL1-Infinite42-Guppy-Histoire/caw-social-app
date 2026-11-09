@@ -75,6 +75,22 @@ export const decStringRet = (hexIn: string): string => {
 export const decUintRet = (hex: string): bigint => uAt(strip(hex), 0);
 export const decAddrRet = (hex: string): string => addrAt(strip(hex), 0);
 
+/**
+ * Self-follow test (v0.4.5): a follow is a SELF-follow when the
+ * sender name and the receiver name belong to the same owner.
+ * The chain itself allows it (a name can follow itself or a
+ * sibling name), which reads as nonsense in the UI, so the app
+ * blocks it before signing. Pure address comparison — both sides
+ * must be known for a verdict; an unknown owner is not a match.
+ */
+export function isSelfFollowOwners(
+  senderOwner: string | null | undefined,
+  receiverOwner: string | null | undefined,
+): boolean {
+  if (!senderOwner || !receiverOwner) return false;
+  return senderOwner.toLowerCase() === receiverOwner.toLowerCase();
+}
+
 export interface NameToken {
   id: bigint;
   balance: bigint;

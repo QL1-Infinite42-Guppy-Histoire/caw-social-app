@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -11,7 +12,7 @@ import {
 
 import { Avatar, ConfirmSheet, S } from '../components/ui';
 import { expandChevron } from '../lib/rtl';
-import { CAW_NAME, QCAW, SEL } from '../config';
+import { ACCENT, CAW_NAME, QCAW, SEL } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
 import { clearNameCaches, followerCount, qcawAllowance } from '../lib/cawApi';
@@ -358,7 +359,29 @@ export default function MyNamesScreen() {
           })}
         </Text>
       ) : null}
-      {app.myTokens.length === 0 ? (
+      {app.myTokens.length === 0 && !app.myTokensReady ? (
+        /* Still reading (v0.4.5): an empty list here means the
+         * enumeration has not finished — show progress, never
+         * the "no names" verdict. Placeholder rows keep the wait
+         * shaped like the list that is coming. */
+        <View style={{ marginTop: 14, alignItems: 'center' }}>
+          <ActivityIndicator color={ACCENT} />
+          <Text style={[S.small, { marginTop: 10 }]}>
+            {tr('mine.loading')}
+          </Text>
+          <View style={{ alignSelf: 'stretch', marginTop: 6 }}>
+            {[0, 1, 2].map((i) => (
+              <View key={i} style={[styles.card, styles.skeletonRow]}>
+                <View style={styles.skeletonCircle} />
+                <View style={{ flex: 1, marginStart: 10, gap: 6 }}>
+                  <View style={[styles.skeletonBar, { width: '45%' }]} />
+                  <View style={[styles.skeletonBar, { width: '70%' }]} />
+                </View>
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : app.myTokens.length === 0 ? (
         <Text style={[S.body, { marginTop: 14 }]}>{tr('mine.none')}</Text>
       ) : (
         app.myTokens.map((t) => (
@@ -376,6 +399,19 @@ export default function MyNamesScreen() {
 }
 
 const styles = StyleSheet.create({
+  skeletonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 52,
+    paddingVertical: 10,
+  },
+  skeletonCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#eff3f4',
+  },
+  skeletonBar: { height: 10, borderRadius: 5, backgroundColor: '#eff3f4' },
   card: {
     borderWidth: 1,
     borderColor: '#eff3f4',
