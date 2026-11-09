@@ -35,17 +35,25 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
   items (55px), a 62px center button; the safe-area
   handling is unchanged. (5) Tapping the "CAW Social"
   brand header drops down your name card (avatar, display
-  name, @name and number, address chip, CAW/QOM balances,
-  active-name switching, profile jump; a plain get-a-name
-  state when the wallet has no name). The header itself
-  stays always visible, logo untouched. (6) The Home
+  name big with @name and number under it, address chip,
+  CAW/QOM balances, a notifications entry with the unread
+  badge, profile jump; a plain get-a-name state when the
+  wallet has no name). The header itself stays always
+  visible, logo untouched — and the card deliberately has
+  no name switcher: choosing the posting name lives on
+  the My names screen. (6) The Home
   wallet card has a visible "Profile" button (the card
   body still taps through too; Send/Faucet keep their own
   taps). (7) "My names" reads far faster — batched chain
   reads, the proven names paint first and their names fill
   in progressively, the last list is kept on-device and
   shown instantly on return, and an unfinished read shows
-  a loading state instead of "no names". That last point
+  a loading state instead of "no names". The screen was
+  also refreshed: each name shows its avatar, display
+  name, @name and CAW-in-name balance, the posting name
+  wears a clear badge, and every other name has one
+  deliberate "post as this name" button (the same switch
+  the composer uses). That last point
   was also a correctness bug: a wallet holding 60 names
   could be told it had none whenever the old sequential
   enumeration failed partway (verified on-chain: the

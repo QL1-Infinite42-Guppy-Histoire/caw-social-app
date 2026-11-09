@@ -218,6 +218,29 @@ function NameCard({
         <Text style={styles.chevron}>{expandChevron(expanded)}</Text>
       </Pressable>
 
+      {/* Posting-name switch (v0.4.5 refresh): this screen is
+       * where the active name is chosen. The active name wears
+       * a visible badge; every other name gets one clear,
+       * deliberate button. It calls the same chooseActing the
+       * composer uses, so the posting identity changes in
+       * exactly the same way. */}
+      {app.activeActingId() === token.id ? (
+        <View style={styles.actingRow}>
+          <Text style={styles.actingBadge}>{tr('mine.active')}</Text>
+        </View>
+      ) : (
+        <Pressable
+          style={({ pressed }) => [
+            styles.useBtn,
+            pressed && { opacity: 0.7 },
+          ]}
+          onPress={() => app.chooseActing(token.id)}
+          accessibilityRole="button"
+        >
+          <Text style={styles.useBtnText}>{tr('mine.useBtn')}</Text>
+        </Pressable>
+      )}
+
       {expanded ? (
         <View style={styles.expanded}>
           <TextInput
@@ -399,6 +422,28 @@ export default function MyNamesScreen() {
 }
 
 const styles = StyleSheet.create({
+  actingRow: { marginTop: 10, alignItems: 'flex-start' },
+  actingBadge: {
+    backgroundColor: ACCENT,
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '800',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  useBtn: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: ACCENT,
+    borderRadius: 999,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+  },
+  useBtnText: { color: ACCENT, fontSize: 14, fontWeight: '800' },
   skeletonRow: {
     flexDirection: 'row',
     alignItems: 'center',

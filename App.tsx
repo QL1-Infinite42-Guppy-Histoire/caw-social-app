@@ -5,7 +5,6 @@ import {
   Easing,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -169,10 +168,12 @@ function Header({
  * the brand is tapped. It is an OVERLAY — the feed underneath
  * never moves. Shows the active CAW name the way the Home wallet
  * card does (custom avatar / display name when set, address
- * chip, CAW + QOM balances), lets the user switch the active
- * name (the same chooseActing the My Names screen uses), and
- * jumps to the profile. A wallet with no name yet gets the
- * plain state plus the way to the Get-a-name tab.
+ * chip, CAW + QOM balances), a notifications entry (the same
+ * inbox as the header bell), and a jump to the profile.
+ * Switching the active name deliberately does NOT live here —
+ * it belongs to the My Names screen (user decision 2026-11-09).
+ * A wallet with no name yet gets the plain state plus the way
+ * to the Get-a-name tab.
  */
 function NameCard({ onClose }: { onClose: () => void }) {
   const app = useApp();
@@ -181,6 +182,40 @@ function NameCard({ onClose }: { onClose: () => void }) {
     myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
   const custom = acting ? app.customFor(acting.id) : undefined;
   const [copied, setCopied] = useState(false);
+  /* Notifications entry (v0.4.5 addition): the same inbox the
+   * header bell opens, with the unread count from the same
+   * source (loadSeen + scanReactions). The card stays mounted
+   * behind the inbox modal — closing the card first would take
+   * the modal down with it. */
+  const [unread, setUnread] = useState(0);
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const badgeBusyRef = useRef(false);
+  const refreshBadge = useCallback(async () => {
+    if (!address || myTokens.length === 0) {
+      setUnread(0);
+      return;
+    }
+    if (badgeBusyRef.current) return;
+    badgeBusyRef.current = true;
+    try {
+      const myIds = new Set(myTokens.map((t) => t.id.toString()));
+      const seen = await loadSeen(storeKV, address);
+      const r = await scanReactions(myIds, seen);
+      setUnread(r.items.length);
+    } catch {
+      /* keep the last count; the next refresh retries */
+    } finally {
+      badgeBusyRef.current = false;
+    }
+  }, [address, myTokens]);
+  useEffect(() => {
+    refreshBadge();
+  }, [refreshBadge]);
+  const wasInboxOpenRef = useRef(false);
+  useEffect(() => {
+    if (wasInboxOpenRef.current && !inboxOpen) refreshBadge();
+    wasInboxOpenRef.current = inboxOpen;
+  }, [inboxOpen, refreshBadge]);
 
   if (!acting) {
     return (
@@ -205,7 +240,6 @@ function NameCard({ onClose }: { onClose: () => void }) {
   const chipAddress = address
     ? address.slice(0, 6) + '…' + address.slice(-4)
     : '—';
-  const others = myTokens.filter((t) => t.id !== acting.id);
 
   return (
     <View>
@@ -262,47 +296,42 @@ function NameCard({ onClose }: { onClose: () => void }) {
         </View>
       </View>
 
-      {others.length > 0 ? (
-        <View style={styles.cardSwitchBox}>
-          <ScrollView style={{ maxHeight: 168 }} nestedScrollEnabled>
-            {others.map((t) => {
-              const c = app.customFor(t.id);
-              return (
-                <Pressable
-                  key={t.id.toString()}
-                  onPress={() => app.chooseActing(t.id)}
-                  style={({ pressed }) => [
-                    styles.cardSwitchRow,
-                    pressed && { backgroundColor: '#f7f9f9' },
-                  ]}
-                  accessibilityRole="button"
-                >
-                  <Avatar nameId={t.id} size={30} customUri={c?.avatarPath} />
-                  <Text style={[S.body, { flex: 1 }]} numberOfLines={1}>
-                    {c?.displayName ? c.displayName : '@' + t.username}
-                  </Text>
-                  <Text style={S.small}>{fmtAmount(t.balance)} CAW</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-          <Pressable
-            onPress={() => {
-              onClose();
-              app.setTab('mine');
-            }}
-            style={({ pressed }) => [
-              styles.cardSwitchRow,
-              pressed && { backgroundColor: '#f7f9f9' },
-            ]}
-            accessibilityRole="button"
-          >
-            <Text style={[S.body, { color: ACCENT, fontWeight: '700' }]}>
-              {tr('nav.myNames')}
+      {/* Notifications (v0.4.5 addition): same destination as
+       * the header bell, badge only when something is unread. */}
+      <Pressable
+        onPress={() => setInboxOpen(true)}
+        style={({ pressed }) => [
+          styles.cardSwitchRow,
+          {
+            marginTop: 12,
+            borderTopWidth: 1,
+            borderTopColor: '#eff3f4',
+            paddingTop: 12,
+          },
+          pressed && { backgroundColor: '#f7f9f9' },
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel={tr('inbox.title')}
+      >
+        <Text style={{ fontSize: 19 }}>🔔</Text>
+        <Text style={[S.body, { flex: 1, fontWeight: '700' }]}>
+          {tr('inbox.title')}
+        </Text>
+        {unread > 0 ? (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>
+              {unread > 99 ? '99+' : String(unread)}
             </Text>
-          </Pressable>
-        </View>
-      ) : null}
+          </View>
+        ) : null}
+      </Pressable>
+      <Modal
+        visible={inboxOpen}
+        animationType="slide"
+        onRequestClose={() => setInboxOpen(false)}
+      >
+        <InboxScreen onClose={() => setInboxOpen(false)} />
+      </Modal>
 
       <Pressable
         style={[S.bigBtn, { marginTop: 14 }]}
