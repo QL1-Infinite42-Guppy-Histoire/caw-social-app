@@ -68,3 +68,6 @@ scripts/.build-arrival/
 scripts/.build-wqom/
 scripts/.build-qomstart/
 scripts/.build-batch/
+
+# Audit quote package — LOCAL ONLY, never commit/publish (user rule, 2026-11-09)
+docs/audit/
