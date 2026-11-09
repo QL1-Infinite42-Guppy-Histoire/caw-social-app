@@ -347,6 +347,22 @@ export default function MyNamesScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* One-shot focus hand-off (v0.4.6): the Home wallet card's
+   * Deposit button lands here with the active name's controls
+   * already open — this screen's existing deposit flow, not a
+   * second copy. The id enters the open set even before the
+   * token paints (enumeration is progressive) and `expanded`
+   * is derived from the set, so the card opens the moment it
+   * renders. Consumed once; a later plain visit opens nothing. */
+  useEffect(() => {
+    const f = app.mineFocusId;
+    if (f !== null) {
+      setOpenSet(new Set([f.toString()]));
+      app.clearMineFocus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const onRefresh = async () => {
     setRefreshing(true);
     try {

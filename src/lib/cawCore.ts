@@ -170,6 +170,23 @@ export function fmtAmount(wei: bigint): string {
   return frac ? whole + '.' + frac.slice(0, 6) : whole;
 }
 
+/**
+ * Format an 18-decimal amount for the summary balance frames
+ * (name card + Home wallet card, v0.4.6): thousands separators
+ * and at most TWO fraction digits, TRUNCATED — never rounded
+ * up, so the card can never promise more than the wallet holds.
+ * Both digits are kept when either is non-zero (594,867,714.50,
+ * not .5); a sub-0.01 remainder shows as the whole part only.
+ * Display only — the full-precision fmtAmount still serves the
+ * detail screens (My names, profile, confirm sheets).
+ */
+export function fmtAmountCard(wei: bigint): string {
+  const s = BigInt(wei).toString().padStart(19, '0');
+  const whole = s.slice(0, -18).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const frac2 = s.slice(-18).slice(0, 2);
+  return frac2 === '00' ? whole : whole + '.' + frac2;
+}
+
 /** Parse a plain decimal amount (up to 18 decimals) into wei, or null. */
 export function parseAmount(str: string): bigint | null {
   const m = /^(\d+)(?:\.(\d{1,18}))?$/.exec((str || '').trim());

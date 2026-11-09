@@ -15,6 +15,7 @@ import * as Clipboard from 'expo-clipboard';
 import {
   AppLogo,
   Avatar,
+  BalanceFrame,
   ConfirmSheet,
   HAIRLINE,
   LoadMoreFooter,
@@ -33,14 +34,13 @@ import {
   visibleFeedItems,
 } from '../lib/feedSync';
 import { performAction } from '../lib/actionFlow';
-import { fmtAmount } from '../lib/cawCore';
+import { fmtAmountCard } from '../lib/cawCore';
 import {
   buildFollowIndex,
   refinedFollowListsOf,
 } from '../lib/followIndex';
 import SearchScreen from './SearchScreen';
 import SendScreen from './SendScreen';
-import { FaucetButton } from './FaucetScreen';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type PendingAction = { kind: 1 | 2; item: TimelineItem };
@@ -361,7 +361,7 @@ export default function TimelineScreen() {
     <View>
       <View style={styles.walletCard}>
         {/* v0.4.5: the card's display area (identity + balances)
-         * opens my own profile. The Send / Faucet row below is a
+         * opens my own profile. The button row below is a
          * sibling, NOT part of this Pressable, and the address
          * chip inside keeps its own copy action — nested
          * Pressables answer their own taps, so nothing steals
@@ -407,47 +407,31 @@ export default function TimelineScreen() {
             </Text>
           </Pressable>
         </View>
-        <View style={[S.row, { marginTop: 14, gap: 16 }]}>
-          <View style={{ flex: 1.35 }}>
-            <Text style={styles.statLabel}>{tr('home.qcaw')}</Text>
-            <Text
-              style={styles.statBig}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.45}
-            >
-              {qcaw !== null ? fmtAmount(qcaw) : '—'} CAW
-            </Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.statLabel}>{tr('home.qom')}</Text>
-            <Text
-              style={styles.statSmall}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.45}
-            >
-              {qom !== null ? fmtAmount(qom) : '—'} QOM
-            </Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            {/* Deposited CAW (v0.4.5): the active name's in-name
-             * balance (cawBalanceOf, carried on the token from
-             * the same enumeration), labelled with the name
-             * card's shared string. No name yet -> the card's
-             * usual honest dash, like an unread balance. */}
-            <Text style={styles.statLabel} numberOfLines={2}>
-              {tr('card.inName')}
-            </Text>
-            <Text
-              style={styles.statSmall}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.45}
-            >
-              {acting ? fmtAmount(acting.balance) + ' CAW' : '—'}
-            </Text>
-          </View>
+        {/* Balances (v0.4.6): three full-width bordered frames,
+         * the same BalanceFrame the name card uses — the
+         * v0.4.5 three-across row squeezed the labels until
+         * they wrapped/truncated and the amounts overflowed
+         * (user screenshots, 2026-11-09). Amounts are
+         * fmtAmountCard: display-only, truncated to 2 decimals.
+         * The deposited CAW is the active name's in-name
+         * balance (cawBalanceOf, carried on the token from the
+         * same enumeration); no name yet -> the honest dash. */}
+        <View style={{ marginTop: 12, gap: 8 }}>
+          <BalanceFrame
+            label={tr('home.qcaw')}
+            amount={qcaw !== null ? fmtAmountCard(qcaw) : null}
+            unit="CAW"
+          />
+          <BalanceFrame
+            label={tr('home.qom')}
+            amount={qom !== null ? fmtAmountCard(qom) : null}
+            unit="QOM"
+          />
+          <BalanceFrame
+            label={tr('card.inName')}
+            amount={acting ? fmtAmountCard(acting.balance) : null}
+            unit="CAW"
+          />
         </View>
         </Pressable>
         <View style={[S.row, { gap: 10, marginTop: 12 }]}>
@@ -457,7 +441,21 @@ export default function TimelineScreen() {
            * card-body tap above. Same button shape/size as its
            * neighbours (44dp target, clear 10px gaps), with an
            * accent label so it reads as navigation, not an action
-           * on the money. */}
+           * on the money.
+           * v0.4.6: the third button is DEPOSIT, not the faucet
+           * (user decision, 2026-11-09) — it lands on the My
+           * names screen with the active name's deposit controls
+           * already open (the existing deposit flow, reached via
+           * focusMine). With no name yet there is nothing to
+           * deposit into, so it routes to Get-a-name instead —
+           * the same answer the name card's no-name state gives.
+           * The faucet itself is untouched and stays reachable
+           * from the HuntersDEX gas guidance.
+           * All three labels are numberOfLines=1 with
+           * shrink-to-fit: the v0.4.5 faucet button's label
+           * collapsed and split character-by-character
+           * vertically on device; three IDENTICAL ghost-button
+           * structures leave no room for that failure mode. */}
           <Pressable
             style={[S.ghostBtn, { flex: 1 }]}
             onPress={
@@ -467,6 +465,9 @@ export default function TimelineScreen() {
           >
             <Text
               style={[S.ghostBtnText, { color: ACCENT, fontWeight: '800' }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
             >
               {tr('home.profile')}
             </Text>
@@ -474,12 +475,35 @@ export default function TimelineScreen() {
           <Pressable
             style={[S.ghostBtn, { flex: 1 }]}
             onPress={() => setSendOpen(true)}
+            accessibilityRole="button"
           >
-            <Text style={S.ghostBtnText}>{tr('send.title')}</Text>
+            <Text
+              style={S.ghostBtnText}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+            >
+              {tr('send.title')}
+            </Text>
           </Pressable>
-          <View style={{ flex: 1 }}>
-            <FaucetButton label={tr('faucet.title')} />
-          </View>
+          <Pressable
+            style={[S.ghostBtn, { flex: 1 }]}
+            onPress={
+              acting
+                ? () => app.focusMine(acting.id)
+                : () => app.setTab('get')
+            }
+            accessibilityRole="button"
+          >
+            <Text
+              style={S.ghostBtnText}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+            >
+              {tr('home.deposit')}
+            </Text>
+          </Pressable>
         </View>
       </View>
       <View style={styles.searchRow}>
@@ -718,10 +742,9 @@ export default function TimelineScreen() {
 }
 
 const styles = StyleSheet.create({
-  /* Wallet card (v0.3.4): one clean card — identity + copyable
-     address chip on row 1, CAW (large) and QOM (smaller) stats on
-     row 2. Numbers are single-line with adjustsFontSizeToFit so
-     trillion-scale CAW amounts shrink instead of overflowing. */
+  /* Wallet card: one clean card — identity + copyable address
+     chip on top, then the balances as full-width bordered
+     frames (shared BalanceFrame, v0.4.6) and the button row. */
   chip: {
     backgroundColor: '#eff3f4',
     borderRadius: 999,
@@ -733,21 +756,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0f1419',
     fontFamily: MONO,
-  },
-  statLabel: { fontSize: 12.5, color: '#536471', fontWeight: '600' },
-  statBig: {
-    fontSize: 21,
-    fontWeight: '800',
-    color: '#0f1419',
-    marginTop: 2,
-    fontVariant: ['tabular-nums'],
-  },
-  statSmall: {
-    fontSize: 16.5,
-    fontWeight: '700',
-    color: '#0f1419',
-    marginTop: 3,
-    fontVariant: ['tabular-nums'],
   },
   searchRow: { paddingHorizontal: 16, paddingTop: 12 },
   segRow: {

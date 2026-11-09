@@ -14,9 +14,33 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.4.5** — released 2026-11-09.
+- **現在版 / Current: v0.4.6** — released 2026-11-09.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.5/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.6/caw-social.apk
+  v0.4.6 is a display-polish release from on-device
+  screenshots of v0.4.5 (2026-11-09): (1) the balances on the
+  name card and the Home wallet card are no longer a squeezed
+  three-across row — each balance now sits in its own
+  full-width bordered frame, label on top and the amount in
+  large type below (amounts are display-formatted with
+  thousands separators and at most two decimals, truncated
+  never rounded; the values themselves are unchanged).
+  (2) The Home wallet card's third button is now Deposit
+  instead of the faucet: it opens the My names screen with
+  the active name's deposit controls already open (the
+  existing deposit flow); with no name it goes to Get-a-name.
+  The faucet feature itself is unchanged and still appears
+  in the HuntersDEX gas guidance. The three card buttons are
+  now identical structures with single-line shrink-to-fit
+  labels (the v0.4.5 faucet label collapsed and split
+  vertically on device). (3) The bottom tab bar has its
+  icons back — house / search / person / gear in the app's
+  feather-style vector set, above the labels, coloured with
+  them. Verified by the fmtAmountCard unit checks in
+  scripts/verify-core.mjs, the v0.4.6 wiring checks in
+  scripts/verify-fixes.mjs, the i18n audit and the full
+  standing suite set, all green.
+
   v0.4.5 is a fixes-and-polish release from user reports
   (2026-11-09): (1) you can no longer follow your own CAW
   name — the follow is blocked when it is sent, own profiles

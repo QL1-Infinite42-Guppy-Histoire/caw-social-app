@@ -11,7 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Svg, { Path, Polyline } from 'react-native-svg';
+import Svg, { Circle, Line, Path, Polyline } from 'react-native-svg';
 import { SvgXml } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -216,6 +216,110 @@ export function ReplyIcon({ size = 18, color = '#536471' }: { size?: number; col
     </Svg>
   );
 }
+/* Bottom tab icons (v0.4.6): the same feather set as the rest of
+ * the app, drawn as vector so the marks render identically on
+ * every device (an emoji house/gear depends on the phone's emoji
+ * font). The tab bar colours them with the label: gray when
+ * idle, ACCENT on the active tab. */
+export function HomeIcon({ size = 22, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      <Polyline points="9 22 9 12 15 12 15 22" />
+    </Svg>
+  );
+}
+export function SearchIcon({ size = 22, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Circle cx="11" cy="11" r="8" />
+      <Line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </Svg>
+  );
+}
+export function UserIcon({ size = 22, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <Circle cx="12" cy="7" r="4" />
+    </Svg>
+  );
+}
+export function SettingsIcon({ size = 22, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Circle cx="12" cy="12" r="3" />
+      <Path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </Svg>
+  );
+}
+
+/* ---------- balance frame (v0.4.6) ---------- */
+/**
+ * One balance, in its own bordered frame: a small gray label on
+ * the top line and the amount in large bold type on the line
+ * below, with the unit in small gray after it. The name card
+ * and the Home wallet card share this exact treatment — the
+ * v0.4.5 three-across row squeezed the labels until they
+ * wrapped and truncated (user screenshots, 2026-11-09). Both
+ * lines are single-line with shrink-to-fit, so no language's
+ * label and no amount can wrap, truncate mid-word, or overlap.
+ * `amount` is a pre-formatted display string; null shows the
+ * honest dash (unread balance / no name yet) with no unit.
+ */
+export function BalanceFrame({
+  label,
+  amount,
+  unit,
+}: {
+  label: string;
+  amount: string | null;
+  unit: string;
+}) {
+  return (
+    <View style={balanceStyles.frame}>
+      <Text
+        style={balanceStyles.label}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.7}
+      >
+        {label}
+      </Text>
+      <Text
+        style={balanceStyles.amount}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.45}
+      >
+        {amount === null ? '—' : amount}
+        {amount === null ? null : (
+          <Text style={balanceStyles.unit}> {unit}</Text>
+        )}
+      </Text>
+    </View>
+  );
+}
+
+const balanceStyles = StyleSheet.create({
+  frame: {
+    borderWidth: 1,
+    borderColor: '#d9dee2',
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  label: { fontSize: 12.5, color: '#536471', fontWeight: '600' },
+  amount: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0f1419',
+    marginTop: 2,
+    fontVariant: ['tabular-nums'],
+  },
+  unit: { fontSize: 12.5, fontWeight: '600', color: '#536471' },
+});
 
 /* ---------- avatar (the name's card picture) ---------- */
 /**

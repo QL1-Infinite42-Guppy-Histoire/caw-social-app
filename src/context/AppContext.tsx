@@ -118,6 +118,14 @@ export interface AppContextValue {
   /* navigation */
   tab: Tab;
   setTab: (t: Tab) => void;
+  /** One-shot hand-off to the My names screen (v0.4.6): the id
+   *  whose deposit/withdraw controls should open expanded.
+   *  Set by focusMine, consumed (and cleared) by MyNamesScreen
+   *  on mount — it never persists, so a later plain visit to
+   *  the tab opens nothing. */
+  mineFocusId: bigint | null;
+  focusMine: (id: bigint) => void;
+  clearMineFocus: () => void;
   profileName: string | null;
   openProfile: (username: string) => void;
   closeProfile: () => void;
@@ -171,6 +179,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     myTokensRef.current = myTokens;
   }, [myTokens]);
   const [tab, setTab] = useState<Tab>('home');
+  const [mineFocusId, setMineFocusId] = useState<bigint | null>(null);
   const [profileName, setProfileName] = useState<string | null>(null);
   const [postDetail, setPostDetail] = useState<TimelineItem | null>(null);
   const [composeTarget, setComposeTarget] = useState<ComposeTarget | null>(null);
@@ -451,6 +460,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     secretRef.current = s ? { kind: s.kind, secret: s.secret } : null;
     setMyTokens([]);
     setActingId(null);
+    setMineFocusId(null);
     setProfileName(null);
     setPostDetail(null);
     setComposeOpen(false);
@@ -539,6 +549,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMyTokensReady(false);
     tokensPaintedFor.current = null;
     setActingId(null);
+    setMineFocusId(null);
     setLocked(false);
     setTab('home');
     setProfileName(null);
@@ -546,6 +557,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setComposeOpen(false);
     setComposeTarget(null);
   }, []);
+
+  const focusMine = useCallback((id: bigint) => {
+    setMineFocusId(id);
+    setTab('mine');
+  }, []);
+  const clearMineFocus = useCallback(() => setMineFocusId(null), []);
 
   const openProfile = useCallback((username: string) => {
     setProfileName(username);
@@ -598,6 +615,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshWalletState,
     tab,
     setTab,
+    mineFocusId,
+    focusMine,
+    clearMineFocus,
     profileName,
     openProfile,
     closeProfile,

@@ -123,6 +123,40 @@ if (!existsSync(corpusPath)) {
     (batches - nonEmpty) + ' empty batches decode to null, as on the web)');
 }
 
+/* ---- fmtAmountCard (v0.4.6 summary-frame formatting) ----
+ * Display-only law for the name card / Home wallet card frames:
+ * thousands separators, at most two fraction digits, TRUNCATED
+ * (never rounded up — the card must not promise more than the
+ * wallet holds), both digits kept when either is non-zero. */
+{
+  const E = 10n ** 18n;
+  const cases = [
+    [0n, '0'],
+    [E, '1'],
+    [1900000000n * E, '1,900,000,000'],
+    // the user's real QOM balance shape: .509999 -> .50, not .51
+    [594867714n * E + 509999n * 10n ** 12n, '594,867,714.50'],
+    [99993999n * E + 999999n * 10n ** 12n, '99,993,999.99'],
+    // truncation, never rounding: 1.999 -> 1.99, 0.009 -> 0
+    [1n * E + 999n * 10n ** 15n, '1.99'],
+    [9n * 10n ** 15n, '0'],
+    // a tenth keeps both digits: 2.5 -> 2.50 (matches the mock)
+    [2n * E + 5n * 10n ** 17n, '2.50'],
+    // separators across groups with a fraction
+    [1234567n * E + 1n * 10n ** 16n, '1,234,567.01'],
+  ];
+  let ok = true;
+  for (const [wei, want] of cases) {
+    const got = core.fmtAmountCard(wei);
+    if (got !== want) {
+      ok = false;
+      console.log('  fmtAmountCard(' + wei.toString() + ') = ' + got + ', want ' + want);
+    }
+  }
+  check('fmtAmountCard: separators + truncate-to-2dp, never rounds up', ok,
+    cases.length + ' cases');
+}
+
 /* ---- live smoke ---- */
 try {
   const page = await api.fetchTimelinePage(null);

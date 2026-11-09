@@ -20,8 +20,18 @@ import {
 import { ACCENT } from './src/config';
 import { AppProvider, useApp } from './src/context/AppContext';
 import { LANGS, tr } from './src/i18n';
-import { AppLogo, Avatar, PasswordPrompt, S } from './src/components/ui';
-import { fmtAmount } from './src/lib/cawCore';
+import {
+  AppLogo,
+  Avatar,
+  BalanceFrame,
+  HomeIcon,
+  PasswordPrompt,
+  S,
+  SearchIcon,
+  SettingsIcon,
+  UserIcon,
+} from './src/components/ui';
+import { fmtAmountCard } from './src/lib/cawCore';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import UnlockScreen from './src/screens/UnlockScreen';
 import TimelineScreen from './src/screens/TimelineScreen';
@@ -281,31 +291,30 @@ function NameCard({ onClose }: { onClose: () => void }) {
         </View>
       </View>
 
-      <View style={{ flexDirection: 'row', gap: 16, marginTop: 14 }}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.cardStatLabel}>CAW</Text>
-          <Text style={styles.cardStat} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.5}>
-            {qcaw !== null ? fmtAmount(qcaw) : '—'}
-          </Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.cardStatLabel}>QOM</Text>
-          <Text style={styles.cardStat} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.5}>
-            {qom !== null ? fmtAmount(qom) : '—'}
-          </Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          {/* The active name's deposited CAW (v0.4.5 addition):
-           * acting.balance IS cawBalanceOf from the same
-           * enumeration the profile and My Names read — same
-           * source, same freshness. */}
-          <Text style={styles.cardStatLabel} numberOfLines={2}>
-            {tr('card.inName')}
-          </Text>
-          <Text style={styles.cardStat} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.5}>
-            {fmtAmount(acting.balance)}
-          </Text>
-        </View>
+      {/* Balances (v0.4.6): full-width bordered frames, the
+       * shared BalanceFrame — the v0.4.5 three-across row
+       * wrapped its labels and overflowed its amounts (user
+       * screenshots, 2026-11-09). The deposited CAW is
+       * acting.balance = cawBalanceOf from the same enumeration
+       * the profile and My Names read — same source, same
+       * freshness. Amounts are fmtAmountCard (display-only,
+       * truncated to 2 decimals). */}
+      <View style={{ marginTop: 14, gap: 8 }}>
+        <BalanceFrame
+          label="CAW"
+          amount={qcaw !== null ? fmtAmountCard(qcaw) : null}
+          unit="CAW"
+        />
+        <BalanceFrame
+          label={tr('home.qom')}
+          amount={qom !== null ? fmtAmountCard(qom) : null}
+          unit="QOM"
+        />
+        <BalanceFrame
+          label={tr('card.inName')}
+          amount={fmtAmountCard(acting.balance)}
+          unit="CAW"
+        />
       </View>
 
       {/* Notifications (v0.4.5 addition): same destination as
@@ -359,9 +368,10 @@ function NameCard({ onClose }: { onClose: () => void }) {
 }
 
 // Height of the bottom tab bar below: navItem paddingVertical
-// 17+17 plus the ~20px label line (15px labels since v0.4.5),
-// plus the 1px top border.
-const TAB_BAR_HEIGHT = 55;
+// 9+9 plus the 22px icon line and the ~19px label line (15px
+// labels since v0.4.5, icons added v0.4.6), plus the 1px top
+// border. Only the compose FAB offset consumes this number.
+const TAB_BAR_HEIGHT = 62;
 
 function Main() {
   const app = useApp();
@@ -431,12 +441,45 @@ function Main() {
     setCardOpen(false);
   }, [tab, profileName, postDetail, composeOpen, hsOpen]);
 
-  const tabs: { key: typeof tab; label: string }[] = [
-    { key: 'home', label: tr('nav.home') },
-    { key: 'get', label: tr('nav.getName') },
-    { key: 'mine', label: tr('nav.myNames') },
-    { key: 'settings', label: tr('nav.settings') },
+  /* Tab icons (v0.4.6): an icon over every label — the v0.4.5
+   * bar was labels-only and the user asked where the marks
+   * (house, magnifier, person, gear) had gone. The icons are
+   * this app's feather-style vectors, so they render the same
+   * on every phone; they take the label's colour (gray idle,
+   * accent on the active tab). */
+  const tabs: {
+    key: typeof tab;
+    label: string;
+    Icon: React.ComponentType<{ size?: number; color?: string }>;
+  }[] = [
+    { key: 'home', label: tr('nav.home'), Icon: HomeIcon },
+    { key: 'get', label: tr('nav.getName'), Icon: SearchIcon },
+    { key: 'mine', label: tr('nav.myNames'), Icon: UserIcon },
+    { key: 'settings', label: tr('nav.settings'), Icon: SettingsIcon },
   ];
+  const renderTab = (t: (typeof tabs)[number]) => (
+    <Pressable
+      key={t.key}
+      style={styles.navItem}
+      onPress={() => setTab(t.key)}
+      accessibilityRole="button"
+      accessibilityLabel={t.label}
+    >
+      <t.Icon color={tab === t.key ? ACCENT : '#536471'} />
+      <Text
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.6}
+        style={[
+          styles.navLabel,
+          { marginTop: 2 },
+          tab === t.key && styles.navLabelOn,
+        ]}
+      >
+        {t.label}
+      </Text>
+    </Pressable>
+  );
 
   return (
     <SafeAreaView style={S.screen} edges={['top', 'bottom']}>
@@ -509,25 +552,7 @@ function Main() {
         </Pressable>
       )}
       <View style={styles.bottomNav}>
-        {tabs.slice(0, 2).map((t) => (
-          <Pressable
-            key={t.key}
-            style={styles.navItem}
-            onPress={() => setTab(t.key)}
-          >
-            <Text
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.6}
-              style={[
-                styles.navLabel,
-                tab === t.key && styles.navLabelOn,
-              ]}
-            >
-              {t.label}
-            </Text>
-          </Pressable>
-        ))}
+        {tabs.slice(0, 2).map(renderTab)}
         {/* Center action (v0.3.2): a raised orange circle that opens
             HuntersSwap. It only opens the modal — the selected tab
             underneath does not change. The circle rises ABOVE the
@@ -543,25 +568,7 @@ function Main() {
             <Text style={styles.tradeBtnText}>⇄</Text>
           </Pressable>
         </View>
-        {tabs.slice(2).map((t) => (
-          <Pressable
-            key={t.key}
-            style={styles.navItem}
-            onPress={() => setTab(t.key)}
-          >
-            <Text
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.6}
-              style={[
-                styles.navLabel,
-                tab === t.key && styles.navLabelOn,
-              ]}
-            >
-              {t.label}
-            </Text>
-          </Pressable>
-        ))}
+        {tabs.slice(2).map(renderTab)}
       </View>
       <HuntersSwapModal visible={hsOpen} onClose={() => setHsOpen(false)} />
 
@@ -678,8 +685,6 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   addrChipText: { fontSize: 12, color: '#536471', fontWeight: '600' },
-  cardStatLabel: { fontSize: 12, color: '#536471', fontWeight: '600' },
-  cardStat: { fontSize: 16, fontWeight: '800', color: '#0f1419', marginTop: 2 },
   cardSwitchBox: {
     marginTop: 12,
     borderTopWidth: 1,
@@ -742,17 +747,19 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -2 },
     zIndex: 10,
   },
-  // v0.4.5: the bar grew — labels 12px -> 15px and taller items
-  // (17+17 padding + the label line = 55px total, TAB_BAR_HEIGHT),
-  // so every tab is a comfortable >=48dp tap target. The bottom
-  // safe-area inset is still the SafeAreaView's job (edges), so
-  // gesture-nav and 3-button-nav devices get exactly one inset,
-  // as before — nothing here adds bottom padding of its own.
-  navItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 17 },
+  // v0.4.5: the bar grew — labels 12px -> 15px and taller items,
+  // so every tab is a comfortable >=48dp tap target. v0.4.6:
+  // an icon line joins the label line (22px icon + 2px gap +
+  // ~19px label + 9+9 padding = ~62px total, TAB_BAR_HEIGHT).
+  // The bottom safe-area inset is still the SafeAreaView's job
+  // (edges), so gesture-nav and 3-button-nav devices get
+  // exactly one inset, as before — nothing here adds bottom
+  // padding of its own.
+  navItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 9 },
   // The center slot is narrower than the label slots so the four
   // labels get the room; the 62px circle still fits inside it on
   // standard-width phones and never overlaps a label.
-  navItemCenter: { flex: 0.8, alignItems: 'center', justifyContent: 'center', paddingVertical: 17 },
+  navItemCenter: { flex: 0.8, alignItems: 'center', justifyContent: 'center', paddingVertical: 9 },
   navLabel: {
     fontSize: 15,
     color: '#536471',
@@ -766,8 +773,8 @@ const styles = StyleSheet.create({
     // Absolutely positioned inside its (normal-height) tab slot, so
     // the bar keeps its usual height (TAB_BAR_HEIGHT stays valid
     // and the compose FAB offset follows it) while the circle
-    // floats above the bar: top -25 -> spans y -25..37 of the 55px
-    // bar, never reaching the system navigation underneath.
+    // floats above the bar: top -25 -> spans y -25..37 of the bar,
+    // never reaching the system navigation underneath.
     position: 'absolute',
     top: -25,
     // Physical left/marginLeft on purpose: the math (50% - half

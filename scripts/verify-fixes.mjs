@@ -246,5 +246,46 @@ try {
   check('live findPostByCawId', false, String((e && e.message) || e));
 }
 
+/* ---- v0.4.6 wiring (static): balance frames, Deposit button,
+ * tab icons. The v0.4.5 device failures were all in the view
+ * layer (a 3-across stat row wrapping its labels, a faucet
+ * button collapsing), so the guards live here as source checks
+ * alongside the runtime suites. ---- */
+{
+  const ROOT = new URL('..', import.meta.url).pathname;
+  const tlSrc = readFileSync(ROOT + 'src/screens/TimelineScreen.tsx', 'utf8');
+  const appSrc = readFileSync(ROOT + 'App.tsx', 'utf8');
+  const uiSrc = readFileSync(ROOT + 'src/components/ui.tsx', 'utf8');
+  const mineSrc = readFileSync(ROOT + 'src/screens/MyNamesScreen.tsx', 'utf8');
+  const ctxSrc = readFileSync(ROOT + 'src/context/AppContext.tsx', 'utf8');
+
+  check('v0.4.6: BalanceFrame component exists (bordered frame, label over amount)',
+    /export function BalanceFrame/.test(uiSrc) &&
+    /borderColor: '#d9dee2'/.test(uiSrc) && /borderRadius: 12/.test(uiSrc));
+  check('v0.4.6: Home card renders the three balances as frames with fmtAmountCard',
+    (tlSrc.match(/<BalanceFrame/g) || []).length === 3 &&
+    /fmtAmountCard\(qcaw\)/.test(tlSrc) &&
+    /fmtAmountCard\(acting\.balance\)/.test(tlSrc));
+  check('v0.4.6: name card renders the three balances as frames with fmtAmountCard',
+    (appSrc.match(/<BalanceFrame/g) || []).length === 3 &&
+    /fmtAmountCard\(acting\.balance\)/.test(appSrc));
+  check('v0.4.6: Home card has no faucet button (Deposit replaced it)',
+    !/FaucetButton/.test(tlSrc) && !/faucet\.title/.test(tlSrc));
+  check('v0.4.6: Home Deposit button is wired (focusMine with a name, Get-a-name without)',
+    /tr\('home\.deposit'\)/.test(tlSrc) &&
+    /app\.focusMine\(acting\.id\)/.test(tlSrc) &&
+    /app\.setTab\('get'\)/.test(tlSrc));
+  check('v0.4.6: focus hand-off round-trips (context exposes it, My names consumes it)',
+    /focusMine/.test(ctxSrc) && /mineFocusId/.test(ctxSrc) &&
+    /app\.mineFocusId/.test(mineSrc) && /app\.clearMineFocus\(\)/.test(mineSrc));
+  check('v0.4.6: every tab carries an icon (home/search/user/settings vectors)',
+    /Icon: HomeIcon/.test(appSrc) && /Icon: SearchIcon/.test(appSrc) &&
+    /Icon: UserIcon/.test(appSrc) && /Icon: SettingsIcon/.test(appSrc) &&
+    /export function HomeIcon/.test(uiSrc) &&
+    /export function SettingsIcon/.test(uiSrc));
+  check('v0.4.6: Home card button labels are single-line shrink-to-fit (no vertical split)',
+    (tlSrc.match(/numberOfLines=\{1\}/g) || []).length >= 3);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
