@@ -224,7 +224,7 @@ function NameCard({
        * deliberate button. It calls the same chooseActing the
        * composer uses, so the posting identity changes in
        * exactly the same way. */}
-      {app.activeActingId() === token.id ? (
+      {(app.actingId ?? app.myTokens[0]?.id ?? null) === token.id ? (
         <View style={styles.actingRow}>
           <Text style={styles.actingBadge}>{tr('mine.active')}</Text>
         </View>
