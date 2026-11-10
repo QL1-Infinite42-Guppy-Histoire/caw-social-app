@@ -1,16 +1,17 @@
 import * as Clipboard from 'expo-clipboard';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 
 import { ConfirmSheet, LTR_TEXT, MONO, S } from '../components/ui';
-import { ACCENT } from '../config';
+import { ACCENT, X_MIRROR_SERVER_URL } from '../config';
 import { useApp } from '../context/AppContext';
 import { LANGS, tr } from '../i18n';
 import { APP_VERSION } from '../lib/appVersion';
@@ -19,6 +20,16 @@ import {
   deleteWalletByAddress,
   type WalletPublicInfo,
 } from '../lib/walletStore';
+import {
+  connectX,
+  disconnectX,
+  loadPushRegistration,
+  loadXClientId,
+  loadXSession,
+  registerPush,
+  saveXClientId,
+} from '../lib/xconnect';
+import { X_REDIRECT_URI, type XSession } from '../lib/xmirror';
 import AddWalletModal from './AddWalletModal';
 import RevealSecretScreen from './RevealSecretScreen';
 
@@ -68,6 +79,105 @@ export default function SettingsScreen() {
     await Clipboard.setStringAsync(app.address);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  /* ---------- X mirror linking (v0.5.0-x) ---------- */
+  const [xClientId, setXClientId] = useState('');
+  const [xSession, setXSession] = useState<XSession | null>(null);
+  const [xBusy, setXBusy] = useState(false);
+  const [xMsg, setXMsg] = useState('');
+  const [xMsgOk, setXMsgOk] = useState(false);
+  const [pushState, setPushState] = useState<
+    'unknown' | 'no-server' | 'ready' | 'no-token' | 'failed' | 'off'
+  >('unknown');
+
+  useEffect(() => {
+    (async () => {
+      setXClientId(await loadXClientId());
+      const s = await loadXSession();
+      setXSession(s);
+      if (!X_MIRROR_SERVER_URL) {
+        setPushState('no-server');
+      } else if (s) {
+        const reg = await loadPushRegistration();
+        setPushState(
+          reg && reg.xUserId === s.userId ? 'ready' : 'off',
+        );
+      } else {
+        setPushState('off');
+      }
+    })().catch(() => {});
+  }, []);
+
+  const doSaveXClientId = async () => {
+    await saveXClientId(xClientId);
+    setXMsgOk(true);
+    setXMsg(tr('xset.saved'));
+  };
+
+  const doConnectX = async () => {
+    if (xBusy) return;
+    setXBusy(true);
+    setXMsg('');
+    try {
+      await saveXClientId(xClientId);
+      const s = await connectX(xClientId.trim());
+      setXSession(s);
+      setXMsgOk(true);
+      setXMsg(tr('xset.connectedAs', { name: s.username }));
+      // Push registration is part of connecting when the
+      // server exists; its outcome is shown, never hidden.
+      if (X_MIRROR_SERVER_URL) {
+        const r = await registerPush(s);
+        setPushState(
+          r === 'ok'
+            ? 'ready'
+            : r === 'no-token'
+              ? 'no-token'
+              : r === 'no-server'
+                ? 'no-server'
+                : 'failed',
+        );
+      }
+    } catch {
+      setXMsgOk(false);
+      setXMsg(tr('xset.connectFailed'));
+    } finally {
+      setXBusy(false);
+    }
+  };
+
+  const doRegisterPush = async () => {
+    if (!xSession || xBusy) return;
+    setXBusy(true);
+    try {
+      const r = await registerPush(xSession);
+      setPushState(
+        r === 'ok'
+          ? 'ready'
+          : r === 'no-token'
+            ? 'no-token'
+            : r === 'no-server'
+              ? 'no-server'
+              : 'failed',
+      );
+    } finally {
+      setXBusy(false);
+    }
+  };
+
+  const doDisconnectX = async () => {
+    if (xBusy) return;
+    setXBusy(true);
+    try {
+      await disconnectX();
+      setXSession(null);
+      setPushState(X_MIRROR_SERVER_URL ? 'off' : 'no-server');
+      setXMsgOk(true);
+      setXMsg(tr('xset.disconnected'));
+    } finally {
+      setXBusy(false);
+    }
   };
 
   const doDelete = async () => {
@@ -181,6 +291,118 @@ export default function SettingsScreen() {
       >
         <Text style={S.ghostBtnText}>{tr('wallets.add')}</Text>
       </Pressable>
+
+      {/* X mirror linking (v0.5.0-x) */}
+      <Text style={[S.h2, { marginTop: 24 }]}>{tr('xset.title')}</Text>
+      <View style={S.cardBox}>
+        <Text style={S.small}>{tr('xset.intro')}</Text>
+        {xSession ? (
+          <>
+            <Text style={[S.body, { marginTop: 12, fontWeight: '700' }]}>
+              {tr('xset.connectedAs', { name: xSession.username })}
+            </Text>
+            {app.mirrorNewCount !== null && app.mirrorNewCount > 0 ? (
+              <Text style={[S.small, { marginTop: 4 }]}>
+                {tr('xset.newCount', {
+                  count: String(app.mirrorNewCount),
+                })}
+              </Text>
+            ) : null}
+            <View style={[S.row, { marginTop: 12, gap: 12, flexWrap: 'wrap' }]}>
+              <Pressable
+                style={S.ghostBtn}
+                onPress={() => app.openMirror()}
+              >
+                <Text style={S.ghostBtnText}>{tr('xset.openMirror')}</Text>
+              </Pressable>
+              <Pressable
+                style={S.ghostBtn}
+                onPress={doDisconnectX}
+                disabled={xBusy}
+              >
+                <Text style={S.ghostBtnText}>{tr('xset.disconnect')}</Text>
+              </Pressable>
+            </View>
+          </>
+        ) : (
+          <>
+            <Text style={[S.small, { marginTop: 10 }]}>
+              {tr('xset.needDev')}
+            </Text>
+            <Text style={[S.tiny, { marginTop: 10 }]}>
+              {tr('xset.callbackLabel')}
+            </Text>
+            <Text
+              style={[
+                S.small,
+                { fontSize: 12.5, fontFamily: MONO },
+                LTR_TEXT,
+                { textAlign: 'left' },
+              ]}
+            >
+              {X_REDIRECT_URI}
+            </Text>
+            <TextInput
+              style={[S.input, { marginTop: 12 }]}
+              value={xClientId}
+              onChangeText={setXClientId}
+              placeholder={tr('xset.clientIdPh')}
+              placeholderTextColor="#536471"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <View style={[S.row, { marginTop: 12, gap: 12, flexWrap: 'wrap' }]}>
+              <Pressable style={S.ghostBtn} onPress={doSaveXClientId}>
+                <Text style={S.ghostBtnText}>{tr('xset.saveId')}</Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  S.ghostBtn,
+                  (!xClientId.trim() || xBusy) && S.disabled,
+                ]}
+                disabled={!xClientId.trim() || xBusy}
+                onPress={doConnectX}
+              >
+                <Text style={S.ghostBtnText}>{tr('xset.connect')}</Text>
+              </Pressable>
+            </View>
+          </>
+        )}
+        {xMsg ? (
+          <Text style={[xMsgOk ? S.ok : S.err, { marginTop: 10 }]}>
+            {xMsg}
+          </Text>
+        ) : null}
+
+        {/* push notifications for new posts */}
+        <Text style={[S.h2, { marginTop: 18, fontSize: 15 }]}>
+          {tr('xpush.title')}
+        </Text>
+        <Text style={[S.small, { marginTop: 6 }]}>
+          {pushState === 'no-server'
+            ? tr('xpush.notConfigured')
+            : pushState === 'ready'
+              ? tr('xpush.ready')
+              : pushState === 'no-token'
+                ? tr('xpush.noToken')
+                : pushState === 'failed'
+                  ? tr('xpush.failed')
+                  : tr('xpush.notConfigured')}
+        </Text>
+        {xSession &&
+        X_MIRROR_SERVER_URL &&
+        pushState !== 'ready' &&
+        pushState !== 'no-server' ? (
+          <Pressable
+            style={[S.ghostBtn, { marginTop: 10, alignSelf: 'flex-start' }]}
+            onPress={doRegisterPush}
+            disabled={xBusy}
+          >
+            <Text style={S.ghostBtnText}>{tr('xpush.title')}</Text>
+          </Pressable>
+        ) : null}
+        <Text style={[S.tiny, { marginTop: 10 }]}>{tr('xpush.note')}</Text>
+      </View>
 
       {/* lock */}
       <Pressable

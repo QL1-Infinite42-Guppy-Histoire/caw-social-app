@@ -116,6 +116,10 @@ const BUDGETS = [
        * pair). */
       'hxd.depUsdt', 'hxd.depCaw', 'hxd.depQom',
       'hxd.wdUsdt', 'hxd.wdCaw', 'hxd.wdQom',
+      /* X mirror (v0.5.0-x): the per-post engrave button and
+       * the Settings connect / open-mirror pills. */
+      'xm.engrave', 'xset.connect', 'xset.openMirror',
+      'xpush.action',
     ],
     max: 26,
     why: 'button labels',

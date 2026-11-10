@@ -151,6 +151,16 @@ export interface AppContextValue {
   closePost: () => void;
   composeOpen: boolean;
   setComposeOpen: (open: boolean) => void;
+  /* X mirror (v0.5.0-x) */
+  /** Un-engraved X posts found by the latest detection pass
+   *  (null = never checked / X not linked). */
+  mirrorNewCount: number | null;
+  noteMirrorCandidates: (n: number) => void;
+  mirrorOpen: boolean;
+  /** The X post a notification deep link wants engraved. */
+  mirrorFocusId: string | null;
+  openMirror: (xPostId?: string | null) => void;
+  closeMirror: () => void;
   /** Reply / quote target for the composer (v0.4.0): the post a
    *  new post will reference. Null for a plain new post. */
   composeTarget: ComposeTarget | null;
@@ -204,6 +214,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [profileName, setProfileName] = useState<string | null>(null);
   const [postDetail, setPostDetail] = useState<TimelineItem | null>(null);
   const [composeTarget, setComposeTarget] = useState<ComposeTarget | null>(null);
+  const [mirrorNewCount, setMirrorNewCount] = useState<number | null>(null);
+  const [mirrorOpen, setMirrorOpen] = useState(false);
+  const [mirrorFocusId, setMirrorFocusId] = useState<string | null>(null);
   const [wallets, setWallets] = useState<WalletPublicInfo[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
   const [pwPrompt, setPwPrompt] = useState<PwPromptState | null>(null);
@@ -439,6 +452,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return authenticate(tr('auth.reason'));
   }, [askPassword]);
 
+  /**
+   * X mirror detection on app open (v0.5.0-x): after an unlock
+   * (or onboarding), if X is linked, count the un-engraved
+   * posts so Settings can show what's waiting. Best-effort
+   * and silent — a failure (rate limit, expired grant) leaves
+   * the count untouched and the mirror screen itself surfaces
+   * the error when opened. The import is dynamic so the boot
+   * path never blocks on it.
+   */
+  const refreshMirrorCount = useCallback(async () => {
+    try {
+      const { loadXSession, fetchMirrorCandidates } = await import(
+        '../lib/xconnect'
+      );
+      const s = await loadXSession();
+      if (!s) return;
+      const { candidates } = await fetchMirrorCandidates(1);
+      setMirrorNewCount(candidates.length);
+    } catch {
+      /* the mirror screen reports errors properly */
+    }
+  }, []);
+
   const unlock = useCallback(async (): Promise<boolean> => {
     const ok = await runAuth();
     if (!ok) return false;
@@ -447,8 +483,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLocked(false);
     refreshBalances();
     refreshMyTokens();
+    refreshMirrorCount();
     return true;
-  }, [runAuth, loadSecretIntoMemory, refreshBalances, refreshMyTokens]);
+  }, [runAuth, loadSecretIntoMemory, refreshBalances, refreshMyTokens, refreshMirrorCount]);
 
   const requireAuth = useCallback(async (): Promise<boolean> => {
     if (locked) return unlock();
@@ -473,7 +510,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLocked(false);
     refreshBalances();
     refreshMyTokens();
-  }, [loadSecretIntoMemory, refreshBalances, refreshMyTokens]);
+    refreshMirrorCount();
+  }, [loadSecretIntoMemory, refreshBalances, refreshMyTokens, refreshMirrorCount]);
 
   /**
    * Sync all wallet-derived state with the registry's active
@@ -611,6 +649,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setComposeTarget(target ?? null);
     setComposeOpen(true);
   }, []);
+
+  /* ---------- X mirror (v0.5.0-x) ---------- */
+  const openMirror = useCallback((xPostId?: string | null) => {
+    setMirrorFocusId(xPostId ?? null);
+    setMirrorOpen(true);
+  }, []);
+  const closeMirror = useCallback(() => {
+    setMirrorOpen(false);
+    setMirrorFocusId(null);
+  }, []);
+  const noteMirrorCandidates = useCallback((n: number) => {
+    setMirrorNewCount(n);
+  }, []);
   const closeCompose = useCallback(() => {
     setComposeOpen(false);
     setComposeTarget(null);
@@ -667,6 +718,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     composeTarget,
     openCompose,
     closeCompose,
+    mirrorNewCount,
+    noteMirrorCandidates,
+    mirrorOpen,
+    mirrorFocusId,
+    openMirror,
+    closeMirror,
     pwPrompt,
     answerPwPrompt,
     onWalletDeleted,

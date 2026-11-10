@@ -1,0 +1,175 @@
+/**
+ * X mirror notification logic (v0.5.0-x) — the pure half of
+ * the Worker's cron poller. The Worker watches ONE linked X
+ * account per registration (the user's own), using the
+ * read-only X token the app registered, and pushes an Expo
+ * notification for each NEW post that the in-app mirror would
+ * offer for engraving.
+ *
+ * What the server holds and what it can do:
+ *  - It holds a READ-ONLY X token (scope tweet.read — the
+ *    OAuth flow never requests write) and an Expo push token.
+ *  - It CANNOT post to X, and it holds nothing related to the
+ *    wallet: engraving is signed in the app, by the user,
+ *    every time.
+ *  - It remembers only which post ids it has already
+ *    NOTIFIED about (the seen set). The app remains the
+ *    source of truth for what is engraved — this set exists
+ *    purely so each post notifies exactly once.
+ *
+ * The classification mirrors the app (src/lib/xmirror.ts):
+ * original posts and quote posts notify; retweets and
+ * replies do not. The fetch also asks the API to exclude
+ * them — this filter is the second net.
+ */
+
+export const XSUB_PREFIX = 'xsub:';
+export const XSEEN_PREFIX = 'xseen:';
+export const SEEN_CAP = 200;
+export const NOTIF_TITLE = 'New post on X';
+export const NOTIF_BODY = 'Tap to engrave it on CAW.';
+export const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
+
+export const xsubKey = (xUserId) => XSUB_PREFIX + xUserId;
+export const xseenKey = (xUserId) => XSEEN_PREFIX + xUserId;
+
+const DIGITS = /^[0-9]+$/;
+const PUSH_TOKEN = /^ExponentPushToken\[[^\]]+\]$/;
+
+/** Shape-check one /x/register body. Returns an error string
+ *  or null. The Worker stores exactly what passed this. */
+export function validateRegistration(body) {
+  if (!body || typeof body !== 'object') return 'bad-body';
+  if (typeof body.pushToken !== 'string' || !PUSH_TOKEN.test(body.pushToken)) {
+    return 'bad-push-token';
+  }
+  if (typeof body.xUserId !== 'string' || !DIGITS.test(body.xUserId)) {
+    return 'bad-user-id';
+  }
+  if (typeof body.clientId !== 'string' || body.clientId.length === 0) {
+    return 'bad-client-id';
+  }
+  if (typeof body.accessToken !== 'string' || body.accessToken.length === 0) {
+    return 'bad-access-token';
+  }
+  if (typeof body.refreshToken !== 'string' || body.refreshToken.length === 0) {
+    return 'bad-refresh-token';
+  }
+  if (typeof body.expiresAt !== 'number' || !(body.expiresAt > 0)) {
+    return 'bad-expires-at';
+  }
+  return null;
+}
+
+/** Classify one raw tweet (same rules as the app). */
+export function classifyTweet(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (typeof raw.id !== 'string' || typeof raw.text !== 'string') return null;
+  const refs = Array.isArray(raw.referenced_tweets)
+    ? raw.referenced_tweets
+    : [];
+  const types = refs.map((r) => r && r.type).filter(Boolean);
+  if (types.includes('retweeted')) return 'skip';
+  if (types.includes('replied_to')) return 'skip';
+  if (typeof raw.in_reply_to_user_id === 'string') return 'skip';
+  return 'mirror';
+}
+
+/** Parse a timeline response body into mirror posts. */
+export function parseTimeline(json) {
+  const posts = [];
+  const data = json && Array.isArray(json.data) ? json.data : [];
+  for (const raw of data) {
+    if (classifyTweet(raw) !== 'mirror') continue;
+    posts.push({
+      id: raw.id,
+      text: raw.text,
+      createdAt: typeof raw.created_at === 'string' ? raw.created_at : '',
+    });
+  }
+  return posts;
+}
+
+/**
+ * Decide what a poll does.
+ *  - seen === null → BASELINE: this account was never polled;
+ *    everything current becomes "seen" and NOTHING notifies
+ *    (registering must never flood the phone with history).
+ *  - otherwise → the posts whose ids are not in seen are
+ *    fresh; they are returned OLDEST FIRST (notification
+ *    order), and the seen set advances to include every post
+ *    in this fetch (capped at SEEN_CAP, freshest kept).
+ */
+export function planPoll(seen, posts) {
+  const fetchedIds = posts.map((p) => p.id);
+  const nextSeen = [...new Set([...fetchedIds, ...(seen ?? [])])].slice(
+    0,
+    SEEN_CAP,
+  );
+  if (seen === null) {
+    return { baseline: true, fresh: [], nextSeen };
+  }
+  const seenSet = new Set(seen);
+  const fresh = posts.filter((p) => !seenSet.has(p.id)).reverse();
+  return { baseline: false, fresh, nextSeen };
+}
+
+/** The notification preview: first ~80 chars, one line. */
+export function previewSnippet(text) {
+  const flat = String(text).replace(/\s+/g, ' ').trim();
+  return flat.length > 80 ? flat.slice(0, 79) + '…' : flat;
+}
+
+/**
+ * Build the Expo push messages for fresh posts. The payload
+ * carries ONLY the post id and a short preview — no tokens,
+ * no account data, nothing that could sign or post.
+ * categoryId 'xmirror' is what gives the notification its
+ * 刻む action button on the device (registered by the app).
+ */
+export function buildPushMessages(fresh, pushToken) {
+  return fresh.map((p) => {
+    const preview = previewSnippet(p.text);
+    return {
+      to: pushToken,
+      sound: 'default',
+      title: NOTIF_TITLE,
+      body: preview || NOTIF_BODY,
+      data: { xPostId: p.id, preview },
+      categoryId: 'xmirror',
+    };
+  });
+}
+
+/** True when the stored access token is spent (60 s slack —
+ *  a poll should never start with a token that dies mid-run). */
+export function tokenNeedsRefresh(sub, nowSec) {
+  return nowSec + 60 >= sub.expiresAt;
+}
+
+/** The refresh grant body (public client, PKCE-born grant:
+ *  client_id in the body, no secret exists). */
+export function refreshBody(sub) {
+  return new URLSearchParams({
+    grant_type: 'refresh_token',
+    client_id: sub.clientId,
+    refresh_token: sub.refreshToken,
+  }).toString();
+}
+
+/** Apply a token response to a stored subscription. Returns
+ *  the updated subscription, or null when the body is not a
+ *  grant (the caller then leaves the old one untouched and
+ *  the next poll retries). */
+export function applyTokenResponse(sub, json, nowSec) {
+  if (!json || typeof json !== 'object') return null;
+  if (typeof json.access_token !== 'string' || !json.access_token) return null;
+  if (typeof json.refresh_token !== 'string' || !json.refresh_token) return null;
+  if (typeof json.expires_in !== 'number' || !(json.expires_in > 0)) return null;
+  return {
+    ...sub,
+    accessToken: json.access_token,
+    refreshToken: json.refresh_token,
+    expiresAt: nowSec + json.expires_in,
+  };
+}

@@ -73,6 +73,7 @@ scripts/.build-superlike-fail/
 scripts/.build-superrecaw/
 scripts/.build-tip/
 scripts/.build-exchange/
+scripts/.build-xmirror/
 
 # Audit quote package — LOCAL ONLY, never commit/publish (user rule, 2026-11-09)
 docs/audit/
