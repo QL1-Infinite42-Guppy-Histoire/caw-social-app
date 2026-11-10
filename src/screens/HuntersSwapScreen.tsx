@@ -28,6 +28,7 @@ import { formatUnits, parseUnits } from 'ethers';
 import * as Clipboard from 'expo-clipboard';
 
 import { AppLogo, ConfirmSheet, HAIRLINE, MONO, S } from '../components/ui';
+import ExchangeSection from './ExchangeSection';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr, type StrKey } from '../i18n';
@@ -4018,6 +4019,9 @@ export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) 
   const insets = useSafeAreaInsets();
   const [direction, setDirection] = useState<'buy' | 'sell'>('buy');
   const [sendOpen, setSendOpen] = useState(false);
+  /* HuntersExchange order book (v0.5.0): the instant swap and
+   * the order book are two modes of this one screen. */
+  const [hsMode, setHsMode] = useState<'swap' | 'book'>('swap');
   /* Goal recommendation (v0.4.1): keyed off the user's actual
      position — holding CAW highlights the cash-out goal;
      anything else (or an unreadable balance) defaults to the
@@ -4054,7 +4058,7 @@ export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) 
         <View style={[S.row, { justifyContent: 'space-between', alignItems: 'flex-start' }]}>
           <View style={{ flex: 1, paddingRight: 8 }}>
             <Text style={{ fontSize: 25, fontWeight: '800', color: '#0f1419', letterSpacing: 0.2 }}>
-              Hunters<Text style={{ color: ACCENT }}>DEX</Text>
+              Hunters<Text style={{ color: ACCENT }}>Exchange</Text>
             </Text>
             <Text style={[S.small, { marginTop: 1 }]}>{tr('hs.title')}</Text>
           </View>
@@ -4163,7 +4167,55 @@ export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) 
       >
         <SendScreen onClose={() => setSendOpen(false)} />
       </Modal>
-      {direction === 'buy' ? (
+      {/* Mode toggle (v0.5.0): instant swap ⇄ order book. */}
+      <View
+        style={{
+          flexDirection: 'row',
+          gap: 8,
+          paddingHorizontal: 16,
+          paddingVertical: 10,
+          borderBottomWidth: 1,
+          borderBottomColor: HAIRLINE,
+        }}
+      >
+        {(['swap', 'book'] as const).map((m) => {
+          const on = hsMode === m;
+          return (
+            <Pressable
+              key={m}
+              onPress={() => setHsMode(m)}
+              style={{
+                flex: 1,
+                borderRadius: 999,
+                paddingVertical: 8,
+                alignItems: 'center',
+                backgroundColor: on ? ACCENT : '#eff3f4',
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 14,
+                  fontWeight: '700',
+                  color: on ? '#fff' : '#0f1419',
+                }}
+              >
+                {m === 'swap' ? tr('hx.modeSwap') : tr('hx.modeBook')}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {hsMode === 'book' ? (
+        <ScrollView
+          style={S.screen}
+          contentContainerStyle={[
+            S.scrollPad,
+            { paddingBottom: 32 + insets.bottom },
+          ]}
+        >
+          <ExchangeSection />
+        </ScrollView>
+      ) : direction === 'buy' ? (
         <BuySection onClose={onClose} onSwitchDirection={() => setDirection('sell')} />
       ) : (
         <SellSection onClose={onClose} onSwitchDirection={() => setDirection('buy')} />

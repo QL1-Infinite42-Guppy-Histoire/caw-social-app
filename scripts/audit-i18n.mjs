@@ -59,8 +59,9 @@ console.log(`keys: ${keys.length}, languages: ${langs.join(', ')}`);
 // src/lib/rtl.ts drives I18nManager.forceRTL from langIsRtl(), so
 // fa must need RTL and every other language must not.
 check(
-  'fa is the only RTL language',
-  i18n.langIsRtl('fa') && langs.every((l) => l === 'fa' || !i18n.langIsRtl(l)),
+  'fa and ar are the only RTL languages',
+  i18n.langIsRtl('fa') && i18n.langIsRtl('ar') &&
+    langs.every((l) => l === 'fa' || l === 'ar' || !i18n.langIsRtl(l)),
   'rtl: ' + langs.filter((l) => i18n.langIsRtl(l)).join(', '),
 );
 

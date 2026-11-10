@@ -1,0 +1,15 @@
+# HuntersExchange order server (v0.5.0).
+# Deploy steps are the user's (their Cloudflare account):
+#   cd worker && npm install && npm run build
+#   wrangler kv namespace create HX_KV   (fill the id below)
+#   wrangler deploy
+# Then put the deployed workers.dev URL into
+# src/config.ts EXCHANGE_SERVER_URL and rebuild the app.
+# Custom-domain wiring waits on the user's domain purchase.
+name = "huntersexchange-orders"
+main = "dist/worker.js"
+compatibility_date = "2024-11-01"
+
+[[kv_namespaces]]
+binding = "HX_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
