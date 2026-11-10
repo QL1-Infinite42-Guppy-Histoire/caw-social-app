@@ -259,16 +259,20 @@ try {
   const mineSrc = readFileSync(ROOT + 'src/screens/MyNamesScreen.tsx', 'utf8');
   const ctxSrc = readFileSync(ROOT + 'src/context/AppContext.tsx', 'utf8');
 
-  check('v0.4.6: BalanceFrame component exists (bordered frame, label over amount)',
-    /export function BalanceFrame/.test(uiSrc) &&
+  /* v0.4.6 introduced the shared BalanceFrame; v0.4.10
+   * supersedes it with the two-column BalanceGrid (the
+   * bordered-table look and the one-shared-component rule
+   * carry over — the grid's own wiring is pinned in
+   * verify-display §7). */
+  check('v0.4.6->v0.4.10: the shared balance component exists (bordered table)',
+    /export function BalanceGrid/.test(uiSrc) &&
     /borderColor: '#d9dee2'/.test(uiSrc) && /borderRadius: 12/.test(uiSrc));
-  check('v0.4.6+v0.4.8: Home card renders its balances as frames with fmtAmountCard (3 -> 5)',
-    (tlSrc.match(/<BalanceFrame/g) || []).length === 5 &&
-    /fmtAmountCard\(qcaw\)/.test(tlSrc) &&
-    /fmtAmountCard\(acting\.balance\)/.test(tlSrc));
-  check('v0.4.6+v0.4.8: name card renders its balances as frames with fmtAmountCard (3 -> 5)',
-    (appSrc.match(/<BalanceFrame/g) || []).length === 5 &&
-    /fmtAmountCard\(acting\.balance\)/.test(appSrc));
+  check('v0.4.6->v0.4.10: Home card renders its balances through ONE BalanceGrid',
+    (tlSrc.match(/<BalanceGrid/g) || []).length === 1 &&
+    /raw: acting \? acting\.balance : null/.test(tlSrc));
+  check('v0.4.6->v0.4.10: name card renders its balances through ONE BalanceGrid',
+    (appSrc.match(/<BalanceGrid/g) || []).length === 1 &&
+    /raw: acting\.balance/.test(appSrc));
   check('v0.4.6: Home card has no faucet button (Deposit replaced it)',
     !/FaucetButton/.test(tlSrc) && !/faucet\.title/.test(tlSrc));
   check('v0.4.6: Home Deposit button is wired (focusMine with a name, Get-a-name without)',
@@ -323,9 +327,9 @@ try {
   check('v0.4.7: refreshBalances stores only successful reads (a failure cannot clobber)',
     /if \(b\.qom !== null\) setQom\(b\.qom\)/.test(ctxSrc) &&
     /if \(b\.qcaw !== null\) setQcaw\(b\.qcaw\)/.test(ctxSrc));
-  check('v0.4.7: Home + name card QOM frames are fed by the live qom state, dash when unread',
-    /amount=\{qom !== null \? fmtAmountCard\(qom\) : null\}/.test(tlSrc) &&
-    /amount=\{qom !== null \? fmtAmountCard\(qom\) : null\}/.test(appSrc));
+  check('v0.4.7 (grid form, v0.4.10): Home + name card QOM cells take the live qom state as raw (null -> dash)',
+    /unit: 'QOM', raw: qom/.test(tlSrc) &&
+    /unit: 'QOM', raw: qom/.test(appSrc));
 
   const realFetch = globalThis.fetch;
   const ADDR = '0x0000000000000000000000000000000000000001';
@@ -411,13 +415,13 @@ try {
   check('v0.4.8: refreshBalances stores the 42 Chain reads only on success',
     /if \(b\.f42 !== null\) setF42\(b\.f42\)/.test(ctxSrc) &&
     /if \(b\.cat42 !== null\) setCat42\(b\.cat42\)/.test(ctxSrc));
-  check('v0.4.8: Home card [42] + CAT42 frames are fed by live state, dash when unread',
-    /amount=\{f42 !== null \? fmtAmountCard\(f42\) : null\}/.test(tlSrc) &&
-    /amount=\{cat42 !== null \? fmtAmountCard\(cat42\) : null\}/.test(tlSrc));
-  check('v0.4.8: name card [42] + CAT42 frames are fed by live state, dash when unread',
-    /amount=\{f42 !== null \? fmtAmountCard\(f42\) : null\}/.test(appSrc) &&
-    /amount=\{cat42 !== null \? fmtAmountCard\(cat42\) : null\}/.test(appSrc));
-  check('v0.4.8: both cards use the shared SuperLike label key',
+  check('v0.4.8 (grid form, v0.4.10): Home card [42] + CAT42 cells take live state as raw (null -> dash)',
+    /unit: '42', raw: f42/.test(tlSrc) &&
+    /unit: 'CAT42', raw: cat42/.test(tlSrc));
+  check('v0.4.8 (grid form, v0.4.10): name card [42] + CAT42 cells take live state as raw (null -> dash)',
+    /unit: '42', raw: f42/.test(appSrc) &&
+    /unit: 'CAT42', raw: cat42/.test(appSrc));
+  check('v0.4.8: both cards use the shared CAT42 label key',
     /tr\('card\.cat42'\)/.test(tlSrc) && /tr\('card\.cat42'\)/.test(appSrc));
   check('v0.4.8: new label keys exist in all 13 language dicts',
     (i18nSrc.match(/'card\.cat42'/g) || []).length === 13 &&
@@ -432,20 +436,20 @@ try {
    * all five frames in the same order with a tightened stack. */
   const balBlock = uiSrc.slice(
     uiSrc.indexOf('const balanceStyles'),
-    uiSrc.indexOf('const balanceStyles') + 900,
+    uiSrc.indexOf('const balanceStyles') + 1600,
   );
-  check('v0.4.9: BalanceFrame compacted (paddingVertical 5, amount 17, label 11.5)',
+  check('v0.4.9->v0.4.10: the grid keeps the compact v0.4.9 metrics (paddingVertical 5, amount 17, label 11.5)',
     /paddingVertical: 5/.test(balBlock) &&
     /fontSize: 17/.test(balBlock) &&
     /fontSize: 11\.5/.test(balBlock) &&
     /paddingHorizontal: 12/.test(balBlock));
-  check('v0.4.9: BalanceFrame keeps the bordered look + unread dash rule',
+  check('v0.4.9->v0.4.10: the grid keeps the bordered look + unread dash rule',
     /borderColor: '#d9dee2'/.test(balBlock) &&
-    /amount === null \? '—'/.test(uiSrc));
-  check('v0.4.9: both cards still render all five frames, stack gap tightened to 6',
-    (tlSrc.match(/<BalanceFrame/g) || []).length === 5 &&
-    (appSrc.match(/<BalanceFrame/g) || []).length === 5 &&
-    /marginTop: 12, gap: 6/.test(tlSrc) && /marginTop: 14, gap: 6/.test(appSrc));
+    /shown === null \? '—'/.test(uiSrc));
+  check('v0.4.9->v0.4.10: both cards render the grid (one per card); no stacked frames remain',
+    (tlSrc.match(/<BalanceGrid/g) || []).length === 1 &&
+    (appSrc.match(/<BalanceGrid/g) || []).length === 1 &&
+    !/<BalanceFrame/.test(tlSrc) && !/<BalanceFrame/.test(appSrc));
 
   const realFetch = globalThis.fetch;
   const ADDR = '0x0000000000000000000000000000000000000001';

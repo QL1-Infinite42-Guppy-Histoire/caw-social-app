@@ -5,7 +5,7 @@
  */
 import { decodeBase64, toUtf8String } from 'ethers';
 
-import { API, CAT42, CAW_ACTIONS, CAW_NAME, EXPLORER, MINTER, QCAW, RPC, SEL } from '../config';
+import { API, CAT42, CAW_ACTIONS, CAW_NAME, EXPLORER, KET42, MINTER, O_TOKEN, QCAW, RPC, SEL } from '../config';
 import { HS_CHAINS } from './chains';
 import {
   CawAction,
@@ -574,6 +574,17 @@ export function avatarFor(idIn: bigint): Promise<string | null> {
 }
 
 /* ---------- balances & counts ---------- */
+/**
+ * One ERC-20 balance at the decimals its own contract reports
+ * (v0.4.10). `raw` is the unscaled balanceOf result; formatting
+ * happens at display time against `decimals` — the value is
+ * read from the contract on every refresh, never assumed.
+ */
+export interface TokenBalance {
+  raw: bigint;
+  decimals: number;
+}
+
 export async function walletBalances(
   address: string,
 ): Promise<{
@@ -581,6 +592,8 @@ export async function walletBalances(
   qcaw: bigint | null;
   f42: bigint | null;
   cat42: bigint | null;
+  oTok: TokenBalance | null;
+  ket: TokenBalance | null;
 }> {
   // A field is null when its read never succeeded — the caller
   // keeps whatever it already shows (or the honest "—" before the
@@ -595,7 +608,39 @@ export async function walletBalances(
   // and CAT42, the SuperLike currency (ERC-20 balanceOf via
   // ethCall42). Both are retried like the native QL1 read — the
   // startup flood races these endpoints too.
-  const [qom, qcaw, f42, cat42] = await Promise.all([
+  // v0.4.10 adds two more ERC-20s under the same rule, each as a
+  // TokenBalance whose decimals are read from the contract:
+  // O ("Childhoods End") — the user's address is a QL1 contract
+  // (see config.ts), so it is read over the QL1 RPC — and KET on
+  // 42 Chain via ethCall42. The entry is null when EITHER the
+  // balance or the decimals read never succeeded.
+  const tokenQl1 = async (token: string): Promise<TokenBalance | null> => {
+    const [raw, dec] = await Promise.all([
+      withRetry(() => readUint(token, SEL.balanceOf + encAddr(address))).catch(
+        () => null,
+      ),
+      withRetry(() => readUint(token, SEL.decimals)).catch(() => null),
+    ]);
+    return raw === null || dec === null
+      ? null
+      : { raw, decimals: Number(dec) };
+  };
+  const token42 = async (token: string): Promise<TokenBalance | null> => {
+    const [raw, dec] = await Promise.all([
+      withRetry(() =>
+        ethCall42(token, SEL.balanceOf + encAddr(address)).then((h) =>
+          decUintRet(h),
+        ),
+      ).catch(() => null),
+      withRetry(() =>
+        ethCall42(token, SEL.decimals).then((h) => decUintRet(h)),
+      ).catch(() => null),
+    ]);
+    return raw === null || dec === null
+      ? null
+      : { raw, decimals: Number(dec) };
+  };
+  const [qom, qcaw, f42, cat42, oTok, ket] = await Promise.all([
     withRetry(() =>
       rpc('eth_getBalance', [address, 'latest']).then((h: string) =>
         BigInt(h),
@@ -612,8 +657,10 @@ export async function walletBalances(
         decUintRet(h),
       ),
     ).catch(() => null),
+    tokenQl1(O_TOKEN),
+    token42(KET42),
   ]);
-  return { qom, qcaw, f42, cat42 };
+  return { qom, qcaw, f42, cat42, oTok, ket };
 }
 
 export const followerCount = (id: bigint): Promise<bigint> =>

@@ -25,7 +25,7 @@ import { LANGS, tr } from './src/i18n';
 import {
   AppLogo,
   Avatar,
-  BalanceFrame,
+  BalanceGrid,
   HomeIcon,
   PasswordPrompt,
   S,
@@ -33,7 +33,6 @@ import {
   SettingsIcon,
   UserIcon,
 } from './src/components/ui';
-import { fmtAmountCard } from './src/lib/cawCore';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import UnlockScreen from './src/screens/UnlockScreen';
 import TimelineScreen from './src/screens/TimelineScreen';
@@ -189,7 +188,7 @@ function Header({
  */
 function NameCard({ onClose }: { onClose: () => void }) {
   const app = useApp();
-  const { address, myTokens, actingId, qcaw, qom, f42, cat42 } = app;
+  const { address, myTokens, actingId, qcaw, qom, f42, cat42, oTok, ket } = app;
   const acting =
     myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
   const custom = acting ? app.customFor(acting.id) : undefined;
@@ -293,45 +292,38 @@ function NameCard({ onClose }: { onClose: () => void }) {
         </View>
       </View>
 
-      {/* Balances (v0.4.6): full-width bordered frames, the
-       * shared BalanceFrame — the v0.4.5 three-across row
-       * wrapped its labels and overflowed its amounts (user
-       * screenshots, 2026-11-09). The deposited CAW is
-       * acting.balance = cawBalanceOf from the same enumeration
-       * the profile and My Names read — same source, same
-       * freshness. Amounts are fmtAmountCard (display-only,
-       * truncated to 2 decimals).
-       * v0.4.8: the two 42 Chain frames join in the same order
-       * as the Home card: native [42], then CAT42 (SuperLike),
-       * with the v0.4.7 unread rule — the dash, never a 0. With
-       * five frames the card outgrows short screens, so the
-       * overlay below caps its height and this content scrolls
-       * inside the card; the header stays outside, untouched. */}
-      <View style={{ marginTop: 14, gap: 6 }}>
-        <BalanceFrame
-          label="CAW"
-          amount={qcaw !== null ? fmtAmountCard(qcaw) : null}
-          unit="CAW"
-        />
-        <BalanceFrame
-          label={tr('home.qom')}
-          amount={qom !== null ? fmtAmountCard(qom) : null}
-          unit="QOM"
-        />
-        <BalanceFrame
-          label={tr('card.inName')}
-          amount={fmtAmountCard(acting.balance)}
-          unit="CAW"
-        />
-        <BalanceFrame
-          label={tr('card.f42')}
-          amount={f42 !== null ? fmtAmountCard(f42) : null}
-          unit="42"
-        />
-        <BalanceFrame
-          label={tr('card.cat42')}
-          amount={cat42 !== null ? fmtAmountCard(cat42) : null}
-          unit="CAT42"
+      {/* Balances (v0.4.10): the SAME BalanceGrid as the Home
+       * wallet card — same cells, same order (the grid's own
+       * comment in ui.tsx carries the layout history). The
+       * deposited CAW is acting.balance = cawBalanceOf from
+       * the same enumeration the profile and My Names read —
+       * same source, same freshness. The v0.4.7 unread rule
+       * holds inside the grid: the dash, never a 0. The card
+       * overlay below still caps its height and this content
+       * scrolls inside the card; the header stays outside,
+       * untouched. */}
+      <View style={{ marginTop: 14 }}>
+        <BalanceGrid
+          cells={[
+            { label: tr('home.qcaw'), unit: 'CAW', raw: qcaw },
+            { label: tr('home.qom'), unit: 'QOM', raw: qom },
+            { label: tr('card.inName'), unit: 'CAW', raw: acting.balance },
+            { label: tr('card.f42'), unit: '42', raw: f42 },
+            { label: tr('card.cat42'), unit: 'CAT42', raw: cat42 },
+            {
+              label: 'O',
+              unit: 'O',
+              raw: oTok ? oTok.raw : null,
+              decimals: oTok ? oTok.decimals : 18,
+            },
+            {
+              label: 'KET',
+              unit: 'KET',
+              raw: ket ? ket.raw : null,
+              decimals: ket ? ket.decimals : 18,
+            },
+            null,
+          ]}
         />
       </View>
 

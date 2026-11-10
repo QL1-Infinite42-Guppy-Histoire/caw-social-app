@@ -18,6 +18,7 @@ import {
   tokensOf,
   walletBalances,
   type TimelineItem,
+  type TokenBalance,
 } from '../lib/cawApi';
 import type { NameToken } from '../lib/cawCore';
 import type { PostRefKind } from '../lib/postRef';
@@ -89,6 +90,11 @@ export interface AppContextValue {
    *  "no successful read yet", never a value. */
   f42: bigint | null;
   cat42: bigint | null;
+  /** O (Childhoods End, on QL1) and KET (42 Chain) balances
+   *  (v0.4.10), each with the decimals its contract reports.
+   *  Same null rule: null is "no successful read yet". */
+  oTok: TokenBalance | null;
+  ket: TokenBalance | null;
   refreshBalances: () => Promise<void>;
   /* acting (posting) name, remembered per account like the web version */
   actingId: bigint | null;
@@ -175,6 +181,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [qcaw, setQcaw] = useState<bigint | null>(null);
   const [f42, setF42] = useState<bigint | null>(null);
   const [cat42, setCat42] = useState<bigint | null>(null);
+  const [oTok, setOTok] = useState<TokenBalance | null>(null);
+  const [ket, setKet] = useState<TokenBalance | null>(null);
   const [actingId, setActingId] = useState<bigint | null>(null);
   const [myTokens, setMyTokens] = useState<NameToken[]>([]);
   const [myTokensReady, setMyTokensReady] = useState(false);
@@ -297,6 +305,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (b.qcaw !== null) setQcaw(b.qcaw);
     if (b.f42 !== null) setF42(b.f42);
     if (b.cat42 !== null) setCat42(b.cat42);
+    if (b.oTok !== null) setOTok(b.oTok);
+    if (b.ket !== null) setKet(b.ket);
   }, []);
 
   const refreshMyTokens = useCallback(async (): Promise<NameToken[]> => {
@@ -615,6 +625,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     qcaw,
     f42,
     cat42,
+    oTok,
+    ket,
     refreshBalances,
     actingId,
     myTokens,

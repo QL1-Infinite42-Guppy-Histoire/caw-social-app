@@ -19,6 +19,24 @@ export const QCAW = '0xd2140E16aDf37194036865E90BbCA1139b739d0D';
 /** CAT42 on 42 Chain (18 decimals) — the SuperLike currency.
  *  Same contract the aggregator engine lists (aggEngine tokens). */
 export const CAT42 = '0x7386719EBbBeB4d810fF89027Bfb8A1CDf696310';
+/** O ("Childhoods End", symbol O) at the address the user
+ *  supplied: 0x6c39…bbEd4. Verified live 2026-11-10 (v0.4.10):
+ *  that address is a QL1 contract — code, symbol() "O" and
+ *  decimals() 18 answer on the QL1 RPC, and the aggregator's
+ *  QL1 table lists this exact address as "O / Childhoods End".
+ *  The same address has NO code on 42 Chain, so the balance is
+ *  read over the QL1 RPC, never rpc42. (A different "O" exists
+ *  on 42 Chain at 0xf4c1…c156; it is not the one the user
+ *  named.) Decimals are still read from the contract at
+ *  runtime, never assumed. */
+export const O_TOKEN = '0x6c39b68a28bA90F4EB80032ec0eB32ad81cbbEd4';
+/** KET on 42 Chain, resolved from the aggregator's 42 Chain
+ *  token table (aggEngine CHAINS.infinite.tokens) and verified
+ *  live 2026-11-10 (v0.4.10): code present on 42 Chain,
+ *  symbol() "KET", decimals() 18 (read at runtime, not
+ *  assumed). The QL1 table's KET (0x034c…1fb4) is a different
+ *  contract and is NOT used here. */
+export const KET42 = '0xb749d42e6004db590b2f04f32b87485402a061e2';
 export const ACTION_SELECTOR = '0x84e33f2f';
 
 /** Function selectors used by the app (same values as the web front end). */
@@ -30,6 +48,7 @@ export const SEL = {
   cawBalanceOf: '0x532f3a34',
   totalSupply: '0x18160ddd',
   balanceOf: '0x70a08231',
+  decimals: '0x313ce567',
   allowance: '0xdd62ed3e',
   approve: '0x095ea7b3',
   transfer: '0xa9059cbb',

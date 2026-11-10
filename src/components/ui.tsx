@@ -31,7 +31,12 @@ import {
   superlikeCount,
   superlikeCountCached,
 } from '../lib/superlike';
-import { avatarSpec, svgFromImageUri } from '../lib/cawCore';
+import {
+  avatarSpec,
+  fmtCardDisplay,
+  fmtExactDec,
+  svgFromImageUri,
+} from '../lib/cawCore';
 import { displayTextOf, parsePostText } from '../lib/postRef';
 import type { TimelineItem } from '../lib/cawApi';
 import type { ProfileCustom } from '../lib/profileCustom';
@@ -267,68 +272,140 @@ export function SettingsIcon({ size = 22, color = '#536471' }: { size?: number; 
   );
 }
 
-/* ---------- balance frame (v0.4.6) ---------- */
+/* ---------- balance grid (v0.4.10) ---------- */
 /**
- * One balance, in its own bordered frame: a small gray label on
- * the top line and the amount in large bold type on the line
- * below, with the unit in small gray after it. The name card
- * and the Home wallet card share this exact treatment — the
- * v0.4.5 three-across row squeezed the labels until they
- * wrapped and truncated (user screenshots, 2026-11-09). Both
- * lines are single-line with shrink-to-fit, so no language's
- * label and no amount can wrap, truncate mid-word, or overlap.
- * `amount` is a pre-formatted display string; null shows the
- * honest dash (unread balance / no name yet) with no unit.
+ * The balances as a two-column grid with shared hairline
+ * borders — an Excel-like table (user request, 2026-11-10;
+ * mock approved the same day). It replaces the stacked
+ * full-width frames of v0.4.6–v0.4.9: seven balances now take
+ * less vertical room than five frames did. The Home wallet
+ * card and the header name card render this same component
+ * with the same cells in the same order.
+ *
+ * A cell is { label, unit, raw, decimals }: `raw` is the
+ * unscaled on-chain amount and null keeps the honest dash of
+ * the v0.4.7 rule (unread / no name yet), never a numeric 0.
+ * The amount text comes from fmtCardDisplay (cawCore): big
+ * balances are abbreviated "x.xxB" / "x.xxM" (truncated,
+ * never rounded), the rest use the card format at the
+ * token's own decimals. Tapping a cell swaps its amount for
+ * the EXACT full figure (fmtExactDec); tapping it again — or
+ * tapping another cell — swaps back / moves over. A null
+ * entry in the array renders an empty cell, completing the
+ * grid. The hint line under the table says the tap rule in
+ * the current language (card.tapHint).
  */
-export function BalanceFrame({
-  label,
-  amount,
-  unit,
-}: {
+export interface BalanceCellData {
   label: string;
-  amount: string | null;
   unit: string;
+  raw: bigint | null;
+  decimals?: number;
+}
+
+export function BalanceGrid({
+  cells,
+}: {
+  cells: (BalanceCellData | null)[];
 }) {
+  const [open, setOpen] = useState<number | null>(null);
+  const list = cells.length % 2 === 1 ? [...cells, null] : cells;
+  const rows: (BalanceCellData | null)[][] = [];
+  for (let i = 0; i < list.length; i += 2) {
+    rows.push([list[i], list[i + 1]]);
+  }
   return (
-    <View style={balanceStyles.frame}>
-      <Text
-        style={balanceStyles.label}
-        numberOfLines={1}
-        adjustsFontSizeToFit
-        minimumFontScale={0.7}
-      >
-        {label}
-      </Text>
-      <Text
-        style={balanceStyles.amount}
-        numberOfLines={1}
-        adjustsFontSizeToFit
-        minimumFontScale={0.45}
-      >
-        {amount === null ? '—' : amount}
-        {amount === null ? null : (
-          <Text style={balanceStyles.unit}> {unit}</Text>
-        )}
-      </Text>
+    <View>
+      <View style={balanceStyles.grid}>
+        {rows.map((row, r) => (
+          <View key={r} style={balanceStyles.row}>
+            {row.map((cell, c) => {
+              const idx = r * 2 + c;
+              // The outer box owns the right/bottom edges; cells
+              // only draw the hairlines BETWEEN cells.
+              const edges = {
+                borderRightWidth: c === 1 ? 0 : 1,
+                borderBottomWidth: r === rows.length - 1 ? 0 : 1,
+              };
+              if (!cell) {
+                return (
+                  <View key={c} style={[balanceStyles.cell, edges]} />
+                );
+              }
+              const dec = cell.decimals ?? 18;
+              const shown =
+                cell.raw === null
+                  ? null
+                  : open === idx
+                    ? fmtExactDec(cell.raw, dec)
+                    : fmtCardDisplay(cell.raw, dec).text;
+              return (
+                <Pressable
+                  key={c}
+                  style={({ pressed }) => [
+                    balanceStyles.cell,
+                    edges,
+                    balanceStyles.cellBtn,
+                    pressed && { backgroundColor: '#f7f9f9' },
+                  ]}
+                  onPress={() =>
+                    cell.raw !== null &&
+                    setOpen((o) => (o === idx ? null : idx))
+                  }
+                  accessibilityRole="button"
+                >
+                  <Text
+                    style={balanceStyles.label}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
+                  >
+                    {cell.label}
+                  </Text>
+                  <Text
+                    style={balanceStyles.amount}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.4}
+                  >
+                    {shown === null ? '—' : shown}
+                    {shown === null ? null : (
+                      <Text style={balanceStyles.unit}> {cell.unit}</Text>
+                    )}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ))}
+      </View>
+      <Text style={balanceStyles.hint}>{tr('card.tapHint')}</Text>
     </View>
   );
 }
 
 const balanceStyles = StyleSheet.create({
-  /* Compacted in v0.4.9 (user report: five frames ate too much
-   * vertical space on both cards): vertical padding 9 -> 5,
-   * amount 20 -> 17, label/unit 12.5 -> 11.5, amount margin
-   * 2 -> 1 — roughly a quarter shorter per frame. The bordered
-   * frame, radius, colours, truncation and the unread "—" rule
-   * are unchanged. */
-  frame: {
+  /* The shared borders are drawn by the table itself: the
+   * outer box carries the border and radius, rows and cells
+   * meet on single hairlines (right / bottom) instead of each
+   * cell owning a full frame. Type sizes keep the compact
+   * v0.4.9 metrics (amount 17, label/unit 11.5). */
+  grid: {
     borderWidth: 1,
     borderColor: '#d9dee2',
     borderRadius: 12,
     backgroundColor: '#fff',
+    overflow: 'hidden',
+  },
+  row: { flexDirection: 'row' },
+  cell: {
+    flex: 1,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#d9dee2',
     paddingHorizontal: 12,
     paddingVertical: 5,
   },
+  cellBtn: { justifyContent: 'center' },
   label: { fontSize: 11.5, color: '#536471', fontWeight: '600' },
   amount: {
     fontSize: 17,
@@ -338,6 +415,7 @@ const balanceStyles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   unit: { fontSize: 11.5, fontWeight: '600', color: '#536471' },
+  hint: { fontSize: 11, color: '#8a97a3', marginTop: 6 },
 });
 
 /* ---------- avatar (the name's card picture) ---------- */

@@ -15,7 +15,7 @@ import * as Clipboard from 'expo-clipboard';
 import {
   AppLogo,
   Avatar,
-  BalanceFrame,
+  BalanceGrid,
   ConfirmSheet,
   HAIRLINE,
   LoadMoreFooter,
@@ -75,7 +75,7 @@ let feedCache: {
 export default function TimelineScreen() {
   const insets = useSafeAreaInsets();
   const app = useApp();
-  const { lang, address, qom, qcaw, f42, cat42, myTokens, actingId } = app;
+  const { lang, address, qom, qcaw, f42, cat42, oTok, ket, myTokens, actingId } = app;
 
   const [items, setItems] = useState<TimelineItem[]>(
     () => feedCache?.items ?? [],
@@ -540,46 +540,51 @@ export default function TimelineScreen() {
             </Text>
           </Pressable>
         </View>
-        {/* Balances (v0.4.6): full-width bordered frames, the
-         * same BalanceFrame the name card uses — the v0.4.5
-         * three-across row squeezed the labels until they
-         * wrapped/truncated and the amounts overflowed (user
-         * screenshots, 2026-11-09). Amounts are fmtAmountCard:
-         * display-only, truncated to 2 decimals. The deposited
-         * CAW is the active name's in-name balance
-         * (cawBalanceOf, carried on the token from the same
-         * enumeration); no name yet -> the honest dash.
-         * v0.4.8: the same wallet's two 42 Chain balances join
-         * underneath, in the same frames and the same order as
-         * the name card: native [42], then CAT42 — the
-         * SuperLike currency, labelled as such. They follow
-         * the v0.4.7 rule exactly: unread/failed reads render
-         * the dash, never a numeric 0. */}
-        <View style={{ marginTop: 12, gap: 6 }}>
-          <BalanceFrame
-            label={tr('home.qcaw')}
-            amount={qcaw !== null ? fmtAmountCard(qcaw) : null}
-            unit="CAW"
-          />
-          <BalanceFrame
-            label={tr('home.qom')}
-            amount={qom !== null ? fmtAmountCard(qom) : null}
-            unit="QOM"
-          />
-          <BalanceFrame
-            label={tr('card.inName')}
-            amount={acting ? fmtAmountCard(acting.balance) : null}
-            unit="CAW"
-          />
-          <BalanceFrame
-            label={tr('card.f42')}
-            amount={f42 !== null ? fmtAmountCard(f42) : null}
-            unit="42"
-          />
-          <BalanceFrame
-            label={tr('card.cat42')}
-            amount={cat42 !== null ? fmtAmountCard(cat42) : null}
-            unit="CAT42"
+        {/* Balances (v0.4.10): the two-column BalanceGrid —
+         * the same component, cells and order as the name
+         * card. History: v0.4.5's squeezed row -> v0.4.6's
+         * full-width frames (five by v0.4.8, compacted in
+         * v0.4.9) -> this grid, which fits SEVEN balances in
+         * less height than the five frames took. The grid
+         * formats each cell itself (fmtCardDisplay: B/M
+         * abbreviation for big figures, tap for the exact
+         * number). The deposited CAW is the active name's
+         * in-name balance (cawBalanceOf, carried on the token
+         * from the same enumeration); no name yet -> the
+         * honest dash. Every balance follows the v0.4.7 rule
+         * exactly: unread/failed reads render the dash,
+         * never a numeric 0. v0.4.10's additions: O
+         * (Childhoods End — read on QL1, the chain its
+         * contract lives on) and KET (42 Chain), each at the
+         * decimals its contract reports. CAT42's caption now
+         * says it is the tip currency (user direction
+         * 2026-11-10); SuperLike itself is unchanged. */}
+        <View style={{ marginTop: 12 }}>
+          <BalanceGrid
+            cells={[
+              { label: tr('home.qcaw'), unit: 'CAW', raw: qcaw },
+              { label: tr('home.qom'), unit: 'QOM', raw: qom },
+              {
+                label: tr('card.inName'),
+                unit: 'CAW',
+                raw: acting ? acting.balance : null,
+              },
+              { label: tr('card.f42'), unit: '42', raw: f42 },
+              { label: tr('card.cat42'), unit: 'CAT42', raw: cat42 },
+              {
+                label: 'O',
+                unit: 'O',
+                raw: oTok ? oTok.raw : null,
+                decimals: oTok ? oTok.decimals : 18,
+              },
+              {
+                label: 'KET',
+                unit: 'KET',
+                raw: ket ? ket.raw : null,
+                decimals: ket ? ket.decimals : 18,
+              },
+              null,
+            ]}
           />
         </View>
         </Pressable>
@@ -934,7 +939,7 @@ export default function TimelineScreen() {
 const styles = StyleSheet.create({
   /* Wallet card: one clean card — identity + copyable address
      chip on top, then the balances as full-width bordered
-     frames (shared BalanceFrame, v0.4.6) and the button row. */
+     grid (shared BalanceGrid, v0.4.10) and the button row. */
   chip: {
     backgroundColor: '#eff3f4',
     borderRadius: 999,

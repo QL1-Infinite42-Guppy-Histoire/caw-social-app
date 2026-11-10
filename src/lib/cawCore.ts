@@ -249,10 +249,93 @@ export function fmtAmount(wei: bigint): string {
  * detail screens (My names, profile, confirm sheets).
  */
 export function fmtAmountCard(wei: bigint): string {
-  const s = BigInt(wei).toString().padStart(19, '0');
-  const whole = s.slice(0, -18).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  const frac2 = s.slice(-18).slice(0, 2);
-  return frac2 === '00' ? whole : whole + '.' + frac2;
+  return fmtAmountCardDec(wei, 18);
+}
+
+/** Split a raw token amount into whole / fraction digit strings
+ *  at the token's own decimals (v0.4.10: O and KET balances are
+ *  formatted at the decimals their contracts report, not an
+ *  assumed 18). */
+function splitAmount(
+  raw: bigint,
+  decimals: number,
+): { whole: string; frac: string } {
+  const s = BigInt(raw).toString().padStart(decimals + 1, '0');
+  return {
+    whole: s.slice(0, s.length - decimals) || '0',
+    frac: decimals > 0 ? s.slice(s.length - decimals) : '',
+  };
+}
+
+/** fmtAmountCard at the token's own decimals: thousands
+ *  separators, at most two fraction digits, truncated. */
+export function fmtAmountCardDec(raw: bigint, decimals: number): string {
+  const { whole, frac } = splitAmount(raw, decimals);
+  const w = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const frac2 = frac.slice(0, 2);
+  return frac2 === '' || frac2 === '00' ? w : w + '.' + frac2;
+}
+
+/**
+ * The exact full figure of a raw amount (v0.4.10): every digit
+ * the chain reports, thousands separators in the whole part,
+ * the fraction complete with only trailing zeros trimmed. The
+ * balance grid shows this when a cell is tapped, so an
+ * abbreviated card figure can always be checked against the
+ * real number.
+ */
+export function fmtExactDec(raw: bigint, decimals: number): string {
+  const { whole, frac } = splitAmount(raw, decimals);
+  const w = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const f = frac.replace(/0+$/, '');
+  return f ? w + '.' + f : w;
+}
+
+/**
+ * Compact card notation for big balances (v0.4.10, user
+ * request): at or above a million tokens the figure becomes
+ * "x.xxM", at or above a billion "x.xxB" — always two
+ * decimals, TRUNCATED, never rounded (3,281,416,300.24 ->
+ * "3.28B"; 99,939,279.89 -> "99.94M"). Returns null below a
+ * million, where the caller shows fmtAmountCardDec instead.
+ */
+export function fmtAmountAbbr(
+  raw: bigint,
+  decimals: number,
+): string | null {
+  const scale = 10n ** BigInt(decimals);
+  const scaled100 = (bound: bigint, suffix: string): string => {
+    const v = (BigInt(raw) * 100n) / (scale * bound);
+    return (
+      (v / 100n).toString() +
+      '.' +
+      (v % 100n).toString().padStart(2, '0') +
+      suffix
+    );
+  };
+  if (BigInt(raw) >= scale * 1_000_000_000n) {
+    return scaled100(1_000_000_000n, 'B');
+  }
+  if (BigInt(raw) >= scale * 1_000_000n) {
+    return scaled100(1_000_000n, 'M');
+  }
+  return null;
+}
+
+/**
+ * What a balance-grid cell shows (v0.4.10): the abbreviated
+ * figure when fmtAmountAbbr applies, otherwise the normal
+ * card figure. `abbreviated` tells the caller the shown
+ * figure is the compact one (its exact form is fmtExactDec).
+ */
+export function fmtCardDisplay(
+  raw: bigint,
+  decimals: number,
+): { text: string; abbreviated: boolean } {
+  const abbr = fmtAmountAbbr(raw, decimals);
+  return abbr !== null
+    ? { text: abbr, abbreviated: true }
+    : { text: fmtAmountCardDec(raw, decimals), abbreviated: false };
 }
 
 /** Parse a plain decimal amount (up to 18 decimals) into wei, or null. */

@@ -37,6 +37,14 @@
  *      Also pinned: another user's device-local customization
  *      is ABSENT here (by design — it lives only on their
  *      phone), never faked.
+ *   7. (v0.4.10) the balance GRID on both cards: one shared
+ *      BalanceGrid per card, cells in the approved mock order
+ *      (wallet CAW, QOM, in-name CAW, [42], CAT42, O, KET,
+ *      empty); the B/M abbreviation (truncated, never rounded,
+ *      boundaries pinned); the exact figure behind a tap; the
+ *      O / KET reads under the v0.4.7 null rule with decimals
+ *      read from the contracts (stubbed + live); and CAT42's
+ *      caption switched to the tip wording in all 13 locales.
  *
  * No keys, no sends — reads and local logic only.
  */
@@ -238,6 +246,161 @@ try {
   } catch (e) {
     check('customs absence', false, String((e && e.message) || e));
   }
+}
+
+/* ---------- 7. (v0.4.10) the balance grid ---------- */
+{
+  const tlSrc = readFileSync(ROOT + 'src/screens/TimelineScreen.tsx', 'utf8');
+  const appSrc = readFileSync(ROOT + 'App.tsx', 'utf8');
+  const cfgSrc = readFileSync(ROOT + 'src/config.ts', 'utf8');
+  const ctxSrc = readFileSync(ROOT + 'src/context/AppContext.tsx', 'utf8');
+  const i18nSrc = readFileSync(ROOT + 'src/i18n.ts', 'utf8');
+  const apiSrc = readFileSync(ROOT + 'src/lib/cawApi.ts', 'utf8');
+
+  check('grid: ui.tsx exports BalanceGrid with tap-to-exact wiring (fmtExactDec + open state + hint)',
+    /export function BalanceGrid/.test(uiSrc) &&
+    /fmtExactDec\(cell\.raw, dec\)/.test(uiSrc) &&
+    /setOpen/.test(uiSrc) && /tr\('card\.tapHint'\)/.test(uiSrc));
+  check('grid: cells show fmtCardDisplay (B/M abbreviation applied inside the grid)',
+    /fmtCardDisplay\(cell\.raw, dec\)/.test(uiSrc));
+
+  // Cell order pinned by the label sequence inside each card's
+  // own <BalanceGrid cells={[ ... ]}> block (the approved mock).
+  const labelIdx = (src) => {
+    const at = src.indexOf('<BalanceGrid');
+    const seg = src.slice(at, at + 1800);
+    return [
+      "tr('home.qcaw')", "tr('home.qom')", "tr('card.inName')",
+      "tr('card.f42')", "tr('card.cat42')", "label: 'O'", "label: 'KET'",
+    ].map((k) => seg.indexOf(k));
+  };
+  for (const [name, src] of [['Home card', tlSrc], ['name card', appSrc]]) {
+    const idxs = labelIdx(src);
+    check(`grid: ${name} renders ONE BalanceGrid, cells in mock order (CAW, QOM, in-name, 42, CAT42, O, KET)`,
+      (src.match(/<BalanceGrid/g) || []).length === 1 &&
+      idxs.every((v) => v >= 0) &&
+      idxs.every((v, i) => i === 0 || v > idxs[i - 1]),
+      'idx=' + idxs.join(','));
+    check(`grid: ${name} completes the table with an empty 8th cell`,
+      /'KET'[\s\S]{0,300}?\n\s+null,\n\s+\]/.test(src.slice(src.indexOf('<BalanceGrid'), src.indexOf('<BalanceGrid') + 1800)));
+  }
+
+  /* --- the B/M abbreviation: pure, boundaries + truncation --- */
+  const T = (whole, frac18 = 0n) => BigInt(whole) * 10n ** 18n + frac18;
+  check('abbr: the brief example 3,281,416,300.24 -> "3.28B"',
+    core.fmtAmountAbbr(3281416300240000000000000000n, 18) === '3.28B');
+  check('abbr: 99,939,279.89 -> "99.93M" (TRUNCATED per the rule; the mock\u2019s 99.94 was the rounded figure)',
+    core.fmtAmountAbbr(99939279890000000000000000n, 18) === '99.93M');
+  check('abbr: below a million there is no abbreviation (999,999 and 999,999.99)',
+    core.fmtAmountAbbr(T(999999n), 18) === null &&
+    core.fmtAmountAbbr(T(999999n, 990000000000000000n), 18) === null);
+  check('abbr: exactly 1,000,000 -> "1.00M"; exactly 1e9 -> "1.00B"',
+    core.fmtAmountAbbr(T(1000000n), 18) === '1.00M' &&
+    core.fmtAmountAbbr(T(1000000000n), 18) === '1.00B');
+  check('abbr: 999,999,999 -> "999.99M" (just under the B boundary)',
+    core.fmtAmountAbbr(T(999999999n), 18) === '999.99M');
+  check('abbr: truncation never rounds up (1.999M -> "1.99M", 3.289B -> "3.28B")',
+    core.fmtAmountAbbr(T(1999000n), 18) === '1.99M' &&
+    core.fmtAmountAbbr(T(3289000000n), 18) === '3.28B');
+  check('abbr: honours the token\u2019s own decimals (1.5M at 6 decimals -> "1.50M"; same raw at 18 -> none)',
+    core.fmtAmountAbbr(1500000000000n, 6) === '1.50M' &&
+    core.fmtAmountAbbr(1500000000000n, 18) === null);
+  check('display: below 1M the cell uses the card format; at/above it is flagged abbreviated',
+    core.fmtCardDisplay(1011569804262003083182n, 18).text === '1,011.56' &&
+    core.fmtCardDisplay(1011569804262003083182n, 18).abbreviated === false &&
+    core.fmtCardDisplay(3281416300240000000000000000n, 18).text === '3.28B' &&
+    core.fmtCardDisplay(3281416300240000000000000000n, 18).abbreviated === true);
+  check('exact: the tap figure is digit-for-digit (CAT42 f8cc raw, dust, zero)',
+    core.fmtExactDec(1011569804262003083182n, 18) === '1,011.569804262003083182' &&
+    core.fmtExactDec(28350000000000n, 18) === '0.00002835' &&
+    core.fmtExactDec(0n, 18) === '0' &&
+    core.fmtExactDec(440000000000000000n, 18) === '0.44');
+  check('exact: card format at foreign decimals (1.5 at 6 -> "1.50", the two-digit rule; integer at 0 -> separators)',
+    core.fmtAmountCardDec(1500000n, 6) === '1.50' &&
+    core.fmtAmountCardDec(1234567n, 0) === '1,234,567' &&
+    core.fmtAmountCard(1011569804262003083182n) === '1,011.56');
+
+  /* --- O / KET wiring --- */
+  check('tokens: config pins the user-supplied O address and the table-resolved KET address',
+    /O_TOKEN = '0x6c39b68a28bA90F4EB80032ec0eB32ad81cbbEd4'/.test(cfgSrc) &&
+    /KET42 = '0xb749d42e6004db590b2f04f32b87485402a061e2'/.test(cfgSrc) &&
+    /decimals: '0x313ce567'/.test(cfgSrc));
+  check('tokens: O is read on QL1 (its chain), KET on 42 Chain — decimals from the contracts',
+    /tokenQl1\(O_TOKEN\)/.test(apiSrc) && /token42\(KET42\)/.test(apiSrc) &&
+    /SEL\.decimals/.test(apiSrc) && /interface TokenBalance/.test(apiSrc));
+  check('tokens: refreshBalances stores O / KET only on success (guarded, v0.4.7 rule)',
+    /if \(b\.oTok !== null\) setOTok\(b\.oTok\)/.test(ctxSrc) &&
+    /if \(b\.ket !== null\) setKet\(b\.ket\)/.test(ctxSrc));
+
+  /* --- O / KET behaviour under the null rule (selector-aware stub) --- */
+  {
+    const realFetch = globalThis.fetch;
+    const ADDR = '0x0000000000000000000000000000000000000001';
+    const w = (n) => '0x' + n.toString(16).padStart(64, '0');
+    const stub = (mode) => async (_url, opts) => {
+      if (mode === 'down') throw new Error('network down');
+      const body = JSON.parse(opts.body);
+      const data = (body.params && body.params[0] && body.params[0].data) || '';
+      const result =
+        body.method === 'eth_getBalance'
+          ? w(10n ** 18n)
+          : data.startsWith('0x313ce567')
+            ? w(18n) // decimals()
+            : w(2n * 10n ** 18n); // balanceOf
+      return {
+        json: async () =>
+          mode === 'rpcError'
+            ? { jsonrpc: '2.0', id: body.id, error: { message: 'boom' } }
+            : { jsonrpc: '2.0', id: body.id, result },
+      };
+    };
+    try {
+      globalThis.fetch = stub('ok');
+      const ok = await api.walletBalances(ADDR);
+      check('tokens: successful O / KET reads return { raw, decimals } from the contracts',
+        ok.oTok !== null && ok.oTok.raw === 2n * 10n ** 18n && ok.oTok.decimals === 18 &&
+        ok.ket !== null && ok.ket.raw === 2n * 10n ** 18n && ok.ket.decimals === 18,
+        'oTok=' + JSON.stringify(ok.oTok, (_, v) => typeof v === 'bigint' ? v.toString() : v));
+      globalThis.fetch = stub('down');
+      const down = await api.walletBalances(ADDR);
+      check('tokens: failed O / KET reads return null — NEVER a numeric 0',
+        down.oTok === null && down.ket === null);
+      globalThis.fetch = stub('rpcError');
+      const rerr = await api.walletBalances(ADDR);
+      check('tokens: RPC-error O / KET reads return null — NEVER a numeric 0',
+        rerr.oTok === null && rerr.ket === null);
+    } catch (e) {
+      check('tokens: O / KET failure semantics', false, String((e && e.message) || e));
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  /* --- live reads through the new code path (f8cc) --- */
+  try {
+    const b = await api.walletBalances(F8CC);
+    check('live: f8cc O read (QL1 token at the user address; decimals from the contract; 0 as of 2026-11-10)',
+      b.oTok !== null && b.oTok.decimals === 18 && b.oTok.raw === 0n,
+      'oTok=' + (b.oTok ? `raw ${b.oTok.raw} dec ${b.oTok.decimals}` : 'null'));
+    check('live: f8cc KET read (42 Chain; decimals from the contract; 0 as of 2026-11-10)',
+      b.ket !== null && b.ket.decimals === 18 && b.ket.raw === 0n,
+      'ket=' + (b.ket ? `raw ${b.ket.raw} dec ${b.ket.decimals}` : 'null'));
+    check('live: f8cc CAT42 through the same reader (user screenshot: 1,011.56)',
+      b.cat42 !== null && core.fmtAmountCard(b.cat42) === '1,011.56',
+      'cat42=' + (b.cat42 !== null ? core.fmtAmountCard(b.cat42) : 'null'));
+  } catch (e) {
+    check('live f8cc new-path reads', false, String((e && e.message) || e));
+  }
+
+  /* --- CAT42 caption: tip wording everywhere --- */
+  check('caption: card.cat42 + card.tapHint exist in all 13 language dicts',
+    (i18nSrc.match(/'card\.cat42'/g) || []).length === 13 &&
+    (i18nSrc.match(/'card\.tapHint'/g) || []).length === 13);
+  check('caption: JA + EN carry the tip wording',
+    /'card\.cat42': 'CAT42（チップ用）'/.test(i18nSrc) &&
+    /'card\.cat42': 'CAT42 \(for tips\)'/.test(i18nSrc));
+  check('caption: NO locale describes the CAT42 balance as "for SuperLike" any more',
+    !/'card\.cat42': '[^']*(SuperLike|超いいね)/.test(i18nSrc));
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
