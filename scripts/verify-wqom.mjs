@@ -189,20 +189,15 @@ console.log('\n--- unwrap tx and the WQOM-start flow ---');
     F.flowComplete(done) === true);
 }
 
-/* ============ screen wiring: WQOM row + start card ============ */
-console.log('\n--- screen wiring (source-level) ---');
-{
-  const src = readFileSync(new URL('../src/screens/HuntersSwapScreen.tsx', import.meta.url), 'utf8');
-  const rows = src.match(/name="WQOM" chain="QL1"/g) || [];
-  check('w1 WQOM balance row present in BOTH coin lists', rows.length === 2,
-    `rows=${rows.length}`);
-  check('w2 WQOM start card is balance-gated (non-zero only)',
-    src.includes("(balances?.ql1Wqom ?? 0n) > 0n") && src.includes("tr('hs.fromWqom')"));
-  check('w3 balances are read from the extended fetch (ql1Wqom threaded)',
-    src.includes('balances?.ql1Wqom'));
-  check('w4 gas-short WQOM start routes to the faucet guidance block',
-    src.includes("wqomPlan?.action === 'faucet'") && src.includes("tr('hs.gasQomShort')"));
-}
+/* ============ screen wiring: RETIRED in v0.5.0 formal ============ */
+console.log('\n--- screen wiring (retired) ---');
+/* w1–w4 asserted the WQOM balance rows, the WQOM mid-start
+ * card and its faucet-guidance routing inside the instant-swap
+ * screen. The user removed that screen's flows entirely
+ * (v0.5.0 formal, 「板だけにして」), so there is no wiring left
+ * to assert. The library behaviors those cards rested on —
+ * the QL1 gas keep, the finishing-batch plan shapes — stay
+ * verified by the sections above. */
 
 console.log(`\nverify-wqom: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

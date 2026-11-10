@@ -6,14 +6,26 @@ pragma solidity 0.8.26;
  * — src/lib/../contracts, design memo
  * ~/workspace/huntersexchange/DESIGN.md §3 (2026-11-10).
  *
- * ONE trading pair, two tokens:
+ * TWO trading pairs sharing the CAW leg (v0.5.0 formal):
  *   USDT  0xC2684966e5c95B2bc636FB4a1f3Da9Ad23d94753  (18 decimals
  *         on 42 Chain — the app's shipped token registry)
+ *   QOM   0x53465cbbba5b14f5dc00794330f0f4afb30eaa1d  (18 decimals,
+ *         the bridged QOM token ON 42 Chain — the token the
+ *         QL1<->42 QOM bridge actually delivers here. NOTE: the
+ *         QL1-side WQOM address 0xa26dfBF9... has NO code on
+ *         42 Chain; verified live 2026-11-10: symbol "QOM",
+ *         18 decimals, at this address)
  *   CAW   0xce8aEE7148DaA8943453239C42B7b93f984A49F0  (18 decimals,
  *         the bridged "A Hunters Dream" CAW on 42 Chain)
+ * Every order pairs CAW with exactly one quote token (USDT
+ * or QOM); a USDT<->QOM order is not a pair and fill()
+ * refuses it. Escrow accounting is per token, so the two
+ * books' funds are separated by construction: an order can
+ * only ever move its own two tokens between escrow accounts.
  * The book is served by merging both directions of signed
- * orders: a "sell CAW" order gives CAW and wants USDT; a "buy
- * CAW" order gives USDT and wants CAW.
+ * orders: a "sell CAW" order gives CAW and wants the quote
+ * token; a "buy CAW" order gives the quote token and wants
+ * CAW.
  *
  * IMMUTABLE, NO ADMIN (the user's decision 2026-11-10): no
  * owner, no upgrade path, no pause, no rescue function, no fee
@@ -41,6 +53,7 @@ interface IERC20Mini {
 
 contract HuntersExchange {
     address public constant USDT = 0xC2684966e5c95B2bc636FB4a1f3Da9Ad23d94753;
+    address public constant QOM = 0x53465CbBBA5b14f5Dc00794330f0f4aFb30EAA1d;
     address public constant CAW = 0xce8aEE7148DaA8943453239C42B7b93f984A49F0;
 
     string public constant NAME = "HuntersExchange";
@@ -114,7 +127,20 @@ contract HuntersExchange {
     }
 
     function _isPairToken(address t) internal pure returns (bool) {
-        return t == USDT || t == CAW;
+        return t == USDT || t == QOM || t == CAW;
+    }
+
+    /**
+     * A fillable order pairs CAW with exactly one quote
+     * token: precisely one side is CAW (the other side is
+     * then USDT or QOM by _isPairToken). This is what keeps
+     * the two books' escrow funds strictly separate — fill()
+     * below moves ONLY the order's own tokenGive / tokenGet
+     * balances, so a USDT-pair order can never touch QOM
+     * escrow, and a quote<->quote order can never settle.
+     */
+    function _isCawPair(address give, address get) internal pure returns (bool) {
+        return (give == CAW) != (get == CAW);
     }
 
     /**
@@ -123,7 +149,8 @@ contract HuntersExchange {
      * bool from transferFrom still work; the received amount is
      * measured by balance delta so fee-on-transfer tokens (if
      * ever whitelisted by a redeploy) escrow what actually
-     * arrived. For THIS deployment both pair tokens are plain.
+     * arrived. For THIS deployment all three pair tokens are
+     * plain.
      */
     function deposit(address token, uint256 amount) external {
         require(_isPairToken(token), "HX: token not in pair");
@@ -178,6 +205,7 @@ contract HuntersExchange {
     function fill(Order calldata o, bytes calldata signature, uint256 giveAmount) external {
         require(_isPairToken(o.tokenGive) && _isPairToken(o.tokenGet), "HX: token not in pair");
         require(o.tokenGive != o.tokenGet, "HX: same token");
+        require(_isCawPair(o.tokenGive, o.tokenGet), "HX: not a CAW pair");
         require(giveAmount > 0, "HX: zero fill");
         require(o.expiry == 0 || block.timestamp <= o.expiry, "HX: order expired");
         bytes32 digest = hashOrder(o);

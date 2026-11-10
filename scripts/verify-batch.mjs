@@ -501,30 +501,16 @@ console.log('\n--- (h) holdings-driven display ---');
     H.ql1HeldStartCandidate({ ...got[0], chain: 'infinite' }) === false);
 }
 
-/* ---------- screen wiring (source level) ---------- */
-console.log('\n--- screen wiring ---');
-{
-  const src = readFileSync(
-    new URL('../src/screens/HuntersSwapScreen.tsx', import.meta.url).pathname,
-    'utf8',
-  );
-  const buy = src.slice(
-    src.indexOf('function BuySection'),
-    src.indexOf('function SellSection'),
-  );
-  check('w1 the buy step 3 runs the finishing batch',
-    buy.includes('runQl1FinishBatch') && buy.includes('prepareFinish'));
-  check('w2 NO standalone unwrap sheet exists anywhere in the screen',
-    !src.includes("askSend(tr('hs.stepUnwrap')"));
-  check('w3 no symbol branch for QOM remains in the buy section',
-    !buy.includes("sym === 'QOM'"));
-  check('w4 the WQOM start persists its chosen amount as the fixed input',
-    buy.includes('ql1FixedInput: amt.toString()'));
-  check('w5 held tokens render in the balance card and as start cards',
-    buy.includes('heldTokens.map') && buy.includes("tr('hs.fromToken'"));
-  check('w6 the batch persists the converted amount on unwrap confirm',
-    buy.includes('onUnwrapConfirmed') && buy.includes('ql1Unwrapped'));
-}
+/* ---------- screen wiring: RETIRED in v0.5.0 formal ---------- */
+console.log('\n--- screen wiring (retired) ---');
+/* w1–w6 asserted the buy section's finishing-batch wiring
+ * (runQl1FinishBatch call sites, the WQOM start's fixed
+ * input, held-token start cards, the unwrap-confirm
+ * persistence). The user removed the instant-swap screen's
+ * flows entirely (v0.5.0 formal, 「板だけにして」) — BuySection
+ * no longer exists, so there is no wiring left to assert.
+ * The batch LIBRARY behavior stays verified by the sections
+ * above. */
 
 console.log(`\nverify-batch: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

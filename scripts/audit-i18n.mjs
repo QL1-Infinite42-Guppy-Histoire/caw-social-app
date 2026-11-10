@@ -107,9 +107,15 @@ const BUDGETS = [
       'wallet.savedIt', 'wallet.importBtn',
       'draft.discard', 'wallets.add', 'wallets.deleteOne',
       'detail.likedBy', 'detail.sharedBy',
-      /* The HuntersDEX header (v0.4.0): the buy/sell segmented
-       * control and the header Send pill share fixed rows too. */
-      'hs.buy', 'hs.sell', 'send.title',
+      /* The HuntersExchange header: the GetNameScreen "Buy CAW"
+       * opener and the header Send pill share fixed rows too.
+       * (v0.5.0 formal: 'hs.sell' died with the instant swap.) */
+      'hs.buy', 'send.title',
+      /* The Exchange deposit / withdraw entry buttons render
+       * two per row (v0.5.0 formal; QOM added with the second
+       * pair). */
+      'hxd.depUsdt', 'hxd.depCaw', 'hxd.depQom',
+      'hxd.wdUsdt', 'hxd.wdCaw', 'hxd.wdQom',
     ],
     max: 26,
     why: 'button labels',

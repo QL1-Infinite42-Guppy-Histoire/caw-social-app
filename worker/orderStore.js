@@ -12,6 +12,7 @@
  */
 
 export const HX_USDT = '0xc2684966e5c95b2bc636fb4a1f3da9ad23d94753';
+export const HX_QOM = '0x53465cbbba5b14f5dc00794330f0f4afb30eaa1d';
 export const HX_CAW = '0xce8aee7148daa8943453239c42b7b93f984a49f0';
 
 const ADDR = /^0x[0-9a-fA-F]{40}$/;
@@ -35,8 +36,12 @@ export function validateOrderShape(o) {
   if (!UINT.test(String(o.nonce))) return 'bad-nonce';
   const g = o.tokenGive.toLowerCase();
   const t = o.tokenGet.toLowerCase();
+  /* Two books (v0.5.0 formal): CAW paired with USDT or with
+   * QOM. A quote<->quote order is not a pair — the contract
+   * refuses it too. */
   const pair =
-    (g === HX_USDT && t === HX_CAW) || (g === HX_CAW && t === HX_USDT);
+    (g === HX_CAW && (t === HX_USDT || t === HX_QOM)) ||
+    (t === HX_CAW && (g === HX_USDT || g === HX_QOM));
   if (!pair) return 'not-the-pair';
   return null;
 }

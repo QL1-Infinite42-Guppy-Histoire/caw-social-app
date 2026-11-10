@@ -265,20 +265,16 @@ console.log('\n--- (c) runQl1BridgeBatch sequences ---');
     resumed.wrapWei === 0n && r3.built.join(',') === 'bridge');
 }
 
-/* ============ (d) screen wiring ============ */
-console.log('\n--- (d) screen wiring ---');
-{
-  const src = readFileSync(new URL('../src/screens/HuntersSwapScreen.tsx', import.meta.url), 'utf8');
-  check('d1 sell QL1 leg passes the pair token as toTokOverride',
-    src.includes("buildRouteSwapTx('ql1', route, address, 1, undefined, dstTok)"));
-  check('d2 sell bridge step plans through ql1BridgePlan and runs runQl1BridgeBatch',
-    src.includes('ql1BridgePlan({') && src.includes('runQl1BridgeBatch({'));
-  check('d3 sell bridge step wraps through buildWrapTx with the hs.stepWrap sub-status',
-    src.includes('buildWrapTx(leg.amount)') && src.includes("'hs.stepWrap'"));
-  const i18n = readFileSync(new URL('../src/i18n.ts', import.meta.url), 'utf8');
-  const langs = (i18n.match(/'hs\.stepWrap':/g) || []).length;
-  check('d4 hs.stepWrap exists in all 20 languages', langs === 20, `found ${langs}`);
-}
+/* ============ (d) screen wiring: RETIRED in v0.5.0 formal ============ */
+console.log('\n--- (d) screen wiring (retired) ---');
+/* d1–d4 asserted the sell section's bridge wiring
+ * (toTokOverride on the QL1 leg, ql1BridgePlan /
+ * runQl1BridgeBatch call sites, the hs.stepWrap sub-status
+ * and its 20-language presence). The user removed the
+ * instant-swap screen's flows entirely (v0.5.0 formal,
+ * 「板だけにして」) and hs.stepWrap was deleted from the
+ * dictionaries with the sell section. The bridge-plan
+ * LIBRARY behavior stays verified by the sections above. */
 
 console.log(`\nverify-sellbridge: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

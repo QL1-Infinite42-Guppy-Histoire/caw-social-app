@@ -409,9 +409,13 @@ try {
   check('naming: no user-visible "HuntersDEX" remains (comments only)',
     !/>\s*DEX\s*</.test(hsSrc) && !hsSrc.includes('"HuntersDEX"') &&
     !hsSrc.includes("'HuntersDEX'"));
-  check('naming: the swap/book mode toggle exists (HuntersDEX keeps working as instant swap)',
-    hsSrc.includes("tr('hx.modeSwap')") && hsSrc.includes("tr('hx.modeBook')") &&
-    hsSrc.includes('<ExchangeSection />'));
+  /* v0.5.0 formal: the candidate's swap/book mode toggle is
+   * GONE (user: 「板だけにして」) — the screen renders the book
+   * directly. The full reachability suite lives in
+   * verify-exchange.mjs section 4. */
+  check('naming: NO mode toggle — the screen opens directly on the order book (v0.5.0 formal)',
+    !hsSrc.includes("tr('hx.modeSwap')") && !hsSrc.includes("tr('hx.modeBook')") &&
+    !hsSrc.includes('hsMode') && hsSrc.includes('<ExchangeSection />'));
   const langsBlock = i18nSrc.slice(i18nSrc.indexOf('export const LANGS'), i18nSrc.indexOf('];', i18nSrc.indexOf('export const LANGS')));
   check('languages: LANGS offers exactly 20 languages',
     (langsBlock.match(/\{ code: '/g) || []).length === 20,

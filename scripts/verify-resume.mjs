@@ -133,28 +133,29 @@ console.log('\n--- B. taxonomy ---');
     H.stepErrorKey('unconfirmed') !== H.stepErrorKey('failed'));
 }
 
-/* ================= C. i18n message identity (13 langs) ===== */
-console.log('\n--- C. new strings exist and differ in all 13 languages ---');
+/* ================= C. i18n message identity (20 langs) ===== */
+console.log('\n--- C. surviving strings exist and differ in all 20 languages ---');
 {
+  /* v0.5.0 formal: the string checks for the REMOVED
+   * instant-swap UX (hs.stepAlreadyDone / hs.startFrom /
+   * hs.arriveAs / hs.arriveUsdt / hs.arriveNative /
+   * hs.fromUsdt42 / hs.fromCaw / hs.wqomNote) are retired
+   * together with the strings themselves. What stays checked:
+   * the error-taxonomy and gas strings the surviving features
+   * use (the Exchange deposit flows surface hs.needGasCoin /
+   * hs.gasQomShort through this same taxonomy), and the
+   * faucet strings. */
   for (const { code } of I.LANGS) {
     I.setLang(code);
     const ok =
       I.tr('hs.unconfirmed') !== 'hs.unconfirmed' &&
       I.tr('hs.unconfirmed') !== I.tr('hs.failed') &&
-      I.tr('hs.stepAlreadyDone') !== 'hs.stepAlreadyDone' &&
       I.tr('hs.needGasCoin', { sym: 'BNB' }).includes('BNB') &&
-      I.tr('hs.startFrom') !== 'hs.startFrom' &&
-      I.tr('hs.arriveAs') !== 'hs.arriveAs' &&
-      I.tr('hs.arriveUsdt') !== 'hs.arriveUsdt' &&
-      I.tr('hs.arriveNative', { sym: 'ETH' }).includes('ETH') &&
-      I.tr('hs.fromUsdt42') !== 'hs.fromUsdt42' &&
-      I.tr('hs.fromCaw') !== 'hs.fromCaw' &&
       I.tr('hs.gasQomShort') !== 'hs.gasQomShort' &&
-      I.tr('hs.wqomNote') !== 'hs.wqomNote' &&
       I.tr('faucet.title') !== 'faucet.title' &&
       I.tr('faucet.err.address_cooldown', { t: 'X' }).includes('X') &&
       I.tr('faucet.err.daily_limit') !== I.tr('faucet.err.failed');
-    check(`C ${code}: unconfirmed/gas/start/arrival/faucet strings present and distinct`, ok);
+    check(`C ${code}: unconfirmed/gas/faucet strings present and distinct`, ok);
   }
   I.setLang('en');
 }
@@ -399,50 +400,37 @@ console.log('\n--- I. faucet ---');
 console.log('\n--- J. source checks ---');
 {
   const wallet = readFileSync(new URL('../src/lib/wallet.ts', import.meta.url), 'utf8');
-  const screen = readFileSync(new URL('../src/screens/HuntersSwapScreen.tsx', import.meta.url), 'utf8');
   const timeline = readFileSync(new URL('../src/screens/TimelineScreen.tsx', import.meta.url), 'utf8');
   check('J1 wallet no longer confirms via tx.wait()', !wallet.includes('tx.wait()'));
-  check('J2 old catch-all mapping is gone from the step path',
-    !screen.includes("? 'hs.priceMoved' : 'hs.failed'"));
-  check('J3 resume uses the advance + readiness gates',
-    screen.includes('resumeEntryAdvance') && screen.includes('entryStepReady'));
-  check('J4 USDT-start pre-flight wired', screen.includes('fetchUsdtStartGasOk'));
-  check('J5 gas-keep re-checked at execution', screen.includes('keepAwareSpendable'));
-  check('J6 QL1 gas gates wired on both directions', screen.includes('fetchQl1GasShort'));
-  check('J7 mid-starts wired (buy + sell)', screen.includes('startFlow42') && screen.includes('startSellFlow42'));
-  check('J8 arrival choice wired through the watcher', screen.includes('arrivalAction'));
+  /* J2–J8 RETIRED in v0.5.0 formal: they asserted that the
+   * instant-swap screen wired the resume/advance gates
+   * (resumeEntryAdvance, entryStepReady), the USDT-start
+   * pre-flight, the execution-time gas-keep re-check, the QL1
+   * gas gates, the 42-USDT mid-starts and the arrival choice.
+   * The user removed that screen's flows entirely
+   * (「板だけにして」), so there is no wiring left to assert.
+   * The LIBRARY behaviors behind those checks stay verified
+   * in sections A–I above and in verify-huntersswap.mjs; the
+   * Exchange deposit flows' own wiring is pinned in
+   * verify-exchange.mjs section 4. */
   check('J9 Recaw sheet clears the nav bar (shared inset pattern)',
     timeline.includes('30 + insets.bottom'));
 }
 
-/* ================= K. goal cards + U-turn ================== */
-console.log('\n--- K. goal-framed entry + U-turn ---');
+/* ================= K. goal recommendation (library) ======== */
+console.log('\n--- K. goal recommendation helper (library) ---');
 {
   check('K1 holding CAW recommends the cash-out goal',
     H.recommendedGoal(1000000000000000000n) === 'sell');
   check('K2 no CAW defaults to the buy goal',
     H.recommendedGoal(0n) === 'buy');
-  let goalsOk = true;
-  for (const { code } of I.LANGS) {
-    I.setLang(code);
-    if (
-      I.tr('hs.goalBuy') === 'hs.goalBuy' ||
-      I.tr('hs.goalSell') === 'hs.goalSell' ||
-      I.tr('hs.goalBuySub') === 'hs.goalBuySub' ||
-      I.tr('hs.goalSellSub') === 'hs.goalSellSub' ||
-      I.tr('hs.recommend') === 'hs.recommend' ||
-      I.tr('hs.uturn') === 'hs.uturn' ||
-      I.tr('hs.uturnNote') === 'hs.uturnNote'
-    ) goalsOk = false;
-  }
-  I.setLang('en');
-  check('K3 goal + U-turn strings exist in all 13 languages', goalsOk);
-  const screen = readFileSync(new URL('../src/screens/HuntersSwapScreen.tsx', import.meta.url), 'utf8');
-  check('K4 goal cards render in the DEX header',
-    screen.includes('hs.goalBuy') && screen.includes('hs.goalSell') && screen.includes('recommendedGoal'));
-  check('K5 U-turn wired in both sections (resume card + run phase)',
-    (screen.match(/onPress=\{uturn\}/g) ?? []).length >= 4 &&
-    screen.includes('onSwitchDirection'));
+  /* K3–K5 RETIRED in v0.5.0 formal: they verified the goal
+   * cards and the mid-flow U-turn — instant-swap UX the user
+   * removed. The goal strings (hs.goalBuy / hs.goalSell /
+   * hs.goalBuySub / hs.goalSellSub / hs.recommend / hs.uturn /
+   * hs.uturnNote) were deleted from all 20 dictionaries along
+   * with the cards. recommendedGoal itself remains in
+   * lib/hunters.ts as a library helper, so K1/K2 stay. */
 }
 
 console.log(`\nverify-resume: ${pass} passed, ${fail} failed`);

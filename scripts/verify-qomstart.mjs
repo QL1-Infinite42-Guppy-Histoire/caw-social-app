@@ -184,37 +184,16 @@ console.log('\n--- (e) flow shape ---');
     F.flowComplete ? F.flowComplete(back) === false : true);
 }
 
-/* ============ screen wiring (source level) ============ */
-console.log('\n--- (f) screen wiring ---');
-{
-  const src = readFileSync(
-    new URL('../src/screens/HuntersSwapScreen.tsx', import.meta.url).pathname,
-    'utf8',
-  );
-  check('f1 startQomFlow exists and is wired to the Next button',
-    src.includes('const startQomFlow') && src.includes("startPoint === 'qom' ? startQomFlow()"));
-  check('f2 the QOM start card is balance-gated on the native QL1 balance',
-    src.includes("(balances?.ql1Native ?? 0n) > 0n") && src.includes("tr('hs.fromQom')"));
-  check('f3 startQomFlow blocks over-keep amounts and faucet plans before starting',
-    src.includes('amt > ql1NativeSpendableWei(planNow)') &&
-    src.includes("planNow.action === 'faucet'"));
-  check('f4 the born part is marked srcNativeQom at step 3',
-    src.includes('srcNativeQom: true'));
-  /* v0.4.3: step 3 is the finishing batch now. The intents
-     of the old f5/f6 (native part planned against its native
-     funds only, no allowance leg; native swap built without
-     the token override) are carried by the batch plan/build
-     wiring — asserted here in their new shape, and covered
-     behaviorally by verify-batch.mjs. */
-  check('f5 step 3 plans a native part as native funds (fixed input, fully converted) inside the batch',
-    src.includes('part.srcNativeQom') &&
-    src.includes('runQl1FinishBatch') && src.includes('ql1FinishPlan'));
-  check('f6 the batch builds the native swap without the token override for native-asset parts',
-    src.includes("facts.kind === 'nativeAsset'") &&
-    src.includes("buildRouteSwapTx('ql1', route, address, 1, facts.aggToken)"));
-  check('f7 the amount screen caps chips at the native spendable',
-    src.includes('ql1NativeSpendableWei(qomPlan)'));
-}
+/* ============ screen wiring: RETIRED in v0.5.0 formal ============ */
+console.log('\n--- (f) screen wiring (retired) ---');
+/* f1–f7 asserted the native-QOM start flow's wiring inside
+ * the instant-swap screen (startQomFlow, the balance-gated
+ * start card, the finishing-batch call sites). The user
+ * removed that screen's flows entirely (v0.5.0 formal,
+ * 「板だけにして」), so there is no wiring left to assert. The
+ * library behaviors — the srcNativeQom part shape, the keep
+ * math, the batch plan — stay verified by the sections above
+ * and by verify-batch.mjs. */
 
 console.log(`\nverify-qomstart: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

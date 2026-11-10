@@ -49,8 +49,19 @@ const USDT_42 = USDT_ON.infinite.address;
 
 export const HX_USDT = USDT_42;
 export const HX_CAW = CAW_42_TOKEN;
+/**
+ * The QOM book's quote token: the bridged QOM token ON
+ * 42 Chain (symbol "QOM", 18 dp — identical to the
+ * aggregator's token table, lib/aggEngine.ts id "qom", and
+ * to what the QL1<->42 QOM bridge delivers on 42). NOT the
+ * QL1 WQOM address: 0xa26dfBF9… has no code on 42 Chain
+ * (verified live 2026-11-10 before wiring, per the task's
+ * instruction to verify symbol/decimals first).
+ */
+export const HX_QOM = '0x53465CbBBA5b14f5Dc00794330f0f4aFb30EAA1d';
 export const HX_USDT_DECIMALS = 18; // 42 Chain USDT (app registry)
 export const HX_CAW_DECIMALS = 18;
+export const HX_QOM_DECIMALS = 18;
 export const HX_CHAIN_ID = 421018;
 
 /** Expiry choices on the order form (mock v050_06): 24h/7d/28d. */
@@ -188,14 +199,33 @@ export async function hxSignCancel(
   return wallet.signMessage(getBytes(hxOrderHash(contract, o)));
 }
 
-/** True when the order's pair side is one of the two book tokens. */
+/**
+ * True when the order belongs to one of the two books:
+ * CAW paired with exactly one quote token (USDT or QOM).
+ * A quote<->quote order (USDT<->QOM) is NOT a pair order —
+ * the contract refuses it too.
+ */
 export function hxIsPairOrder(o: HxOrder): boolean {
   const g = o.tokenGive.toLowerCase();
   const t = o.tokenGet.toLowerCase();
-  return (
-    (g === HX_USDT.toLowerCase() && t === HX_CAW.toLowerCase()) ||
-    (g === HX_CAW.toLowerCase() && t === HX_USDT.toLowerCase())
-  );
+  const caw = HX_CAW.toLowerCase();
+  const quote = (x: string) =>
+    x === HX_USDT.toLowerCase() || x === HX_QOM.toLowerCase();
+  return (g === caw && quote(t)) || (t === caw && quote(g));
+}
+
+/** The order's quote-token side (USDT or QOM), raw (18 dp). */
+export function hxOrderQuoteValue(o: HxOrder): bigint {
+  return o.tokenGive.toLowerCase() === HX_CAW.toLowerCase()
+    ? o.amountGet
+    : o.amountGive;
+}
+
+/** Convert a QOM raw amount (18 dp) to its USDT raw value
+ *  (18 dp) at a quoted price of USDT (6 dp) per whole QOM.
+ *  Pure; used by the minimum-order guide for QOM orders. */
+export function hxQomToUsdtRaw(qomRaw: bigint, usdtPerQomRaw6: bigint): bigint {
+  return (qomRaw * usdtPerQomRaw6) / 10n ** 6n;
 }
 
 /** The order's USDT-denominated side, raw (18 dp). */
@@ -206,20 +236,22 @@ export function hxOrderUsdtValue(o: HxOrder): bigint {
 }
 
 /**
- * Unit price of an order: USDT raw (18 dp) per 1 whole CAW,
- * scaled by 1e18 — priceRaw = usdtRaw * 1e18 / cawWholeRaw…
- * precisely: (usdtSide * 10^18) / cawSide gives USDT-raw per
- * 1 CAW-raw × 10^18; dividing by 10^18 in display yields USDT
- * per whole CAW as a decimal. Used for book sorting only.
+ * Unit price of an order: QUOTE-token raw (18 dp) per 1
+ * whole CAW, scaled by 1e18 — precisely: (quoteSide * 10^18)
+ * / cawSide gives quote-raw per 1 CAW-raw × 10^18; dividing
+ * by 10^18 in display yields quote tokens per whole CAW as
+ * a decimal. Used for book sorting only — within one book
+ * the quote token is uniform, so USDT and QOM orders never
+ * compare against each other here.
  */
 export function hxOrderPriceScaled(o: HxOrder): bigint {
-  const usdt = hxOrderUsdtValue(o);
+  const quote = hxOrderQuoteValue(o);
   const caw =
     o.tokenGive.toLowerCase() === HX_CAW.toLowerCase()
       ? o.amountGive
       : o.amountGet;
   if (caw === 0n) return 0n;
-  return (usdt * 10n ** 18n) / caw;
+  return (quote * 10n ** 18n) / caw;
 }
 
 /* ---------------- minimum-order guide (memo §5) ---------------- */
@@ -314,9 +346,11 @@ export async function validateExchangeAddress(
     if (!code || code === '0x') return false;
     const c = hxContract(addr);
     const usdt = (await c.USDT()) as string;
+    const qom = (await c.QOM()) as string;
     const caw = (await c.CAW()) as string;
     return (
       usdt.toLowerCase() === HX_USDT.toLowerCase() &&
+      qom.toLowerCase() === HX_QOM.toLowerCase() &&
       caw.toLowerCase() === HX_CAW.toLowerCase()
     );
   } catch {
@@ -327,13 +361,14 @@ export async function validateExchangeAddress(
 export async function hxEscrowBalances(
   contract: string,
   who: string,
-): Promise<{ usdt: bigint; caw: bigint }> {
+): Promise<{ usdt: bigint; caw: bigint; qom: bigint }> {
   const c = hxContract(contract);
-  const [usdt, caw] = await Promise.all([
+  const [usdt, caw, qom] = await Promise.all([
     c.balanceOf(HX_USDT, who) as Promise<bigint>,
     c.balanceOf(HX_CAW, who) as Promise<bigint>,
+    c.balanceOf(HX_QOM, who) as Promise<bigint>,
   ]);
-  return { usdt, caw };
+  return { usdt, caw, qom };
 }
 
 export async function hxFilled(
@@ -471,6 +506,54 @@ export async function hxReferenceCawQuote(): Promise<bigint | null> {
     );
     const amounts = (await c.getAmountsOut(1_000_000_000n * 10n ** 18n, [
       '0xd2140E16aDf37194036865E90BbCA1139b739d0D',
+      WQOM_ADDR,
+      USDT_ON.ql1.address,
+    ])) as bigint[];
+    return amounts[amounts.length - 1];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reference price for the QOM book: QomSwap quote for
+ * 1,000,000,000 CAW in QOM terms — path CAW → WQOM on QL1
+ * (the native QOM market). Returns WQOM raw (18 dp) received
+ * for 1e9 CAW, or null when unquotable. (WQOM on QL1 and the
+ * bridged QOM token on 42 are the same asset across the
+ * bridge, 1:1.)
+ */
+export async function hxReferenceCawQomQuote(): Promise<bigint | null> {
+  try {
+    const c = new Contract(
+      '0xc1f90231035A52091eBCb7dddaCa3051a5F44f30',
+      V2_ROUTER_ABI,
+      providerFor('ql1'),
+    );
+    const amounts = (await c.getAmountsOut(1_000_000_000n * 10n ** 18n, [
+      '0xd2140E16aDf37194036865E90BbCA1139b739d0D',
+      WQOM_ADDR,
+    ])) as bigint[];
+    return amounts[amounts.length - 1];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * QOM price in USDT raw (6 dp) per 1 whole QOM, from the
+ * QomSwap WQOM → USDT leg. Null when unquotable — the
+ * minimum-order guide then simply does not judge QOM
+ * orders (it never guesses a price).
+ */
+export async function hxQomUsdtRaw(): Promise<bigint | null> {
+  try {
+    const c = new Contract(
+      '0xc1f90231035A52091eBCb7dddaCa3051a5F44f30',
+      V2_ROUTER_ABI,
+      providerFor('ql1'),
+    );
+    const amounts = (await c.getAmountsOut(10n ** 18n, [
       WQOM_ADDR,
       USDT_ON.ql1.address,
     ])) as bigint[];
