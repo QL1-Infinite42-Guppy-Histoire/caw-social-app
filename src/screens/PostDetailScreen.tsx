@@ -15,6 +15,7 @@ import {
   PostCard,
   ReplyIcon,
   S,
+  TipSheet,
 } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
@@ -29,16 +30,10 @@ import {
 } from '../lib/cawApi';
 import {
   performSuperlike,
-  performSuperlikeBurn,
+  performTip,
 } from '../lib/actionFlow';
-import {
-  pendingBurnFor,
-  SUPERLIKE_AUTHOR_CAT42,
-  SUPERLIKE_BURN_CAT42,
-  SUPERLIKE_TOTAL_CAT42,
-  SUPERLIKE_TOTAL_RAW,
-} from '../lib/superlike';
-import { fmtAmountCard } from '../lib/cawCore';
+import { SUPERLIKE_PRICE_RAW } from '../lib/superlike';
+import { fmtAmountCardDec } from '../lib/cawCore';
 import { backArrow } from '../lib/rtl';
 
 /**
@@ -99,23 +94,21 @@ export default function PostDetailScreen({
     [app, onBack],
   );
 
-  /* ---------- SuperLike (v0.4.9) ----------
+  /* ---------- SuperLike (v0.4.9; O-burn design v0.5.0) ----------
    * The detail view renders the same PostCard as the feed and
    * the profile lists, so it offers the same ⭐ flow with the
-   * same guards (own-post block, fresh-balance hard stop,
-   * burn-only retry for an owed burn). */
+   * same guards (own-post block, fresh-balance hard stop). One
+   * O burn transaction — no debt state. */
   const [slStatus, setSlStatus] = useState<Record<string, string>>({});
   const [slBusyHash, setSlBusyHash] = useState<Record<string, boolean>>({});
   const [slItem, setSlItem] = useState<TimelineItem | null>(null);
   const [slName, setSlName] = useState('');
   const [slOwner, setSlOwner] = useState('');
   const [slBusy, setSlBusy] = useState(false);
-  const [slBurnItem, setSlBurnItem] = useState<TimelineItem | null>(null);
-  const [slBurnBusy, setSlBurnBusy] = useState(false);
 
   const openSuperlikeSheet = useCallback(
     (item: TimelineItem) => {
-      if (app.cat42 !== null && app.cat42 < SUPERLIKE_TOTAL_RAW) {
+      if (app.oTok !== null && app.oTok.raw < SUPERLIKE_PRICE_RAW) {
         setSlStatus((prev) => ({ ...prev, [item.hash]: tr('sl.shortfall') }));
         return;
       }
@@ -134,18 +127,6 @@ export default function PostDetailScreen({
     (item: TimelineItem) => {
       if (app.myTokens.some((t) => t.id === item.senderId)) {
         setSlStatus((prev) => ({ ...prev, [item.hash]: tr('sl.self') }));
-        return;
-      }
-      if (app.address) {
-        pendingBurnFor(app.address, item.cawId)
-          .then((pending) => {
-            if (pending) {
-              setSlBurnItem(item);
-              return;
-            }
-            openSuperlikeSheet(item);
-          })
-          .catch(() => openSuperlikeSheet(item));
         return;
       }
       openSuperlikeSheet(item);
@@ -167,9 +148,7 @@ export default function PostDetailScreen({
           ? tr('sl.self')
           : e instanceof Error && e.message === 'shortfall'
             ? tr('sl.shortfall')
-            : e instanceof Error && e.message === 'burn-pending'
-              ? tr('sl.burnPending')
-              : tr('act.failed');
+            : tr('act.failed');
       setSlStatus((prev) => ({ ...prev, [item.hash]: msg }));
     } finally {
       setSlBusy(false);
@@ -178,26 +157,50 @@ export default function PostDetailScreen({
     }
   }, [app, slItem]);
 
-  const confirmBurn = useCallback(async () => {
-    if (!slBurnItem) return;
-    const item = slBurnItem;
-    setSlBurnBusy(true);
-    setSlBusyHash((prev) => ({ ...prev, [item.hash]: true }));
-    try {
-      await performSuperlikeBurn(app, { target: item });
-      setSlStatus((prev) => ({ ...prev, [item.hash]: tr('sl.burnDone') }));
-    } catch (e) {
-      const msg =
-        e instanceof Error && e.message === 'shortfall'
-          ? tr('sl.burnShortfall')
-          : tr('sl.burnPending');
-      setSlStatus((prev) => ({ ...prev, [item.hash]: msg }));
-    } finally {
-      setSlBurnBusy(false);
-      setSlBusyHash((prev) => ({ ...prev, [item.hash]: false }));
-      setSlBurnItem(null);
-    }
-  }, [app, slBurnItem]);
+  /* ---------- Tip (v0.5.0) ---------- */
+  const [tipItem, setTipItem] = useState<TimelineItem | null>(null);
+  const [tipName, setTipName] = useState('');
+  const [tipBusy, setTipBusy] = useState(false);
+
+  const handleTip = useCallback(
+    (item: TimelineItem) => {
+      if (app.myTokens.some((t) => t.id === item.senderId)) {
+        setSlStatus((prev) => ({ ...prev, [item.hash]: tr('tip.self') }));
+        return;
+      }
+      resolveName(item.senderId)
+        .then((n) => setTipName(n ? '@' + n : ''))
+        .catch(() => setTipName(''));
+      setTipItem(item);
+    },
+    [app],
+  );
+
+  const confirmTip = useCallback(
+    async (amountRaw: bigint) => {
+      if (!tipItem) return;
+      const item = tipItem;
+      setTipBusy(true);
+      setSlBusyHash((prev) => ({ ...prev, [item.hash]: true }));
+      try {
+        await performTip(app, { target: item, amountRaw });
+        setSlStatus((prev) => ({ ...prev, [item.hash]: tr('tip.done') }));
+      } catch (e) {
+        const msg =
+          e instanceof Error && e.message === 'self-tip'
+            ? tr('tip.self')
+            : e instanceof Error && e.message === 'shortfall'
+              ? tr('tip.shortfall')
+              : tr('act.failed');
+        setSlStatus((prev) => ({ ...prev, [item.hash]: msg }));
+      } finally {
+        setTipBusy(false);
+        setSlBusyHash((prev) => ({ ...prev, [item.hash]: false }));
+        setTipItem(null);
+      }
+    },
+    [app, tipItem],
+  );
 
   return (
     <View style={[S.screen, { paddingTop: insets.top }]}>
@@ -216,6 +219,7 @@ export default function PostDetailScreen({
           onOpenPost={(it) => app.openPost(it)}
           onReply={(it) => app.openCompose({ kind: 'reply', post: it })}
           onSuperlike={handleSuperlike}
+          onTip={handleTip}
           actionStatus={slStatus[post.hash]}
           busy={!!slBusyHash[post.hash]}
           liked={app.hasMyAction(1, post)}
@@ -316,6 +320,7 @@ export default function PostDetailScreen({
                     app.openCompose({ kind: 'reply', post: it })
                   }
                   onSuperlike={handleSuperlike}
+                  onTip={handleTip}
                   actionStatus={slStatus[r.hash]}
                   busy={!!slBusyHash[r.hash]}
                   liked={app.hasMyAction(1, r)}
@@ -345,11 +350,11 @@ export default function PostDetailScreen({
             ? tr('sl.body', {
                 name: slName || '—',
                 addr: slOwner || '—',
-                total: String(SUPERLIKE_TOTAL_CAT42),
-                author: String(SUPERLIKE_AUTHOR_CAT42),
-                burn: String(SUPERLIKE_BURN_CAT42),
+                price: fmtAmountCardDec(SUPERLIKE_PRICE_RAW, 18),
                 balance:
-                  app.cat42 !== null ? fmtAmountCard(app.cat42) : '—',
+                  app.oTok !== null
+                    ? fmtAmountCardDec(app.oTok.raw, app.oTok.decimals)
+                    : '—',
               })
             : ''
         }
@@ -359,23 +364,13 @@ export default function PostDetailScreen({
         onCancel={() => setSlItem(null)}
         busy={slBusy}
       />
-      <ConfirmSheet
-        visible={!!slBurnItem}
-        title={tr('sl.burnTitle')}
-        body={
-          slBurnItem
-            ? tr('sl.burnBody', {
-                burn: String(SUPERLIKE_BURN_CAT42),
-                balance:
-                  app.cat42 !== null ? fmtAmountCard(app.cat42) : '—',
-              })
-            : ''
-        }
-        confirmLabel={tr('sl.burnConfirm')}
-        cancelLabel={tr('compose.cancel')}
-        onConfirm={confirmBurn}
-        onCancel={() => setSlBurnItem(null)}
-        busy={slBurnBusy}
+      <TipSheet
+        visible={!!tipItem}
+        authorLabel={tipName}
+        balanceRaw={app.cat42}
+        busy={tipBusy}
+        onConfirm={confirmTip}
+        onCancel={() => setTipItem(null)}
       />
     </View>
   );

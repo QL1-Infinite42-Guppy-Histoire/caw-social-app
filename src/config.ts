@@ -14,6 +14,17 @@ export const CHAIN_ID = 766;
 
 export const CAW_NAME = '0x864f08Af11F6DC2c0De42562e4664d4f033D393f';
 export const CAW_ACTIONS = '0x95c2AFEc2dE8b09323Cdc7E40Bcce42C3C49E496';
+
+/**
+ * HuntersExchange order-server base URL (v0.5.0). EMPTY until
+ * the order-book Worker (worker/ in this repo) is deployed and
+ * its URL is filled in here — the Exchange screen shows an
+ * honest "server not connected" state meanwhile; escrow
+ * deposit / withdraw / fill / cancel are pure on-chain calls
+ * and never depend on this server. Custom-domain wiring waits
+ * on the user's domain purchase (pending, 2026-11-10).
+ */
+export const EXCHANGE_SERVER_URL = '';
 export const MINTER = '0xFC2f8743E3b09a6c973B114c3a082433e974eD9f';
 export const QCAW = '0xd2140E16aDf37194036865E90BbCA1139b739d0D';
 /** CAT42 on 42 Chain (18 decimals) — the SuperLike currency.

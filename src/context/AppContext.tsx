@@ -33,6 +33,11 @@ import { initDrafts } from '../lib/drafts';
 import { initFollowIndex } from '../lib/followIndex';
 import { initSuperlikeStore } from '../lib/superlike';
 import {
+  initExchangeStore,
+  loadExchangeAddress,
+} from '../lib/exchange';
+import { initSuperRecawStore } from '../lib/superRecaw';
+import {
   directoryName,
   hydrateNameDirectory,
   initNameDirectory,
@@ -217,6 +222,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     initFollowIndex(storeKV);
     initDrafts(storeKV);
     initSuperlikeStore(storeKV);
+    initSuperRecawStore(storeKV);
+    initExchangeStore(storeKV);
+    loadExchangeAddress().catch(() => {});
     return () => {
       off1();
       off2();

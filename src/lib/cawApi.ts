@@ -51,6 +51,53 @@ export async function rpc(method: string, params: unknown[]): Promise<any> {
 export const ethCall = (to: string, data: string): Promise<string> =>
   rpc('eth_call', [{ to, data }, 'latest']);
 
+/**
+ * Many QL1 calls in ONE HTTP request (JSON-RPC batch), the QL1
+ * twin of rpc42Batch: the single QL1 endpoint is tried with the
+ * batched payload; if it refuses, the calls fall back to
+ * sequential rpc() so the work still gets done. A per-call
+ * failure yields null in that slot. (v0.5.0: the marked-burn
+ * scanner fetches many transaction inputs this way.)
+ */
+export async function rpcBatch(
+  calls: { method: string; params: unknown[] }[],
+): Promise<any[]> {
+  if (calls.length === 0) return [];
+  try {
+    const payload = calls.map((c, i) => ({
+      jsonrpc: '2.0',
+      id: i + 1,
+      method: c.method,
+      params: c.params,
+    }));
+    const res = await fetch(RPC, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const j = await res.json();
+    if (!Array.isArray(j)) throw new Error('batch not supported');
+    const out: any[] = new Array(calls.length).fill(null);
+    for (const r of j) {
+      if (r && typeof r.id === 'number' && 'result' in r) {
+        out[r.id - 1] = r.result;
+      }
+    }
+    return out;
+  } catch {
+    /* fall through to sequential calls */
+  }
+  const out: any[] = [];
+  for (const c of calls) {
+    try {
+      out.push(await rpc(c.method, c.params));
+    } catch {
+      out.push(null);
+    }
+  }
+  return out;
+}
+
 /* ---------- 42 Chain reads (v0.4.8) ---------- */
 let rpc42Seq = 0;
 /**

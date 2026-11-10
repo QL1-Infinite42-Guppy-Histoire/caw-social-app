@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import Svg, { Circle, Line, Path, Polyline } from 'react-native-svg';
 import { SvgXml } from 'react-native-svg';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ACCENT } from '../config';
@@ -31,8 +32,20 @@ import {
   superlikeCount,
   superlikeCountCached,
 } from '../lib/superlike';
+import { subscribeMarkedBurns } from '../lib/markedBurns';
+import {
+  hasSuperRecawFor,
+  superRecawCachedFor,
+} from '../lib/superRecaw';
+import {
+  TIP_PRESETS_CAT42,
+  parseTipAmount,
+  tipChipAmount,
+  tipPresetRaw,
+} from '../lib/tip';
 import {
   avatarSpec,
+  fmtAmountCard,
   fmtCardDisplay,
   fmtExactDec,
   svgFromImageUri,
@@ -207,6 +220,23 @@ export function StarIcon({ size = 18, color = '#536471', filled = false }: { siz
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill={filled ? color : 'none'} stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+    </Svg>
+  );
+}
+/** Tip coin (v0.5.0): a gold CAT42 coin — a filled circle with
+ *  a "C" arc cut in the idle colour, so it reads as money next
+ *  to the outline action icons. */
+export function TipIcon({ size = 18, color = '#f5a623' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Circle cx={12} cy={12} r={10} fill={color} />
+      <Path
+        d="M15.5 9.2a4.6 4.6 0 1 0 0 5.6"
+        fill="none"
+        stroke="#fff"
+        strokeWidth={2.2}
+        strokeLinecap="round"
+      />
     </Svg>
   );
 }
@@ -771,9 +801,11 @@ export interface PostCardProps {
   onOpenPost?: (item: TimelineItem) => void;
   /** Reply button (v0.4.0): opens the composer targeted at this post. */
   onReply?: (item: TimelineItem) => void;
-  /** SuperLike button (v0.4.8): the fixed-price CAT42 tip flow.
+  /** SuperLike button (v0.4.8; O-burn since v0.5.0).
    *  Without a handler the ⭐ count still shows when it is > 0. */
   onSuperlike?: (item: TimelineItem) => void;
+  /** Tip button (v0.5.0): send CAT42 to the post's author. */
+  onTip?: (item: TimelineItem) => void;
   actionStatus?: string;
   busy?: boolean;
   /** This wallet already liked this post (remembered on the device). */
@@ -803,6 +835,7 @@ function RecawCard({
   onOpenPost,
   onReply,
   onSuperlike,
+  onTip,
   actionStatus,
   busy,
   liked,
@@ -813,6 +846,12 @@ function RecawCard({
   const [original, setOriginal] = useState<TimelineItem | null | undefined>(
     undefined,
   );
+  /* SuperRecaw detection (v0.5.0): the flashy treatment shows
+   * only when the marked-burn index holds an SRC1 burn by THIS
+   * recawer's owner for the ORIGINAL post's cawId — chain data
+   * only (lib/markedBurns.ts), never a local tally. */
+  const [isSuper, setIsSuper] = useState(false);
+  const superOwnerRef = useRef<string | null>(null);
   useEffect(() => {
     let live = true;
     resolveName(item.senderId).then((n) => live && setName(n));
@@ -829,17 +868,49 @@ function RecawCard({
       live = false;
     };
   }, [item.cawId]);
+  useEffect(() => {
+    let live = true;
+    nameOwner(item.senderId)
+      .then((owner) => {
+        if (!live) return;
+        superOwnerRef.current = owner;
+        if (superRecawCachedFor(item.cawId, owner)) setIsSuper(true);
+        return hasSuperRecawFor(item.cawId, owner).then((v) => {
+          if (live) setIsSuper(v);
+        });
+      })
+      .catch(() => {});
+    const unsub = subscribeMarkedBurns(() => {
+      const owner = superOwnerRef.current;
+      if (owner && superRecawCachedFor(item.cawId, owner)) {
+        setIsSuper(true);
+      }
+    });
+    return () => {
+      live = false;
+      unsub();
+    };
+  }, [item]);
   const who = name
     ? '@' + name
     : tr('tl.unknownName') + item.senderId.toString();
-  return (
-    <View style={nested ? postStyles.postNested : postStyles.post}>
+  const row = (
+    <>
       <Avatar
         nameId={item.senderId}
         size={44}
         onPress={name ? () => onOpenProfile(name) : undefined}
       />
       <View style={{ flex: 1, marginStart: 10 }}>
+        {isSuper ? (
+          <View style={[S.row, { marginBottom: 4 }]}>
+            <View style={postStyles.superBadge}>
+              <Text style={postStyles.superBadgeText}>
+                ⭐ {tr('tl.superRecaw')}
+              </Text>
+            </View>
+          </View>
+        ) : null}
         <View style={S.row}>
           <RepeatIcon size={14} color={RECAW_ON} />
           <Text style={[S.tiny, { marginStart: 5, fontWeight: '700' }]}>
@@ -863,6 +934,7 @@ function RecawCard({
             onOpenPost={onOpenPost}
             onReply={onReply}
             onSuperlike={onSuperlike}
+            onTip={onTip}
             busy={busy}
             liked={liked}
             recawed={recawed}
@@ -880,7 +952,27 @@ function RecawCard({
           <Text style={[S.tiny, { marginTop: 4 }]}>{actionStatus}</Text>
         ) : null}
       </View>
-    </View>
+    </>
+  );
+  if (isSuper && !nested) {
+    /* The flashy treatment (v0.5.0, per the approved concept):
+     * a gold → pink → purple gradient frame around a warm
+     * tinted card, so a SuperRecaw stands out of the feed at a
+     * glance. Nested rows keep the plain frame — the outer row
+     * carries the treatment. */
+    return (
+      <LinearGradient
+        colors={['#f5a623', '#e84393', '#6c5ce7']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={postStyles.superFrame}
+      >
+        <View style={[postStyles.post, postStyles.superInner]}>{row}</View>
+      </LinearGradient>
+    );
+  }
+  return (
+    <View style={nested ? postStyles.postNested : postStyles.post}>{row}</View>
   );
 }
 
@@ -892,6 +984,7 @@ function PostCardBase({
   onOpenPost,
   onReply,
   onSuperlike,
+  onTip,
   actionStatus,
   busy,
   liked,
@@ -935,31 +1028,24 @@ function PostCardBase({
       live = false;
     };
   }, [item]);
-  /* SuperLike count (v0.4.8): counted from the author's marked
-   * CAT42 transfers on 42 Chain (lib/superlike.ts) — chain data
-   * only, never a local tally. null = not loaded yet. */
+  /* SuperLike count (v0.4.8; O-burn index since v0.5.0):
+   * counted from marked O burns on QL1 (lib/markedBurns.ts) —
+   * chain data only, never a local tally. The burn's recipient
+   * is the burn address for everyone, so the count is keyed by
+   * the post alone; no author lookup is needed. null = not
+   * loaded yet. */
   const [slCount, setSlCount] = useState<number | null>(null);
-  const slOwnerRef = useRef<string | null>(null);
   useEffect(() => {
     if (item.type !== 0) return;
     let live = true;
-    nameOwner(item.senderId)
-      .then((owner) => {
-        if (!live) return;
-        slOwnerRef.current = owner;
-        const cached = superlikeCountCached(owner, item.cawId);
-        if (cached !== null) setSlCount(cached);
-        return superlikeCount(owner, item.cawId).then((n) => {
-          if (live) setSlCount(n);
-        });
+    setSlCount(superlikeCountCached(item.cawId));
+    superlikeCount(item.cawId)
+      .then((n) => {
+        if (live) setSlCount(n);
       })
       .catch(() => {});
     const unsub = subscribeSuperlike(() => {
-      const owner = slOwnerRef.current;
-      if (owner) {
-        const c = superlikeCountCached(owner, item.cawId);
-        if (c !== null) setSlCount(c);
-      }
+      if (live) setSlCount(superlikeCountCached(item.cawId));
     });
     return () => {
       live = false;
@@ -1009,6 +1095,8 @@ function PostCardBase({
         onAction={onAction}
         onOpenPost={onOpenPost}
         onReply={onReply}
+        onSuperlike={onSuperlike}
+        onTip={onTip}
         actionStatus={actionStatus}
         busy={busy}
         liked={liked}
@@ -1171,6 +1259,23 @@ function PostCardBase({
               </Text>
             </Pressable>
           ) : null}
+          {item.type === 0 && onTip ? (
+            <Pressable
+              disabled={busy}
+              onPress={() => onTip(item)}
+              style={({ pressed }) => [
+                S.row,
+                postStyles.actionBtn,
+                busy && S.disabled,
+                pressed && postStyles.actionBtnOn,
+              ]}
+            >
+              <TipIcon size={16} />
+              <Text style={[S.tiny, { marginStart: 4 }]}>
+                {tr('tl.tip')}
+              </Text>
+            </Pressable>
+          ) : null}
           <Pressable onPress={() => Linking.openURL(txUrl(item.hash))}>
             <Text style={[S.tiny, { color: ACCENT }]}>
               {tr('tl.viewTx')} ↗
@@ -1278,6 +1383,27 @@ const postStyles = StyleSheet.create({
     borderRadius: 999,
   },
   actionBtnOn: { backgroundColor: '#f7f9f9' },
+  /* SuperRecaw treatment (v0.5.0): the gradient lives on the
+   * wrapper (LinearGradient), the card inside is warm-tinted
+   * and borderless so the frame reads as one piece. */
+  superFrame: {
+    borderRadius: 18,
+    padding: 3,
+    marginHorizontal: 8,
+    marginVertical: 6,
+  },
+  superInner: {
+    borderBottomWidth: 0,
+    borderRadius: 15,
+    backgroundColor: '#fff7e8',
+  },
+  superBadge: {
+    backgroundColor: '#d6336c',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  superBadgeText: { color: '#fff', fontSize: 12, fontWeight: '800' },
 });
 
 /* ---------- bottom-sheet style confirm dialog ---------- */
@@ -1346,6 +1472,182 @@ const sheetStyles = StyleSheet.create({
     paddingBottom: 30,
   },
 });
+
+/** A raw CAT42 amount as a plain editable decimal string (no
+ *  thousands separators — it goes back into a TextInput). */
+function plainDecimal(raw: bigint): string {
+  const s = raw.toString().padStart(19, '0');
+  const whole = s.slice(0, -18);
+  const frac = s.slice(-18).replace(/0+$/, '');
+  return frac ? whole + '.' + frac : whole;
+}
+
+/**
+ * Tip sheet (v0.5.0): choose how much CAT42 to send a post's
+ * author — a preset (10 / 50 / 100) or a custom amount whose
+ * input carries the app's usual 25 / 50 / 75 / MAX balance
+ * chips. The sheet owns the amount state; the caller gets one
+ * confirmed raw amount and runs the guarded send
+ * (lib/actionFlow.ts performTip re-checks everything against
+ * fresh reads, including the balance — the figures here are
+ * the chooser, not the guard).
+ */
+export function TipSheet({
+  visible,
+  authorLabel,
+  balanceRaw,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  visible: boolean;
+  authorLabel: string;
+  balanceRaw: bigint | null;
+  busy?: boolean;
+  onConfirm: (amountRaw: bigint) => void;
+  onCancel: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const [preset, setPreset] = useState<number | null>(10);
+  const [custom, setCustom] = useState('');
+  useEffect(() => {
+    if (visible) {
+      setPreset(10);
+      setCustom('');
+    }
+  }, [visible]);
+  const customRaw = custom.trim() ? parseTipAmount(custom) : null;
+  const amountRaw =
+    preset !== null ? tipPresetRaw(preset) : customRaw;
+  const over =
+    amountRaw !== null && balanceRaw !== null && amountRaw > balanceRaw;
+  const valid = amountRaw !== null && amountRaw > 0n && !over;
+  const setChip = (pct: number) => {
+    if (balanceRaw === null) return;
+    setPreset(null);
+    setCustom(plainDecimal(tipChipAmount(balanceRaw, pct)));
+  };
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onCancel}
+    >
+      <View style={sheetStyles.backdrop}>
+        <View style={[sheetStyles.sheet, { paddingBottom: 30 + insets.bottom }]}>
+          <Text style={S.h2}>{tr('tip.title')}</Text>
+          <Text style={[S.body, { marginTop: 8 }]}>
+            {tr('tip.body', { name: authorLabel || '—' })}
+          </Text>
+          <Text style={[S.small, { marginTop: 6 }]}>
+            {tr('tip.balance', {
+              balance:
+                balanceRaw !== null ? fmtAmountCard(balanceRaw) : '—',
+            })}
+          </Text>
+          <View style={[S.row, { gap: 8, marginTop: 14 }]}>
+            {TIP_PRESETS_CAT42.map((p) => {
+              const on = preset === p;
+              return (
+                <Pressable
+                  key={p}
+                  onPress={() => setPreset(p)}
+                  style={{
+                    flex: 1,
+                    borderRadius: 999,
+                    paddingVertical: 9,
+                    alignItems: 'center',
+                    backgroundColor: on ? ACCENT : '#eff3f4',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: '700',
+                      color: on ? '#fff' : '#0f1419',
+                    }}
+                  >
+                    {p} CAT42
+                  </Text>
+                </Pressable>
+              );
+            })}
+            <Pressable
+              onPress={() => setPreset(null)}
+              style={{
+                flex: 1,
+                borderRadius: 999,
+                paddingVertical: 9,
+                alignItems: 'center',
+                backgroundColor: preset === null ? ACCENT : '#eff3f4',
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 14,
+                  fontWeight: '700',
+                  color: preset === null ? '#fff' : '#0f1419',
+                }}
+              >
+                {tr('tip.custom')}
+              </Text>
+            </Pressable>
+          </View>
+          {preset === null ? (
+            <>
+              <TextInput
+                style={[S.input, { marginTop: 12 }]}
+                value={custom}
+                onChangeText={(t) => setCustom(t.replace(/[^0-9.]/g, ''))}
+                placeholder="0.0"
+                keyboardType="decimal-pad"
+              />
+              <View style={[S.row, { gap: 8, marginTop: 10 }]}>
+                {[25, 50, 75, 100].map((pct) => (
+                  <Pressable
+                    key={pct}
+                    onPress={() => setChip(pct)}
+                    style={{
+                      flex: 1,
+                      backgroundColor: '#eff3f4',
+                      borderRadius: 999,
+                      paddingVertical: 8,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ fontSize: 13.5, fontWeight: '600' }}>
+                      {pct === 100 ? 'MAX' : pct + '%'}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </>
+          ) : null}
+          {over ? (
+            <Text style={[S.err, { marginTop: 8 }]}>{tr('tip.over')}</Text>
+          ) : null}
+          <View style={{ height: 16 }} />
+          <Pressable
+            style={[S.bigBtn, (busy || !valid) && S.disabled]}
+            disabled={busy || !valid}
+            onPress={() => amountRaw !== null && onConfirm(amountRaw)}
+          >
+            {busy ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={S.bigBtnText}>{tr('tip.send')}</Text>
+            )}
+          </Pressable>
+          <View style={{ height: 10 }} />
+          <Pressable style={S.ghostBtn} disabled={busy} onPress={onCancel}>
+            <Text style={S.ghostBtnText}>{tr('compose.cancel')}</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
 
 /* ---------- password prompt (for the password unlock method) ---------- */
 export function PasswordPrompt({
