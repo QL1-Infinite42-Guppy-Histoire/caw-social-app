@@ -247,6 +247,25 @@ const PAGE2 = {
     XM.timelinePath('42', 'TOK').includes('pagination_token=TOK'),
     'timeline path: paging token wired',
   );
+  ok(
+    XM.timelinePath('42', null, '1005').includes('since_id=1005'),
+    'timeline path: since_id passes (idle check = empty page = zero billed resources)',
+  );
+  ok(
+    !XM.timelinePath('42').includes('since_id'),
+    'timeline path: no since_id on the first (window) fetch',
+  );
+  ok(
+    XM.maxPostId(merged) === '1005' && XM.maxPostId([]) === null,
+    'maxPostId: newest id wins, empty is null',
+  );
+  ok(
+    XM.maxPostId([
+      { id: '9', text: '', createdAt: '' },
+      { id: '10', text: '', createdAt: '' },
+    ]) === '10',
+    "maxPostId: numeric compare — '10' beats '9'",
+  );
   ok(XM.POST_COST_RAW === 5000n * 10n ** 18n, 'post cost constant = 5,000 CAW');
 
   const e429 = XM.classifyXError(429, {
@@ -296,18 +315,64 @@ const PAGE2 = {
   const s1 = new XS.XMirrorStore();
   await s1.init(kv, '42');
   ok(!s1.has('1005'), 'store: cold start knows nothing');
+  ok(s1.watermark() === null, 'store: no watermark before the first fetch');
   await s1.record('1005', '0xcaw1');
   ok(s1.has('1005') && s1.cawIdOf('1005') === '0xcaw1', 'store: record → has + cawId');
+
+  const win = [
+    { id: '1005', text: 'gm — shipping day', createdAt: '2026-11-10T09:00:00.000Z' },
+    { id: '1004', text: 'quoting a friend', createdAt: '2026-11-09T08:00:00.000Z' },
+  ];
+  await s1.mergeFetched(win);
+  ok(s1.watermark() === '1005', 'store: the first fetch sets the watermark');
+  ok(
+    s1.cachedPosts().map((p) => p.id).join(',') === '1005,1004',
+    'store: the fetched window is cached newest-first',
+  );
+  await s1.mergeFetched([
+    { id: '1007', text: 'newer', createdAt: '2026-11-10T10:00:00.000Z' },
+    { id: '1006', text: 'new', createdAt: '2026-11-10T09:30:00.000Z' },
+  ]);
+  ok(
+    s1.cachedPosts().map((p) => p.id).join(',') === '1007,1006,1005,1004' &&
+      s1.watermark() === '1007',
+    'store: a since_id top-up merges ahead and advances the watermark',
+  );
+  await s1.mergeFetched([]);
+  ok(
+    s1.cachedPosts().length === 4 && s1.watermark() === '1007',
+    'store: an empty (idle) fetch changes nothing',
+  );
+
   const s2 = new XS.XMirrorStore();
   await s2.init(kv, '42');
-  ok(s2.has('1005'), 'store: the mapping survives across instances (KV)');
+  ok(
+    s2.has('1005') && s2.watermark() === '1007' && s2.cachedPosts().length === 4,
+    'store: map + cache + watermark all survive across instances (KV)',
+  );
   const s3 = new XS.XMirrorStore();
   await s3.init(kv, '777');
-  ok(!s3.has('1005'), 'store: a different X account starts clean');
+  ok(
+    !s3.has('1005') && s3.watermark() === null && s3.cachedPosts().length === 0,
+    'store: a different X account starts fully clean',
+  );
   await s2.reset();
   const s4 = new XS.XMirrorStore();
   await s4.init(kv, '42');
-  ok(!s4.has('1005'), 'store: reset forgets (disconnect semantics)');
+  ok(
+    !s4.has('1005') && s4.watermark() === null && s4.cachedPosts().length === 0,
+    'store: reset forgets everything (disconnect semantics)',
+  );
+  backing.set(
+    'caw-xmirror-engraved-42',
+    JSON.stringify({ '1005': '0xlegacy' }),
+  );
+  const sLegacy = new XS.XMirrorStore();
+  await sLegacy.init(kv, '42');
+  ok(
+    sLegacy.has('1005') && sLegacy.cawIdOf('1005') === '0xlegacy',
+    'store: a legacy flat engraved map still loads',
+  );
   backing.set('caw-xmirror-engraved-42', '{broken json');
   const s5 = new XS.XMirrorStore();
   await s5.init(kv, '42');
@@ -409,6 +474,19 @@ const PAGE2 = {
   ok(
     !WX.refreshBody(sub).includes('secret'),
     'worker refresh body: no secret exists to send',
+  );
+  ok(
+    WX.maxNumericId(['9', '10', '2']) === '10' &&
+      WX.maxNumericId([]) === null,
+    "worker: maxNumericId compares as numbers ('10' beats '9')",
+  );
+  ok(
+    WX.timelineQuery('1005').includes('since_id=1005'),
+    'worker: poll passes since_id (idle account → empty page → zero cost)',
+  );
+  ok(
+    !WX.timelineQuery(null).includes('since_id'),
+    'worker: the first poll has no since_id (baseline window)',
   );
 }
 
@@ -516,11 +594,29 @@ const PAGE2 = {
     'context: detection on unlock + mirror navigation state',
   );
 
+  const i18nSrc = read('src/i18n.ts');
+  const enNeedDev = i18nSrc.slice(
+    i18nSrc.indexOf("'xset.needDev'"),
+    i18nSrc.indexOf("'xset.needDev'") + 400,
+  );
+  ok(
+    enNeedDev.includes('$0.001') && !enNeedDev.includes('paid plan'),
+    'copy: no "paid plan" — pay-per-use at $0.001 per own post (2026-11-10 correction)',
+  );
+  ok(
+    xc.includes('xMirrorStore.watermark()') && xc.includes('cachedPosts()'),
+    'app fetch: since_id watermark + candidate cache wired',
+  );
+
   const workerJs = read('worker/worker.js');
   ok(
     workerJs.includes("url.pathname === '/x/register'") &&
       workerJs.includes("url.pathname === '/x/unregister'"),
     'worker: register/unregister endpoints wired',
+  );
+  ok(
+    workerJs.includes('timelineQuery(sinceId)'),
+    'worker: the cron poll is since_id-scoped',
   );
   ok(
     workerJs.includes('async scheduled') && workerJs.includes('planPoll'),

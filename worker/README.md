@@ -70,8 +70,17 @@ confirmation sheet. The pure logic is in `xmirror.js`:
 - The first poll after registering is a silent BASELINE:
   everything already on the timeline becomes "seen" and
   nothing notifies. After that, each post notifies exactly
-  once (seen set in KV, `xseen:<xUserId>`); the app remains
-  the source of truth for what is actually engraved.
+  once (seen record in KV, `xseen:<xUserId>` →
+  `{ ids, sinceId }`); the app remains the source of truth
+  for what is actually engraved.
+- Polls pass `since_id` (the newest post id seen), so a
+  poll that finds nothing new returns an empty page. X
+  reads are pay-per-use and reading your OWN posts is an
+  Owned Read at $0.001 per post returned — an idle poll
+  therefore costs zero, and a personal account's mirror
+  costs a few cents a month at most. (There are no
+  subscription tiers anymore; new developer accounts start
+  with one-time starter credits.)
 - Push payloads carry only the X post id and a short text
   preview — no tokens, no account secrets.
 

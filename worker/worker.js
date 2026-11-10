@@ -56,9 +56,11 @@ import {
   EXPO_PUSH_URL,
   applyTokenResponse,
   buildPushMessages,
+  maxNumericId,
   parseTimeline,
   planPoll,
   refreshBody,
+  timelineQuery,
   tokenNeedsRefresh,
   validateRegistration,
   xseenKey,
@@ -274,27 +276,41 @@ async function pollOneX(env, xUserId, nowSec) {
     await env.HX_KV.put(xsubKey(xUserId), JSON.stringify(sub));
   }
 
-  const q = new URLSearchParams({
-    max_results: '50',
-    'tweet.fields': 'created_at,referenced_tweets,in_reply_to_user_id',
-    exclude: 'retweets,replies',
-  });
-  const res = await fetch(`${X_API}/users/${xUserId}/tweets?${q}`, {
-    headers: { authorization: 'Bearer ' + sub.accessToken },
-  });
-  if (!res.ok) return; // surfaced in-app; a push must never fake it
-  const posts = parseTimeline(await res.json().catch(() => null));
-
+  // The seen record is { ids, sinceId } (a bare array from
+  // the first build is still read as ids with no watermark).
+  // sinceId is the poll's cost valve: with it, a poll that
+  // finds nothing new returns an empty page — zero billed
+  // resources (X reads are pay-per-use, $0.001 per returned
+  // post for the owner's own posts).
   const seenRaw = await env.HX_KV.get(xseenKey(xUserId));
   let seen = null;
+  let sinceId = null;
   if (seenRaw) {
     try {
       const v = JSON.parse(seenRaw);
-      if (Array.isArray(v)) seen = v.filter((x) => typeof x === 'string');
+      if (Array.isArray(v)) {
+        seen = v.filter((x) => typeof x === 'string');
+      } else if (v && typeof v === 'object') {
+        if (Array.isArray(v.ids)) {
+          seen = v.ids.filter((x) => typeof x === 'string');
+        }
+        if (typeof v.sinceId === 'string') sinceId = v.sinceId;
+      }
     } catch {
       seen = null;
+      sinceId = null;
     }
   }
+
+  const res = await fetch(
+    `${X_API}/users/${xUserId}/tweets?${timelineQuery(sinceId)}`,
+    {
+      headers: { authorization: 'Bearer ' + sub.accessToken },
+    },
+  );
+  if (!res.ok) return; // surfaced in-app; a push must never fake it
+  const posts = parseTimeline(await res.json().catch(() => null));
+
   const plan = planPoll(seen, posts);
   if (plan.fresh.length > 0) {
     const messages = buildPushMessages(plan.fresh, sub.pushToken);
@@ -311,7 +327,10 @@ async function pollOneX(env, xUserId, nowSec) {
       });
     }
   }
-  if (JSON.stringify(plan.nextSeen) !== JSON.stringify(seen ?? [])) {
-    await env.HX_KV.put(xseenKey(xUserId), JSON.stringify(plan.nextSeen));
+  const newest = maxNumericId(posts.map((p) => p.id));
+  const nextSince = newest ?? sinceId;
+  const nextRecord = { ids: plan.nextSeen, sinceId: nextSince };
+  if (JSON.stringify(nextRecord) !== JSON.stringify({ ids: seen ?? [], sinceId })) {
+    await env.HX_KV.put(xseenKey(xUserId), JSON.stringify(nextRecord));
   }
 }

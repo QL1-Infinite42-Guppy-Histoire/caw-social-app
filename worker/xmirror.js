@@ -141,6 +141,40 @@ export function buildPushMessages(fresh, pushToken) {
   });
 }
 
+/** The newest id in a list (X ids are numeric strings that
+ *  grow with time — compared as bigints, so '10' beats '9'). */
+export function maxNumericId(ids) {
+  let best = null;
+  for (const id of ids) {
+    try {
+      const v = BigInt(id);
+      if (best === null || v > best.v) best = { v, s: id };
+    } catch {
+      /* non-numeric ids never advance the watermark */
+    }
+  }
+  return best ? best.s : null;
+}
+
+/**
+ * The timeline query for one poll. `sinceId` is the cost
+ * valve: X reads are pay-per-use ($0.001 per post returned
+ * for the owner's own posts), so asking only for posts
+ * NEWER than the newest one already seen makes an idle
+ * account's poll return an empty page — zero resources,
+ * zero cost. (X also dedupes repeat reads of the same
+ * resource within 24h, covering any overlap at page edges.)
+ */
+export function timelineQuery(sinceId) {
+  const q = new URLSearchParams({
+    max_results: '50',
+    'tweet.fields': 'created_at,referenced_tweets,in_reply_to_user_id',
+    exclude: 'retweets,replies',
+  });
+  if (sinceId) q.set('since_id', sinceId);
+  return q.toString();
+}
+
 /** True when the stored access token is spent (60 s slack —
  *  a poll should never start with a token that dies mid-run). */
 export function tokenNeedsRefresh(sub, nowSec) {

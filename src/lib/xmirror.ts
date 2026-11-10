@@ -280,15 +280,49 @@ export function parseTimelinePage(json: unknown): TimelinePage {
 
 /** The timeline request path (the API's own exclude params do
  *  the first cut; classifyTweet is the second, so a fixture or
- *  an API change can never leak a retweet into the inbox). */
-export function timelinePath(userId: string, pageToken?: string | null): string {
+ *  an API change can never leak a retweet into the inbox).
+ *
+ *  `sinceId` is the cost valve: X reads are pay-per-use
+ *  ($0.001 per post returned for your own posts), so a poll
+ *  that asks only for posts NEWER than the newest one already
+ *  seen gets an EMPTY page — zero resources, zero cost — when
+ *  nothing was posted. (X also dedupes repeat reads of the
+ *  same resource within 24h, so even a re-fetch of a recent
+ *  window does not double-bill.) The mirror store's watermark
+ *  is what feeds this; see xMirrorStore. */
+export function timelinePath(
+  userId: string,
+  pageToken?: string | null,
+  sinceId?: string | null,
+): string {
   const q = new URLSearchParams({
     max_results: '50',
     'tweet.fields': 'created_at,referenced_tweets,in_reply_to_user_id',
     exclude: 'retweets,replies',
   });
   if (pageToken) q.set('pagination_token', pageToken);
+  if (sinceId) q.set('since_id', sinceId);
   return '/users/' + encodeURIComponent(userId) + '/tweets?' + q.toString();
+}
+
+/** The newest post id in a list (X ids are numeric strings
+ *  that grow with time — compared as bigints, never as
+ *  strings, so '10' correctly beats '9'). */
+export function maxPostId(posts: XPost[]): string | null {
+  let best: bigint | null = null;
+  let bestStr: string | null = null;
+  for (const p of posts) {
+    try {
+      const v = BigInt(p.id);
+      if (best === null || v > best) {
+        best = v;
+        bestStr = p.id;
+      }
+    } catch {
+      /* a non-numeric id can never be the watermark */
+    }
+  }
+  return bestStr;
 }
 
 /**

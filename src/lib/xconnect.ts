@@ -123,7 +123,10 @@ export async function disconnectX(): Promise<void> {
   const s = await loadXSession();
   await SecureStore.deleteItemAsync(SESSION_KEY, STORE_OPTIONS);
   await SecureStore.deleteItemAsync(PUSH_KEY, STORE_OPTIONS);
-  await xMirrorStore.reset().catch(() => {});
+  if (s) {
+    await xMirrorStore.init(storeKV, s.userId).catch(() => {});
+    await xMirrorStore.reset().catch(() => {});
+  }
   if (s && X_MIRROR_SERVER_URL) {
     await unregisterPush(s).catch(() => {});
   }
@@ -248,12 +251,16 @@ export async function usableXSession(): Promise<XSession> {
 async function fetchTimelinePage(
   session: XSession,
   pageToken: string | null,
+  sinceId: string | null,
 ): Promise<{ posts: XPost[]; nextToken: string | null }> {
   let res: Response;
   try {
-    res = await fetch(X_API_BASE + timelinePath(session.userId, pageToken), {
-      headers: { authorization: 'Bearer ' + session.accessToken },
-    });
+    res = await fetch(
+      X_API_BASE + timelinePath(session.userId, pageToken, sinceId),
+      {
+        headers: { authorization: 'Bearer ' + session.accessToken },
+      },
+    );
   } catch (e) {
     throw new XApiError(networkErrorInfo(e));
   }
@@ -263,30 +270,41 @@ async function fetchTimelinePage(
 }
 
 /**
- * Fetch up to `maxPages` timeline pages (newest first) and
- * return the un-engraved mirror candidates. This is the
- * in-app detection path — it runs when the mirror screen
+ * The in-app detection path — runs when the mirror screen
  * opens, when the app unlocks, and on the manual refresh
  * button. There is NO on-device background detection
  * (Android does not allow it reliably); timely detection is
  * the Worker's job.
+ *
+ * Cost shape (X reads are pay-per-use, $0.001 per returned
+ * post for your own posts): the FIRST fetch reads a window
+ * of recent posts into the on-device cache and sets the
+ * watermark. Every later fetch passes `since_id` = the
+ * watermark, so it only ever returns posts that are new —
+ * and when nothing was posted, the page is empty and the
+ * check costs zero. The inbox is then "cache minus
+ * engraved", so an un-engraved post stays listed without
+ * ever being re-fetched (and X's 24h same-resource dedupe
+ * covers any overlap the paging still produces).
  */
 export async function fetchMirrorCandidates(
   maxPages = 2,
 ): Promise<{ candidates: XPost[]; session: XSession }> {
   const session = await usableXSession();
   await xMirrorStore.init(storeKV, session.userId);
+  const sinceId = xMirrorStore.watermark();
   const pages: XPost[][] = [];
   let token: string | null = null;
   for (let i = 0; i < maxPages; i++) {
-    const page = await fetchTimelinePage(session, token);
+    const page = await fetchTimelinePage(session, token, sinceId);
     pages.push(page.posts);
     token = page.nextToken;
     if (!token) break;
   }
+  await xMirrorStore.mergeFetched(mergePages(pages));
   return {
     candidates: mirrorCandidates(
-      mergePages(pages),
+      xMirrorStore.cachedPosts(),
       xMirrorStore.ids(),
     ),
     session,
