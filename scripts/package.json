@@ -1,0 +1,9 @@
+{
+  "name": "caw-social-app-verify-tools",
+  "private": true,
+  "description": "Harness-only tools for the verify suites (contract compile + local EVM). NOT app dependencies — the app build (npm ci) must never see these.",
+  "devDependencies": {
+    "ganache": "7.9.2",
+    "solc": "0.8.26"
+  }
+}
