@@ -393,14 +393,36 @@ try {
   }
 
   /* --- CAT42 caption: tip wording everywhere --- */
-  check('caption: card.cat42 + card.tapHint exist in all 13 language dicts',
-    (i18nSrc.match(/'card\.cat42'/g) || []).length === 13 &&
-    (i18nSrc.match(/'card\.tapHint'/g) || []).length === 13);
+  check('caption: card.cat42 + card.tapHint exist in all 20 language dicts',
+    (i18nSrc.match(/'card\.cat42'/g) || []).length === 20 &&
+    (i18nSrc.match(/'card\.tapHint'/g) || []).length === 20);
   check('caption: JA + EN carry the tip wording',
     /'card\.cat42': 'CAT42（チップ用）'/.test(i18nSrc) &&
     /'card\.cat42': 'CAT42 \(for tips\)'/.test(i18nSrc));
   check('caption: NO locale describes the CAT42 balance as "for SuperLike" any more',
     !/'card\.cat42': '[^']*(SuperLike|超いいね)/.test(i18nSrc));
+
+  /* --- v0.5.0: HuntersExchange naming + 20 languages --- */
+  const hsSrc = readFileSync(ROOT + '/src/screens/HuntersSwapScreen.tsx', 'utf8');
+  check('naming: the brand header renders "Hunters" + "Exchange"',
+    hsSrc.includes('>Exchange<') || hsSrc.includes('}Exchange{') || hsSrc.includes('Exchange</Text>'));
+  check('naming: no user-visible "HuntersDEX" remains (comments only)',
+    !/>\s*DEX\s*</.test(hsSrc) && !hsSrc.includes('"HuntersDEX"') &&
+    !hsSrc.includes("'HuntersDEX'"));
+  check('naming: the swap/book mode toggle exists (HuntersDEX keeps working as instant swap)',
+    hsSrc.includes("tr('hx.modeSwap')") && hsSrc.includes("tr('hx.modeBook')") &&
+    hsSrc.includes('<ExchangeSection />'));
+  const langsBlock = i18nSrc.slice(i18nSrc.indexOf('export const LANGS'), i18nSrc.indexOf('];', i18nSrc.indexOf('export const LANGS')));
+  check('languages: LANGS offers exactly 20 languages',
+    (langsBlock.match(/\{ code: '/g) || []).length === 20,
+    'entries=' + (langsBlock.match(/\{ code: '/g) || []).length);
+  check('languages: the 7 new locales are offered (vi th tr it nl pl uk + ar de ru…)',
+    ['vi', 'th', 'tr', 'it', 'nl', 'pl', 'uk', 'de', 'ru', 'ar'].every((l) =>
+      langsBlock.includes(`code: '${l}'`)));
+  check('v0.5.0 actions: the tip button sits on the post card action row',
+    uiSrc.includes("tr('tl.tip')") && uiSrc.includes('onTip'));
+  check('v0.5.0 actions: the SuperRecaw badge renders on marked recaws',
+    uiSrc.includes("tr('tl.superRecaw')") && uiSrc.includes('superFrame'));
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

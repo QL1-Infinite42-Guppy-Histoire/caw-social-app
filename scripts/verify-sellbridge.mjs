@@ -277,7 +277,7 @@ console.log('\n--- (d) screen wiring ---');
     src.includes('buildWrapTx(leg.amount)') && src.includes("'hs.stepWrap'"));
   const i18n = readFileSync(new URL('../src/i18n.ts', import.meta.url), 'utf8');
   const langs = (i18n.match(/'hs\.stepWrap':/g) || []).length;
-  check('d4 hs.stepWrap exists in all 13 languages', langs === 13, `found ${langs}`);
+  check('d4 hs.stepWrap exists in all 20 languages', langs === 20, `found ${langs}`);
 }
 
 console.log(`\nverify-sellbridge: ${pass} passed, ${fail} failed`);

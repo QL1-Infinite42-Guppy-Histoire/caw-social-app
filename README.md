@@ -832,71 +832,93 @@ shows the original post** it points to, X-style, instead of a bare
 "recawed your post" line (with an explicit fallback when the
 original is not in the local index).
 
-## SuperLike (v0.4.8; price/split v0.4.9) — an app-original feature, not a CAW action
+## SuperLike & SuperRecaw (v0.5.0) — app-original features, not CAW actions
 
-A **SuperLike** is a fixed-price CAT42 cheer — **1,000 CAT42
-in total** (v0.4.9; v0.4.8 shipped at 100, and no SuperLike
-was ever sent at that price, so the rule below is the only
-one) — paid from the sender's own wallet on 42 Chain as TWO
-transfers, in this order:
+A **SuperLike** is now paid for by **burning O**: one
+SuperLike is ONE QL1 transaction — a transfer of exactly
+**1,000,000 O** (the QL1 token "Childhoods End",
+`0x6c39b68a28bA90F4EB80032ec0eB32ad81cbbEd4` — a QL1
+contract; it has no code on 42 Chain) to the burn address
+`0x000000000000000000000000000000000000dEaD`, with the post
+binding carried as trailing calldata (below). The O goes to
+nobody and is destroyed. It is shown in the app as a ⭐ count
+on the post.
 
-1. **500 CAT42 to the post author's owner address**, bound to
-   the post (trailing calldata, below) — sent first, so the
-   ⭐ count lands immediately;
-2. **500 CAT42 burned** — a plain transfer to
-   `0x000000000000000000000000000000000000dEaD`.
+A **SuperRecaw** (new in v0.5.0) is a Recaw done the flashy
+way: the app performs the **normal Recaw action first**;
+only after it lands, it burns **1,000,000 O** the same way,
+with the "SRC1" marker naming the ORIGINAL post. A recaw
+renders with a gradient frame and a "SuperRecaw" badge when
+a marked SRC1 burn exists for that post **by the recawing
+account**. If the burn fails after the recaw landed, the app
+records the owed burn on-device and offers a burn-only retry
+(tapping Recaw on that post) — the retry can never send a
+second recaw. An O shortfall refuses the Super path before
+anything is signed, and the plain Recaw is offered instead.
 
-It is shown in the app as a ⭐ count on the post. It is this
-app's own feature: the CAW protocol knows nothing about it,
-and sending one is NOT a CAW action (no QL1 post, no
-deposited-CAW cost).
+History: v0.4.8/0.4.9 priced SuperLike in CAT42 (a marked
+transfer to the author, plus a burn leg). **No SuperLike was
+ever sent at either CAT42 price** (the count scans verified 0
+throughout), so v0.5.0 replaced the design cleanly — there is
+no legacy CAT42 counting. CAT42's one job is now **tips**
+(below).
 
-**If the burn leg fails** after the author leg landed, the
-app records the owed burn on-device; tapping the ⭐ on the
-post then offers a burn-only retry (the author is never paid
-twice for one SuperLike). The debt record is the only way
-into that retry.
-
-**The binding — trailing calldata on the author transfer.**
-The author leg is one ordinary CAT42 `transfer(author, 500
-CAT42)` whose calldata carries the post binding appended
-after the standard arguments:
+**The binding — trailing calldata on the burn transfer.**
+The burn is one ordinary O `transfer(0x…dEaD, 1,000,000 O)`
+whose calldata carries the marker appended after the
+standard arguments:
 
 ```
 transfer calldata (68 bytes)
-+ "SLK1"  (4-byte magic, 0x534c4b31)
++ MAGIC   (4 bytes: "SLK1" 0x534c4b31 = SuperLike,
+                    "SRC1" 0x53524331 = SuperRecaw)
 + cawId   (32 bytes — the post's CAW id)
 ```
 
-This was verified before it was adopted (2026-11-09, both
-production 42 Chain RPCs, simulated from a holder of ~5.07M
-CAT42): `eth_call` returns `true` identically with and without
-the marker, and `eth_estimateGas` differs by exactly 576 gas —
-the intrinsic cost of 36 extra non-zero calldata bytes — so the
-contract executes the transfer (and emits its Transfer log)
-without ever reading the trailing bytes.
+This was verified with the REAL O token before the design
+was adopted (2026-11-10, read-only, QL1 head 13,435,401):
+`eth_call` of the 1,000,000 O burn transfer, simulated from
+the QomSwap O/WQOM pair (a holder of ~13.28 trillion O),
+returns `true` **identically** with and without the marker;
+`eth_estimateGas` differs by exactly 204 gas — the intrinsic
+calldata charge of the marker bytes — so the execution is
+untouched and never reads the trailing bytes; and 36 real
+direct `transfer()` transactions sampled over ~1.46M blocks
+each had input amount == Transfer log amount (**no transfer
+tax**).
 
-**Reading rule (any client can implement it).** A post's
-SuperLike count is the number of CAT42 transfers TO the post
-author's owner address, at or after 42 Chain block 4,300,000,
-whose transaction input parses as the marked shape above AND
-whose amount is exactly 500 CAT42 (the Transfer log's value must
-agree). The burn leg carries no marker and is addressed to
-the burn address, so it never counts. Counts come only from
-this chain data — the app keeps a
-per-author scan cursor on-device (the RPCs cap `eth_getLogs`
-ranges at 10,000 blocks) and never shows a locally invented
-number.
+**Reading rule (any client can implement it).** Because the
+recipient is the burn address for everyone, counts cannot be
+gathered per author. Instead: scan the O token's Transfer
+events TO the burn address from QL1 block 13,400,000, fetch
+each transaction's input, and count those that parse as the
+marked shape above with amount exactly 1,000,000 O (the
+Transfer log's value must agree). "SLK1" marks index SuperLike
+counts by cawId; "SRC1" marks index SuperRecaw display by
+(cawId, sender). The app keeps ONE such chain-wide scan
+cursor on-device (the QL1 RPC caps `eth_getLogs` ranges at
+10,000 blocks; the scan chunks at 9,000) and never shows a
+locally invented number. A chunk that fails never advances
+the cursor.
 
-**Guards.** SuperLike on your own names' posts is blocked, a
-CAT42 balance below the 1,000 total is a hard stop, and every
-send passes a confirmation sheet (the split — total, author
-share, burn share — the author @name + address, and the
-current balance) and the app's fresh-authentication gate.
+**Guards.** SuperLike on your own names' posts is blocked
+(execution-level too), an O balance below 1,000,000 is a hard
+stop with plain guidance on getting O, and every send passes
+a confirmation sheet (the 1,000,000 O burned, the author/post
+it honours, the sender's O balance) and the app's
+fresh-authentication gate.
 
-**Honest interop note:** other clients see a plain CAT42
-transfer. Only readers of this convention attribute it to a
-post.
+**Honest interop note:** other clients see a plain O burn.
+Only readers of this convention attribute it to a post.
+
+## Tips (v0.5.0) — CAT42's one job
+
+A **tip** is a plain CAT42 transfer from a reader to a post
+author's owner address on 42 Chain — presets of 10 / 50 /
+100 CAT42 or a custom amount. Deliberately **no marker and
+no counting**: a tip is just a transfer, like handing someone
+coins. Tipping your own post is blocked, and a balance below
+the chosen amount is a hard stop.
 
 ## Verification
 

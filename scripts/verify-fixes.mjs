@@ -423,9 +423,9 @@ try {
     /unit: 'CAT42', raw: cat42/.test(appSrc));
   check('v0.4.8: both cards use the shared CAT42 label key',
     /tr\('card\.cat42'\)/.test(tlSrc) && /tr\('card\.cat42'\)/.test(appSrc));
-  check('v0.4.8: new label keys exist in all 13 language dicts',
-    (i18nSrc.match(/'card\.cat42'/g) || []).length === 13 &&
-    (i18nSrc.match(/'card\.f42'/g) || []).length === 13);
+  check('v0.4.8: new label keys exist in all 20 language dicts',
+    (i18nSrc.match(/'card\.cat42'/g) || []).length === 20 &&
+    (i18nSrc.match(/'card\.f42'/g) || []).length === 20);
   check('v0.4.8: name card content scrolls inside a height-capped card',
     /maxHeight: cardMaxH/.test(appSrc) &&
     /<ScrollView[^>]*>[\s\S]{0,200}<NameCard/.test(appSrc));
@@ -549,9 +549,9 @@ try {
     /formatBad/.test(getSrc) && /tr\('get\.invalid'\)/.test(getSrc));
   check('v0.4.9: no locale claims underscores are allowed any more',
     !/underscore|アンダースコア|下划线|밑줄|guiones bajos|alt çizgi|زیرخط|garis bawah|gạch dưới|sublinhado|अंडरस्कोर|tirets bas/.test(i18nSrc));
-  check('v0.4.9: get.desc + get.invalid state the rule in all 13 locales',
-    (i18nSrc.match(/'get\.desc'/g) || []).length === 13 &&
-    (i18nSrc.match(/'get\.invalid'/g) || []).length === 13);
+  check('v0.4.9: get.desc + get.invalid state the rule in all 20 locales',
+    (i18nSrc.match(/'get\.desc'/g) || []).length === 20 &&
+    (i18nSrc.match(/'get\.invalid'/g) || []).length === 20);
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

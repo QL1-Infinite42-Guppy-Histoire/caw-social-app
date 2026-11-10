@@ -68,6 +68,11 @@ scripts/.build-arrival/
 scripts/.build-wqom/
 scripts/.build-qomstart/
 scripts/.build-batch/
+scripts/.build-superlike/
+scripts/.build-superlike-fail/
+scripts/.build-superrecaw/
+scripts/.build-tip/
+scripts/.build-exchange/
 
 # Audit quote package — LOCAL ONLY, never commit/publish (user rule, 2026-11-09)
 docs/audit/
