@@ -248,6 +248,15 @@ export class HuntersFlowStore {
       const raw = await this.kv.getItem(this.storageKey);
       if (!raw) return null;
       const f = JSON.parse(raw) as HuntersFlow;
+      /* NOTE (audit S3, accepted 2026-11-11): this legacy
+       * loader validates only v + phase, less strictly than
+       * deserializeXFlow. Accepted, not fixed: the instant-
+       * swap UI that consumed this store was removed in
+       * v0.5.0 formal, so the path is unreachable in the
+       * shipped build, and every resume re-checks live
+       * balances with recipients pinned to the user's own
+       * address. If the legacy flow UI ever returns, port
+       * the strict deserializer first. */
       if (!f || f.v !== 1 || typeof f.phase !== 'string') return null;
       return f;
     } catch {

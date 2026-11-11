@@ -8,6 +8,18 @@
  * for the same reason.
  */
 export const RPC = 'https://evm-rpc-ql1.mschihuahua.org';
+/**
+ * Second, INDEPENDENT QL1 read endpoint (v0.5.0-fix, audit
+ * M1): the QL1 explorer's own eth-rpc proxy (Blockscout,
+ * scan.qom.network) — a different operator and stack from
+ * the primary community node above. Verified live
+ * 2026-11-11: chainId answers 766, its block height tracks
+ * the primary's, and ownerOf(190) on CAW_NAME returns the
+ * identical address through both. Used ONLY as a cross-check
+ * where a single RPC's word moves money by itself (the CAT42
+ * tip recipient) — general reads keep using the primary.
+ */
+export const RPC_ALT = 'https://scan.qom.network/api/eth-rpc';
 export const API = 'https://scan.qom.network/api/v2';
 export const EXPLORER = 'https://scan.qom.network';
 export const CHAIN_ID = 766;

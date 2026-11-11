@@ -90,6 +90,9 @@ import {
   quotePairTokenFee,
   runQl1BridgeBatch,
   stepErrorKey,
+  TxRevertedError,
+  TxUnconfirmedError,
+  waitForReceiptRobust,
   WQOM_ADDR,
   type TxReq,
 } from '../lib/hunters';
@@ -100,17 +103,22 @@ import {
   QOM_BRIDGE_PAIR,
   xAdvance,
   xArrivalVerdict,
+  xArrivalVerdictDeltaOnly,
+  xClearPending,
   xCurrentStep,
   xDefaultRoute,
   xExpectedBscFromForward,
   xFlowComplete,
   xIsWaitStep,
+  xPendingMatches,
+  xPendingResendAllowed,
   xPreviewDepUsdtArrival,
   xPreviewWdUsdtArrival,
   xStepsFor,
   xTokenOf,
   type XFlow,
   type XFlowKind,
+  type XPendingSend,
   type XStepId,
 } from '../lib/exchangeFlows';
 import { storeKV, xFlowStore } from '../lib/stores';
@@ -142,6 +150,7 @@ import {
   hxSignOrder,
   hxWithdrawData,
   loadExchangeAddress,
+  nextOrderNonce,
   quoteCawDeliveryFee,
   saveExchangeAddress,
   serializeOrder,
@@ -302,6 +311,19 @@ function orderSides(o: HxOrder): {
     quoteSym:
       quoteTok.toLowerCase() === HX_QOM.toLowerCase() ? 'QOM' : 'USDT',
   };
+}
+
+/**
+ * A step's earlier send is still unconfirmed (audit M2): the
+ * step must NOT resend. runXStep's catch renders this as the
+ * unconfirmed status; the flow card's pending note explains
+ * that tapping the step re-checks the receipt.
+ */
+class XStillPendingError extends Error {
+  constructor() {
+    super('x-pending');
+    this.name = 'XStillPendingError';
+  }
 }
 
 export default function ExchangeSection() {
@@ -866,6 +888,110 @@ export default function ExchangeSection() {
     [contract],
   );
 
+  /* ---------- the M2 send guard (v0.5.0-fix) ----------
+   * Every send of a flow step goes through guardedXSend (or
+   * the batch's leg recording below): the hash is persisted
+   * in the flow's pendingSend AT BROADCAST TIME, and
+   * re-entering a step resolves that hash's receipt FIRST.
+   * A still-pending send surfaces as XStillPendingError —
+   * the step shows the unconfirmed status and offers NO
+   * resend until the record ages past the resend window
+   * with no receipt anywhere. This is the discipline the
+   * legacy Hunters flow proved (flows.ts pendingTx +
+   * receipt re-check), ported to the exchange flows. */
+  const probeXPending = useCallback(
+    async (
+      p: XPendingSend,
+    ): Promise<'confirmed' | 'reverted' | 'pending'> => {
+      if (!p.hash) return 'pending';
+      const r = await waitForReceiptRobust(p.chain, p.hash, {
+        windowMs: 20_000,
+      }).catch(() => null);
+      if (!r) return 'pending';
+      return r.status === 1 ? 'confirmed' : 'reverted';
+    },
+    [],
+  );
+
+  const guardedXSend = useCallback(
+    async (args: {
+      flow: XFlow;
+      step: XStepId;
+      sub?: 'approve';
+      chain: HsChainKey;
+      ctx?: Partial<XPendingSend>;
+      send: (noteBroadcast: (hash: string) => void) => Promise<string>;
+    }): Promise<{ hash: string; flow: XFlow }> => {
+      const { step, sub, chain } = args;
+      let flow = args.flow;
+      const existing = xPendingMatches(flow, step, sub);
+      if (existing) {
+        if (!existing.hash) {
+          /* Died mid-broadcast before any hash was learned:
+           * nothing provable was sent — drop the record. */
+          flow = xClearPending(flow);
+          await persistX(flow);
+        } else {
+          const verdict = await probeXPending(existing);
+          if (verdict === 'confirmed') {
+            return { hash: existing.hash, flow };
+          }
+          if (verdict === 'reverted') {
+            await persistX(xClearPending(flow));
+            throw new TxRevertedError(existing.hash);
+          }
+          if (!xPendingResendAllowed(existing, Date.now())) {
+            throw new XStillPendingError();
+          }
+          /* Aged out with no receipt on any endpoint: the
+           * send is treated as dropped — clear and resend. */
+          flow = xClearPending(flow);
+          await persistX(flow);
+        }
+      }
+      const pending: XPendingSend = {
+        step,
+        ...(sub ? { sub } : {}),
+        chain,
+        at: Date.now(),
+        ...(args.ctx ?? {}),
+      };
+      let current: XFlow = { ...flow, pendingSend: pending };
+      await persistX(current);
+      const noteBroadcast = (hash: string) => {
+        if (!current.pendingSend) return;
+        current = {
+          ...current,
+          pendingSend: { ...current.pendingSend, hash },
+        };
+        void persistX(current);
+      };
+      try {
+        const hash = await args.send(noteBroadcast);
+        return { hash, flow: current };
+      } catch (e) {
+        if (e instanceof TxUnconfirmedError) {
+          /* Keep the record (with the hash) — the next entry
+           * resolves it by receipt instead of resending. */
+          if (current.pendingSend && current.pendingSend.hash !== e.hash) {
+            current = {
+              ...current,
+              pendingSend: { ...current.pendingSend, hash: e.hash },
+            };
+            await persistX(current);
+          }
+          throw new XStillPendingError();
+        }
+        /* Broadcast failure or an on-chain revert: the send
+         * is settled one way or the other — the record must
+         * not block a later retry. */
+        await persistX(xClearPending(current));
+        throw e;
+      }
+    },
+    [persistX, probeXPending],
+  );
+
   const runXStep = useCallback(async () => {
     if (!xflow || !contract || !address) return;
     const step = xCurrentStep(xflow);
@@ -880,12 +1006,21 @@ export default function ExchangeSection() {
     try {
       /* Approve first when the preflight says one is owed:
        * the step does NOT advance — the next tap runs the
-       * step's main send. */
+       * step's main send. The approve is a send like any
+       * other: it goes through the M2 guard, so an
+       * unconfirmed approve is resolved by receipt, never
+       * blindly re-approved. */
       if (xPre && xPre.step === step && xPre.needsApprove) {
         const a = xApproveFor(step, xflow);
         if (a) {
           const signer = await signerOn(a.chain);
-          await sendTxReq(signer, a.tx);
+          await guardedXSend({
+            flow: xflow,
+            step,
+            sub: 'approve',
+            chain: a.chain,
+            send: (note) => sendTxReq(signer, a.tx, note),
+          });
           setXStatus({ text: tr('hxd.approved'), err: false });
           setXPreNonce((n) => n + 1);
           return;
@@ -896,41 +1031,151 @@ export default function ExchangeSection() {
           const base = await erc20Balance('infinite', HX_USDT, address);
           const q = await quoteBridgeIn('bsc', amount);
           const signer = await signerOn('bsc');
-          const hash = await sendTxReq(
-            signer,
-            buildBridgeInTx('bsc', amount, address, q.totalNative),
-          );
+          const res = await guardedXSend({
+            flow: xflow,
+            step,
+            chain: 'bsc',
+            ctx: { base42: base.toString() },
+            send: (note) =>
+              sendTxReq(
+                signer,
+                buildBridgeInTx('bsc', amount, address, q.totalNative),
+                note,
+              ),
+          });
           await advanceX({
-            ...xflow,
-            base42: base.toString(),
+            ...xClearPending(res.flow),
+            base42: res.flow.pendingSend?.base42 ?? base.toString(),
             expected42: expected42Usdt(amount, 18).toString(),
-            bridgeHash: hash,
+            bridgeHash: res.hash,
           });
           break;
         }
         case 'bridgeQl1': {
           const base = await erc20Balance('infinite', HX_CAW, address);
           const signer = await signerOn('ql1');
-          const hash = await sendTxReq(
-            signer,
-            buildCawBridgeInTx(address, amount),
-          );
+          const res = await guardedXSend({
+            flow: xflow,
+            step,
+            chain: 'ql1',
+            ctx: { base42: base.toString() },
+            send: (note) =>
+              sendTxReq(signer, buildCawBridgeInTx(address, amount), note),
+          });
           await advanceX({
-            ...xflow,
-            base42: base.toString(),
+            ...xClearPending(res.flow),
+            base42: res.flow.pendingSend?.base42 ?? base.toString(),
             expected42: amount.toString(),
-            bridgeHash: hash,
+            bridgeHash: res.hash,
           });
           break;
         }
         case 'bridgeQl1Qom': {
+          /* M2 first: an earlier batch may have broadcast
+           * sends that never confirmed here. Resolve the
+           * newest recorded leg by RECEIPT before anything
+           * re-plans — a live bridge is never bridged twice. */
+          const pend = xPendingMatches(xflow, step);
+          if (pend) {
+            const legs = pend.legs ?? [];
+            const lastLeg = legs.length ? legs[legs.length - 1] : undefined;
+            if (
+              lastLeg &&
+              lastLeg.kind === 'bridge' &&
+              pend.base42 !== undefined
+            ) {
+              const verdict = await probeXPending({
+                ...pend,
+                hash: lastLeg.hash,
+              });
+              if (verdict === 'confirmed') {
+                const tokenFee = await quotePairTokenFee(
+                  QOM_BRIDGE_PAIR,
+                  amount,
+                  'ql1',
+                ).catch(() => null);
+                await advanceX({
+                  ...xClearPending(xflow),
+                  base42: pend.base42,
+                  expected42: (tokenFee === null
+                    ? 0n
+                    : amount > tokenFee
+                      ? amount - tokenFee
+                      : 0n
+                  ).toString(),
+                  bridgeHash: lastLeg.hash,
+                  ...(tokenFee === null ? { expectDeltaOnly: true } : {}),
+                });
+                break;
+              }
+              if (verdict === 'reverted') {
+                await persistX(xClearPending(xflow));
+                throw new TxRevertedError(lastLeg.hash);
+              }
+              if (!xPendingResendAllowed(pend, Date.now())) {
+                throw new XStillPendingError();
+              }
+              /* Aged out with no receipt anywhere: if the
+               * 42-side balance already grew over the
+               * recorded baseline, the first bridge DID land
+               * — advance on the delta, never re-bridge. */
+              const now42 = await erc20Balance(
+                'infinite',
+                HX_QOM,
+                address,
+              ).catch(() => null);
+              if (
+                now42 !== null &&
+                xArrivalVerdictDeltaOnly(BigInt(pend.base42), now42) ===
+                  'arrived'
+              ) {
+                await advanceX({
+                  ...xClearPending(xflow),
+                  base42: pend.base42,
+                  expected42: '0',
+                  bridgeHash: lastLeg.hash,
+                  expectDeltaOnly: true,
+                });
+                break;
+              }
+              await persistX(xClearPending(xflow));
+            } else {
+              /* Only pre-bridge legs (or a lone hash) were
+               * recorded: probe the newest evidence, then
+               * let the batch re-plan from fresh balances —
+               * its own discipline never wraps twice. A
+               * still-pending leg inside the resend window
+               * waits instead. */
+              const newest = legs.length
+                ? legs[legs.length - 1].hash
+                : pend.hash;
+              if (newest) {
+                const verdict = await probeXPending({ ...pend, hash: newest });
+                if (verdict === 'reverted') {
+                  await persistX(xClearPending(xflow));
+                  throw new TxRevertedError(newest);
+                }
+                if (
+                  verdict === 'pending' &&
+                  !xPendingResendAllowed(pend, Date.now())
+                ) {
+                  throw new XStillPendingError();
+                }
+              }
+              await persistX(xClearPending(xflow));
+            }
+          }
           /* ONE batch under this step: [wrap the shortfall]
            * -> [approve] -> bridge, planned fresh by
            * ql1BridgePlan against the gas keep (the app's
            * proven QL1 bridge discipline). The 42-side
            * baseline is captured inside the bridge leg's
            * builder — after wrap/approve have landed, right
-           * before transferRemote is built. */
+           * before transferRemote is built — and is ALSO
+           * written into the pending record at that moment,
+           * so a kill during the bridge's confirmation loses
+           * nothing (M2). Every leg's hash is recorded at
+           * broadcast time via the send hook. */
           const st = await fetchQl1BridgeState(
             address,
             WQOM_ADDR,
@@ -954,86 +1199,183 @@ export default function ExchangeSection() {
           if (plan.action !== 'run') throw new Error('insufficient');
           let base42 = 0n;
           let lastHash: string | undefined;
-          const signer = await signerOn('ql1');
-          await runQl1BridgeBatch({
-            plan,
-            amt: amount,
-            buildTx: async (leg) => {
-              if (leg.kind === 'wrap') return buildWrapTx(leg.amount);
-              if (leg.kind === 'approve') {
-                return buildApproveTx(
-                  WQOM_ADDR,
-                  QOM_BRIDGE_PAIR.ql1Router,
-                  amount,
-                );
-              }
-              base42 = await erc20Balance('infinite', HX_QOM, address);
-              return buildAggBridgeFromQl1(
-                { pair: QOM_BRIDGE_PAIR },
-                address,
-                amount,
-                0n,
-              );
-            },
-            send: async (tx) => {
-              lastHash = await sendTxReq(signer, tx);
-            },
-          });
-          const tokenFee =
-            (await quotePairTokenFee(QOM_BRIDGE_PAIR, amount, 'ql1').catch(
-              () => null,
-            )) ?? 0n;
-          const expected = amount > tokenFee ? amount - tokenFee : 0n;
-          await advanceX({
+          let cur: XFlow = {
             ...xflow,
+            pendingSend: { step, chain: 'ql1', at: Date.now(), legs: [] },
+          };
+          await persistX(cur);
+          const signer = await signerOn('ql1');
+          let curLeg: 'wrap' | 'approve' | 'bridge' = 'bridge';
+          const recordLeg = (hash: string) => {
+            lastHash = hash;
+            if (!cur.pendingSend) return;
+            cur = {
+              ...cur,
+              pendingSend: {
+                ...cur.pendingSend,
+                legs: [
+                  ...(cur.pendingSend.legs ?? []),
+                  { kind: curLeg, hash },
+                ],
+              },
+            };
+            void persistX(cur);
+          };
+          try {
+            await runQl1BridgeBatch({
+              plan,
+              amt: amount,
+              buildTx: async (leg) => {
+                if (leg.kind === 'wrap') return buildWrapTx(leg.amount);
+                if (leg.kind === 'approve') {
+                  return buildApproveTx(
+                    WQOM_ADDR,
+                    QOM_BRIDGE_PAIR.ql1Router,
+                    amount,
+                  );
+                }
+                base42 = await erc20Balance('infinite', HX_QOM, address);
+                if (cur.pendingSend) {
+                  cur = {
+                    ...cur,
+                    pendingSend: {
+                      ...cur.pendingSend,
+                      base42: base42.toString(),
+                    },
+                  };
+                  void persistX(cur);
+                }
+                return buildAggBridgeFromQl1(
+                  { pair: QOM_BRIDGE_PAIR },
+                  address,
+                  amount,
+                  0n,
+                );
+              },
+              send: async (tx) => {
+                await sendTxReq(signer, tx, recordLeg);
+              },
+              onLeg: (leg) => {
+                curLeg = leg.kind;
+              },
+            });
+          } catch (e) {
+            if (e instanceof TxUnconfirmedError) {
+              /* The failing leg's hash is already on the
+               * record (recordLeg ran at broadcast). */
+              throw new XStillPendingError();
+            }
+            await persistX(xClearPending(cur));
+            throw e;
+          }
+          /* L6: a FAILED fee quote means the expected
+           * arrival is UNKNOWN — the wait step then judges
+           * by balance delta, never by a fee=0 guess. */
+          const tokenFee = await quotePairTokenFee(
+            QOM_BRIDGE_PAIR,
+            amount,
+            'ql1',
+          ).catch(() => null);
+          const deltaOnly = tokenFee === null;
+          const expected = deltaOnly
+            ? 0n
+            : amount > (tokenFee as bigint)
+              ? amount - (tokenFee as bigint)
+              : 0n;
+          await advanceX({
+            ...xClearPending(cur),
             base42: base42.toString(),
             expected42: expected.toString(),
             bridgeHash: lastHash,
+            ...(deltaOnly ? { expectDeltaOnly: true } : {}),
           });
           break;
         }
         case 'deposit': {
           const signer = await signerOn('infinite');
-          await sendTxReq(signer, {
-            to: contract,
-            data: hxDepositData(xTokenAddr(xflow.kind), amount),
-            value: 0n,
+          const res = await guardedXSend({
+            flow: xflow,
+            step,
+            chain: 'infinite',
+            send: (note) =>
+              sendTxReq(
+                signer,
+                {
+                  to: contract,
+                  data: hxDepositData(xTokenAddr(xflow.kind), amount),
+                  value: 0n,
+                },
+                note,
+              ),
           });
-          await advanceX(xflow);
+          await advanceX(xClearPending(res.flow));
           break;
         }
         case 'escrowOut': {
           const signer = await signerOn('infinite');
-          await sendTxReq(signer, {
-            to: contract,
-            data: hxWithdrawData(xTokenAddr(xflow.kind), amount),
-            value: 0n,
+          const res = await guardedXSend({
+            flow: xflow,
+            step,
+            chain: 'infinite',
+            send: (note) =>
+              sendTxReq(
+                signer,
+                {
+                  to: contract,
+                  data: hxWithdrawData(xTokenAddr(xflow.kind), amount),
+                  value: 0n,
+                },
+                note,
+              ),
           });
-          await advanceX(xflow);
+          await advanceX(xClearPending(res.flow));
           break;
         }
         case 'bridge42Qom': {
-          /* Relay fee quoted LIVE (freshBridgeFee42), token
-           * fee quoted live (quotePairTokenFee) — neither is
-           * hardcoded; the expected QL1 arrival folds the
-           * token fee in. */
-          const tokenFee =
-            (await quotePairTokenFee(QOM_BRIDGE_PAIR, amount, 'infinite').catch(
-              () => null,
-            )) ?? 0n;
-          const nativeFee = await freshBridgeFee42('QOM');
+          /* Relay fee quoted LIVE inside the send
+           * (freshBridgeFee42) — never hardcoded. The token
+           * fee is quoted after the send for the expected
+           * arrival only; when THAT quote fails the arrival
+           * is UNKNOWN and the wait step judges by balance
+           * delta (L6), never by a fee=0 guess. */
           const baseQl1 = await arrivalBalance('ql1', null, address);
           const signer = await signerOn('infinite');
-          const hash = await sendTxReq(
-            signer,
-            buildAggBridge({ pair: QOM_BRIDGE_PAIR }, address, amount, nativeFee),
-          );
-          const expected = amount > tokenFee ? amount - tokenFee : 0n;
+          const res = await guardedXSend({
+            flow: xflow,
+            step,
+            chain: 'infinite',
+            ctx: { baseQl1: baseQl1.toString() },
+            send: async (note) => {
+              const nativeFee = await freshBridgeFee42('QOM');
+              return sendTxReq(
+                signer,
+                buildAggBridge(
+                  { pair: QOM_BRIDGE_PAIR },
+                  address,
+                  amount,
+                  nativeFee,
+                ),
+                note,
+              );
+            },
+          });
+          const tokenFee = await quotePairTokenFee(
+            QOM_BRIDGE_PAIR,
+            amount,
+            'infinite',
+          ).catch(() => null);
+          const deltaOnly = tokenFee === null;
+          const expected = deltaOnly
+            ? 0n
+            : amount > (tokenFee as bigint)
+              ? amount - (tokenFee as bigint)
+              : 0n;
           await advanceX({
-            ...xflow,
-            baseQl1: baseQl1.toString(),
+            ...xClearPending(res.flow),
+            baseQl1: res.flow.pendingSend?.baseQl1 ?? baseQl1.toString(),
             expectedQl1: expected.toString(),
-            bridgeHash: hash,
+            bridgeHash: res.hash,
+            ...(deltaOnly ? { expectDeltaOnly: true } : {}),
           });
           break;
         }
@@ -1041,7 +1383,11 @@ export default function ExchangeSection() {
           const q = await quoteBridgeOut42('bsc', amount);
           /* The flat fee is 2 USDT; a materially worse live
            * quote than that stops the send (the sell flow's
-           * proven guard, same tolerance). */
+           * proven guard, same tolerance). Note the guard
+           * also runs on a receipt-resolution tap — if the
+           * quote has since moved it can delay, never
+           * duplicate, the advance: the pending record is
+           * untouched until guardedXSend runs. */
           const fee = 2n * 10n ** 18n;
           if (
             amount - q.forward >
@@ -1055,15 +1401,29 @@ export default function ExchangeSection() {
             address,
           ).catch(() => 0n);
           const signer = await signerOn('infinite');
-          const hash = await sendTxReq(
-            signer,
-            buildBridgeOut42Tx('bsc', address, amount, q.totalNative),
-          );
+          const expectedBsc = xExpectedBscFromForward(q.forward);
+          const res = await guardedXSend({
+            flow: xflow,
+            step,
+            chain: 'infinite',
+            ctx: {
+              baseBsc: baseBsc.toString(),
+              expectedBsc: expectedBsc.toString(),
+            },
+            send: (note) =>
+              sendTxReq(
+                signer,
+                buildBridgeOut42Tx('bsc', address, amount, q.totalNative),
+                note,
+              ),
+          });
           await advanceX({
-            ...xflow,
-            baseBsc: baseBsc.toString(),
-            expectedBsc: xExpectedBscFromForward(q.forward).toString(),
-            bridgeHash: hash,
+            ...xClearPending(res.flow),
+            baseBsc: res.flow.pendingSend?.baseBsc ?? baseBsc.toString(),
+            expectedBsc: (
+              res.flow.pendingSend?.expectedBsc ?? expectedBsc.toString()
+            ).toString(),
+            bridgeHash: res.hash,
           });
           break;
         }
@@ -1072,8 +1432,13 @@ export default function ExchangeSection() {
            * hardcoded figure. */
           const tx = await buildCawDeliveryTx(amount, address);
           const signer = await signerOn('infinite');
-          await sendTxReq(signer, tx);
-          await advanceX(xflow);
+          const res = await guardedXSend({
+            flow: xflow,
+            step,
+            chain: 'infinite',
+            send: (note) => sendTxReq(signer, tx, note),
+          });
+          await advanceX(xClearPending(res.flow));
           break;
         }
         default:
@@ -1081,10 +1446,18 @@ export default function ExchangeSection() {
       }
       refreshBook();
     } catch (e) {
-      setXStatus({
-        text: tr(stepErrorKey(classifyStepError(e)) as StrKey),
-        err: true,
-      });
+      if (e instanceof XStillPendingError) {
+        /* The step's earlier send is still unconfirmed: show
+         * the unconfirmed status — the pending note on the
+         * flow card explains that the next tap re-checks the
+         * receipt instead of resending. */
+        setXStatus({ text: tr('hs.unconfirmed'), err: true });
+      } else {
+        setXStatus({
+          text: tr(stepErrorKey(classifyStepError(e)) as StrKey),
+          err: true,
+        });
+      }
     } finally {
       setXBusy(false);
     }
@@ -1096,6 +1469,9 @@ export default function ExchangeSection() {
     xApproveFor,
     signerOn,
     advanceX,
+    persistX,
+    guardedXSend,
+    probeXPending,
     refreshBook,
   ]);
 
@@ -1112,27 +1488,36 @@ export default function ExchangeSection() {
           xTokenAddr(xflow.kind),
           address,
         );
-        if (
-          xArrivalVerdict(
-            BigInt(xflow.base42 ?? '0'),
-            now,
-            BigInt(xflow.expected42 ?? '0'),
-          ) === 'arrived'
-        ) {
+        /* L6: with expectDeltaOnly the expected amount is
+         * unknown (the fee quote failed at send time) — any
+         * positive delta over the baseline is the arrival. */
+        const verdict = xflow.expectDeltaOnly
+          ? xArrivalVerdictDeltaOnly(BigInt(xflow.base42 ?? '0'), now)
+          : xArrivalVerdict(
+              BigInt(xflow.base42 ?? '0'),
+              now,
+              BigInt(xflow.expected42 ?? '0'),
+            );
+        if (verdict === 'arrived') {
           setXStatus({ text: tr('hxd.arrived'), err: false });
-          await advanceX(xflow);
+          const adv = { ...xflow };
+          delete adv.expectDeltaOnly;
+          await advanceX(adv);
         }
       } else if (step === 'waitQl1') {
         /* The wdQom arrival is NATIVE QOM on QL1. */
         const now = await arrivalBalance('ql1', null, address);
-        if (
-          xArrivalVerdict(
-            BigInt(xflow.baseQl1 ?? '0'),
-            now,
-            BigInt(xflow.expectedQl1 ?? '0'),
-          ) === 'arrived'
-        ) {
-          await advanceX(xflow);
+        const verdict = xflow.expectDeltaOnly
+          ? xArrivalVerdictDeltaOnly(BigInt(xflow.baseQl1 ?? '0'), now)
+          : xArrivalVerdict(
+              BigInt(xflow.baseQl1 ?? '0'),
+              now,
+              BigInt(xflow.expectedQl1 ?? '0'),
+            );
+        if (verdict === 'arrived') {
+          const adv = { ...xflow };
+          delete adv.expectDeltaOnly;
+          await advanceX(adv);
         }
       } else {
         const now = await erc20Balance('bsc', USDT_ON.bsc.address, address);
@@ -1199,7 +1584,12 @@ export default function ExchangeSection() {
     const base: Omit<HxOrder, 'tokenGive' | 'amountGive' | 'tokenGet' | 'amountGet'> = {
       maker: address,
       expiry: Math.floor(Date.now() / 1000) + expirySec,
-      nonce: Date.now().toString(),
+      /* Placeholder only (audit L5): the real nonce is
+       * assigned at signing time in placeOrder from the
+       * persisted per-account counter (nextOrderNonce) —
+       * a bare Date.now() here collided for two orders
+       * drafted inside one millisecond. */
+      nonce: '0',
     };
     return side === 'sell'
       ? { ...base, tokenGive: HX_CAW, amountGive: give, tokenGet: pairToken, amountGet: counter }
@@ -1237,10 +1627,18 @@ export default function ExchangeSection() {
     setBusy(true);
     setStatus({ text: tr('hs.sending'), err: false });
     try {
+      /* L5: the signed order carries a fresh nonce from the
+       * persisted per-account counter (never a bare
+       * timestamp), so no two orders from this account can
+       * collide — even under a frozen clock. */
+      const order: HxOrder = {
+        ...draftOrder,
+        nonce: await nextOrderNonce(draftOrder.maker),
+      };
       const signer = await signer42();
-      const signature = await hxSignOrder(signer, contract, draftOrder);
+      const signature = await hxSignOrder(signer, contract, order);
       await hxPostOrder(contract, {
-        order: serializeOrder(draftOrder),
+        order: serializeOrder(order),
         signature,
       });
       setStatus({ text: tr('hx.orderPlaced'), err: false });
@@ -1630,6 +2028,11 @@ export default function ExchangeSection() {
             {xCur && xIsWaitStep(xCur) ? (
               <Text style={[S.small, { marginTop: 10 }]}>
                 {tr('hxd.waitingNote')}
+              </Text>
+            ) : null}
+            {xCur && xPendingMatches(xflow, xCur) ? (
+              <Text style={[S.small, { marginTop: 10 }]}>
+                {tr('hxd.pendingNote')}
               </Text>
             ) : null}
             {xPre && xCur && xPre.step === xCur && xPre.blocked ? (

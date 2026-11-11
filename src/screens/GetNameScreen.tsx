@@ -168,6 +168,28 @@ export default function GetNameScreen() {
     setBusy(true);
     setStatus({ text: tr('get.sending'), tone: 'info' });
     try {
+      /* L2 (v0.5.0-fix): re-run the availability + cost
+       * check IMMEDIATELY before submitting. The verdict the
+       * user confirmed against may be minutes old — a name
+       * can be taken, or repriced, in between. Any change
+       * (including an unreadable re-check) aborts the mint
+       * with a fresh verdict instead of sending against
+       * stale facts; the contract remains the final judge,
+       * this keeps the user from paying gas on a known-stale
+       * send. */
+      const fresh = await checkName(checkedName).catch(() => null);
+      if (!fresh || !fresh.valid || fresh.taken || fresh.cost !== cost) {
+        if (fresh && fresh.valid && !fresh.taken) {
+          setCheck({ kind: 'available', cost: fresh.cost });
+        } else if (fresh && fresh.taken) {
+          setCheck({ kind: 'taken' });
+        } else if (fresh && !fresh.valid) {
+          setCheck({ kind: 'invalid' });
+        }
+        setStatus({ text: tr('get.changed'), tone: 'err' });
+        setConfirm(null);
+        return;
+      }
       const ok = await app.requireAuth();
       if (!ok) {
         setStatus(null);

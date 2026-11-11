@@ -3,6 +3,15 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 
 import { tr } from '../i18n';
+import {
+  checkPwRecord,
+  makePwRecord,
+  parsePwThrottle,
+  pwNoteFailure,
+  pwNoteSuccess,
+  pwWaitMs,
+  type PwThrottleState,
+} from './pwVerifier';
 
 /**
  * Wallet secret storage (multiple wallets since v0.2.0, QL1 only).
@@ -20,10 +29,11 @@ import { tr } from '../i18n';
  * before the legacy secret is removed), so existing users keep
  * their wallet untouched.
  *
- * Unlock: an app password (salted SHA-256 verifier, the password
- * itself is never stored) and/or device biometrics — one app-level
- * gate for all wallets, checked when the app opens and again before
- * every signature, like the user's other wallet.
+ * Unlock: an app password (scrypt verifier since v0.5.0-fix —
+ * legacy salted-SHA-256 records verify once and migrate; the
+ * password itself is never stored) and/or device biometrics —
+ * one app-level gate for all wallets, checked when the app opens
+ * and again before every signature, like the user's other wallet.
  */
 
 const SECRET_KEY = 'caw.wallet.secret.v1';
@@ -34,6 +44,7 @@ const secretKeyFor = (address: string) =>
   'caw.wallet.secret.' + address.toLowerCase();
 const UNLOCK_METHOD_KEY = 'caw.wallet.unlockMethod.v1';
 const PW_VERIFIER_KEY = 'caw.wallet.pwVerifier.v1';
+const PW_THROTTLE_KEY = 'caw.wallet.pwThrottle.v1';
 const STORE_OPTIONS = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 } as const;
@@ -87,28 +98,24 @@ export async function setUnlockMethodStored(
   await SecureStore.setItemAsync(UNLOCK_METHOD_KEY, method, STORE_OPTIONS);
 }
 
-/* ---------- password verifier (salted hash only) ---------- */
-interface PwVerifier {
-  salt: string;
-  hash: string;
-}
+/* ---------- password verifier (v2 scrypt; legacy migrates) ----------
+ * The record shapes and KDF live in lib/pwVerifier.ts (pure,
+ * harness-pinned). v0.5.0-fix (audit M3): new records are
+ * scrypt (memory-hard). A legacy single-round SHA-256 record
+ * (every install up to vc36) still verifies — and on that
+ * first successful verify it is transparently REWRITTEN in
+ * the v2 format, so the upgrade never locks anyone out. */
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 }
-async function hashPassword(salt: string, password: string): Promise<string> {
-  return Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    `${salt}:${password}`,
-  );
-}
 export async function setPasswordVerifier(password: string): Promise<void> {
   const salt = bytesToHex(await Crypto.getRandomBytesAsync(16));
-  const hash = await hashPassword(salt, password);
+  const record = await makePwRecord(password, salt);
   await SecureStore.setItemAsync(
     PW_VERIFIER_KEY,
-    JSON.stringify({ salt, hash } as PwVerifier),
+    JSON.stringify(record),
     STORE_OPTIONS,
   );
 }
@@ -125,17 +132,59 @@ export async function verifyPassword(password: string): Promise<boolean> {
   try {
     const raw = await SecureStore.getItemAsync(PW_VERIFIER_KEY, STORE_OPTIONS);
     if (!raw) return false;
-    const record = JSON.parse(raw) as PwVerifier;
-    const candidate = await hashPassword(record.salt, password);
-    if (candidate.length !== record.hash.length) return false;
-    let diff = 0;
-    for (let i = 0; i < candidate.length; i++) {
-      diff |= candidate.charCodeAt(i) ^ record.hash.charCodeAt(i);
+    const { ok, legacy } = await checkPwRecord(JSON.parse(raw), password);
+    if (ok && legacy) {
+      // Transparent migration: the password just proved
+      // itself against the legacy record — re-hash it into
+      // the v2 scrypt format. A failure to rewrite leaves
+      // the legacy record in place (it still verifies).
+      await setPasswordVerifier(password).catch(() => {});
     }
-    return diff === 0;
+    return ok;
   } catch {
     return false;
   }
+}
+
+/* ---------- password attempt throttle (audit M3) ----------
+ * Consecutive-failure state, persisted in the secure store
+ * so an app restart does NOT reset it. verifyPasswordThrottled
+ * is the path the unlock prompt and the secret-reveal gate
+ * use: it waits out the progressive delay (5 s → 60 s after
+ * the free failures), verifies, and records the outcome. */
+async function loadPwThrottle(): Promise<PwThrottleState> {
+  try {
+    return parsePwThrottle(
+      await SecureStore.getItemAsync(PW_THROTTLE_KEY, STORE_OPTIONS),
+    );
+  } catch {
+    return { fails: 0, lastFailAt: 0 };
+  }
+}
+async function savePwThrottle(state: PwThrottleState): Promise<void> {
+  try {
+    await SecureStore.setItemAsync(
+      PW_THROTTLE_KEY,
+      JSON.stringify(state),
+      STORE_OPTIONS,
+    );
+  } catch {
+    /* a store failure must not block a legitimate unlock */
+  }
+}
+const sleepMs = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
+export async function verifyPasswordThrottled(
+  password: string,
+): Promise<boolean> {
+  const state = await loadPwThrottle();
+  const wait = pwWaitMs(state, Date.now());
+  if (wait > 0) await sleepMs(wait);
+  const ok = await verifyPassword(password);
+  await savePwThrottle(
+    ok ? pwNoteSuccess() : pwNoteFailure(state, Date.now()),
+  );
+  return ok;
 }
 
 /* ---------- wallet records (multi-wallet registry) ---------- */
@@ -333,4 +382,5 @@ export async function deleteWallet(): Promise<void> {
   await SecureStore.deleteItemAsync(ACTIVE_KEY, STORE_OPTIONS);
   await SecureStore.deleteItemAsync(UNLOCK_METHOD_KEY, STORE_OPTIONS);
   await SecureStore.deleteItemAsync(PW_VERIFIER_KEY, STORE_OPTIONS);
+  await SecureStore.deleteItemAsync(PW_THROTTLE_KEY, STORE_OPTIONS);
 }

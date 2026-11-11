@@ -355,7 +355,17 @@ const SC_EMPTY_HASH = strip(keccak256(new Uint8Array(0)));
 const kec = (hexNoPrefix: string): string =>
   strip(keccak256(getBytes('0x' + hexNoPrefix)));
 
-/** The digest a name owner signs for one action. Returns '0x…' hex. */
+/**
+ * The digest a name owner signs for one action. Returns '0x…' hex.
+ *
+ * NOTE (audit S2, not fixable from the app): whether a
+ * captured signature can be REPLAYED depends on the legacy
+ * CawActions contract's internals (nonce/consumed-digest
+ * tracking), which cannot be verified from the client. The
+ * app side does its part: it always signs a FRESH timestamp,
+ * so it never replays its own signatures; third-party
+ * resubmission resistance rests with the contract.
+ */
 export function actionDigest(a: CawAction): string {
   const textHash = strip(keccak256(toUtf8Bytes(a.text)));
   const structHash = kec(

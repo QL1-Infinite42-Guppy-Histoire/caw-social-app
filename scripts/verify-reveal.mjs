@@ -7,6 +7,7 @@
  * before the password check succeeds).
  */
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -97,6 +98,26 @@ const R = require(BUILD + '/reveal.js');
   check('gate: correct password -> secret loaded once',
     granted !== null && granted.secret === 'dummy' && loads === 1);
   check('auto-hide is 60s', R.REVEAL_AUTO_HIDE_MS === 60000);
+}
+
+/* ---- L3 (v0.5.0-fix): a copied secret leaves the clipboard ---- */
+{
+  const root = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+  const scr = readFileSync(root + '/src/screens/RevealSecretScreen.tsx', 'utf8');
+  const iCopy = scr.indexOf('const doCopy');
+  const copyBody = scr.slice(iCopy, iCopy + 1200);
+  check('L3: copying schedules a clipboard clear (empty overwrite)',
+    copyBody.includes("Clipboard.setStringAsync('')") && copyBody.includes('60_000'));
+  check('L3: a fresh copy re-arms the clear timer',
+    copyBody.includes('clearTimeout(clipTimer.current)'));
+  check('L3: the clear timer is also disarmed on unmount/wipe',
+    scr.includes('if (clipTimer.current) clearTimeout(clipTimer.current);'));
+  const i18nSrc = readFileSync(root + '/src/i18n.ts', 'utf8');
+  const copied = i18nSrc.match(/'reveal\.copied':\s*(?:'([^']*)'|"([^"]*)")/g) || [];
+  check('L3: the copied feedback states the 60 s clear in all 20 languages',
+    copied.length === 20 &&
+      copied.every((l) => /60|۶۰/.test(l)),
+    copied.length + ' locales');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

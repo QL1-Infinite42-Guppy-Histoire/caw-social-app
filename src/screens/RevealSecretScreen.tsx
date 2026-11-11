@@ -5,13 +5,15 @@
  *           password -> blurred reveal (decoy words underneath)
  *   key:    pick wallet -> app password -> blurred reveal
  *
- * The gate is ALWAYS the app password (walletStore.verifyPassword)
- * — biometrics alone never reveals. Biometric-only users have no
- * password verifier: they set one in-flow first (setPasswordVerifier)
- * and that password becomes the gate. Secrets are loaded through
- * gatedReveal (lib/reveal.ts) only after the password checks out,
- * live in this screen's state only, and are wiped on close and
- * auto-hidden after 60 s.
+ * The gate is ALWAYS the app password (walletStore's throttled
+ * verifier) — biometrics alone never reveals. Biometric-only
+ * users have no password verifier: they set one in-flow first
+ * (setPasswordVerifier) and that password becomes the gate.
+ * Secrets are loaded through gatedReveal (lib/reveal.ts) only
+ * after the password checks out, live in this screen's state
+ * only, and are wiped on close and auto-hidden after 60 s. A
+ * copied secret is cleared from the clipboard 60 s after the
+ * copy (audit L3).
  */
 import * as Clipboard from 'expo-clipboard';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -44,7 +46,7 @@ import {
   hasPasswordVerifier,
   loadWalletSecret,
   setPasswordVerifier,
-  verifyPassword,
+  verifyPasswordThrottled,
   type WalletPublicInfo,
 } from '../lib/walletStore';
 
@@ -74,6 +76,11 @@ export default function RevealSecretScreen({ onClose }: { onClose: () => void })
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /* L3 (v0.5.0-fix): a copied secret must not sit on the
+   * clipboard forever — 60 s after a copy, the clipboard is
+   * overwritten with an empty string (while the app lives;
+   * the copy feedback says so). */
+  const clipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const wipe = useCallback(() => {
     setSecretText(null);
@@ -81,11 +88,13 @@ export default function RevealSecretScreen({ onClose }: { onClose: () => void })
     setPw('');
     setPw2('');
     if (hideTimer.current) clearTimeout(hideTimer.current);
+    if (clipTimer.current) clearTimeout(clipTimer.current);
   }, []);
 
   useEffect(() => {
     return () => {
       if (hideTimer.current) clearTimeout(hideTimer.current);
+      if (clipTimer.current) clearTimeout(clipTimer.current);
     };
   }, []);
 
@@ -148,7 +157,10 @@ export default function RevealSecretScreen({ onClose }: { onClose: () => void })
     setErr('');
     try {
       const loaded = await gatedReveal(
-        () => verifyPassword(password),
+        // Throttled like the unlock prompt (audit M3): this
+        // gate guards the raw secret, so it gets the same
+        // progressive delay on repeated failures.
+        () => verifyPasswordThrottled(password),
         () => loadWalletSecret(wallet.address),
       );
       if (!loaded) {
@@ -199,7 +211,15 @@ export default function RevealSecretScreen({ onClose }: { onClose: () => void })
     if (!revealed || !secretText) return;
     await Clipboard.setStringAsync(secretText);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(false), 4000);
+    /* L3: schedule the clipboard clear — a fresh copy
+     * re-arms it, so the 60 s always runs from the LAST
+     * copy. Best-effort: if the app is gone by then, the OS
+     * owns the clipboard. */
+    if (clipTimer.current) clearTimeout(clipTimer.current);
+    clipTimer.current = setTimeout(() => {
+      void Clipboard.setStringAsync('');
+    }, 60_000);
   };
 
   const close = () => {
