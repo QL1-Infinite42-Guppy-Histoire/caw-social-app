@@ -1,7 +1,6 @@
 import { CAT42, O_TOKEN } from '../config';
 import type { AppContextValue } from '../context/AppContext';
 import {
-  invalidateFeedHead,
   nameOwner,
   nameOwnerAlt,
   type TimelineItem,
@@ -36,9 +35,6 @@ import {
   signerForHsChain,
   submitAction,
 } from './wallet';
-import { noteOwnPost } from './feedSync';
-import { xMirrorStore } from './stores';
-import { POST_COST_RAW, type XPost } from './xmirror';
 
 /**
  * Shared "confirm → authenticate → sign & submit" flow for
@@ -143,71 +139,6 @@ export async function performAction(
   }
 
   return submitAction(secret.kind, secret.secret, action);
-}
-
-/**
- * X mirror engraving (v0.5.0-x): post an X post's text on CAW
- * as a NORMAL post — the same kind-0 action the composer
- * sends, through the same standard sign flow (requireAuth →
- * getSecret → submitAction, whose pre-sign ownership proof
- * applies unchanged). Nothing here can run unattended: every
- * engraving starts from the user's tap on the confirmation
- * sheet.
- *
- * Guards, all BEFORE anything is signed:
- *  - the X post must not already be engraved
- *    (Error('already-engraved')) — the mapping in
- *    xMirrorStore is the source of truth;
- *  - the acting name's deposited balance is re-read fresh
- *    (refreshMyTokens) and short of the normal post cost is
- *    a hard stop (Error('shortfall'), the balance attached
- *    as `balance`) — the same shortfall shape the tip and
- *    SuperLike flows use.
- *
- * The text is the X post's text EXACTLY — no marker, no
- * suffix, no link added. On success the mapping is recorded
- * (only after submitAction's receipt) and the feed head is
- * reconciled exactly like a composed post.
- */
-export async function performMirrorPost(
-  app: AppContextValue,
-  args: { post: XPost },
-): Promise<{ hash: string; cawId: string }> {
-  const acting =
-    app.myTokens.find((t) => t.id === app.actingId) ?? app.myTokens[0];
-  if (!acting) throw new Error('need-name');
-  if (!app.address) throw new Error('locked');
-  if (xMirrorStore.has(args.post.id)) {
-    throw new Error('already-engraved');
-  }
-  const fresh = await app.refreshMyTokens().catch(() => app.myTokens);
-  const me = fresh.find((t) => t.id === acting.id) ?? acting;
-  if (me.balance < POST_COST_RAW) {
-    throw Object.assign(new Error('shortfall'), { balance: me.balance });
-  }
-
-  const ok = await app.requireAuth();
-  if (!ok) throw new Error('auth');
-
-  const secret = app.getSecret();
-  if (!secret) throw new Error('locked');
-
-  const cawId = await randomCawId();
-  const action: CawAction = {
-    type: 0,
-    senderId: acting.id,
-    receiverId: 0n,
-    ts: nowSec(),
-    sender: app.address,
-    cawId,
-    text: args.post.text,
-  };
-  const hash = await submitAction(secret.kind, secret.secret, action);
-  await xMirrorStore.record(args.post.id, cawId);
-  invalidateFeedHead();
-  noteOwnPost({ ...action, hash, blockTs: new Date().toISOString() });
-  app.refreshBalances().catch(() => {});
-  return { hash, cawId };
 }
 
 /**

@@ -1,7 +1,7 @@
 {
   "expo": {
     "android": {
-      "versionCode": 37,
+      "versionCode": 38,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -40,14 +40,6 @@
         "expo-image-picker",
         {
           "photosPermission": "CAW Social uses a picture you choose as your profile picture, stored only on this phone."
-        }
-      ],
-      "expo-web-browser",
-      [
-        "expo-notifications",
-        {
-          "color": "#e8590c",
-          "defaultChannel": "default"
         }
       ],
       "./plugins/withAllowBackupFalse.js"

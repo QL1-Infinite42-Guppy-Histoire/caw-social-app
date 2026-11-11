@@ -10,7 +10,6 @@ import { XFlowStore } from './exchangeFlows';
 import { HuntersFlowStore } from './flows';
 import { MyActionStore, type KVStorage } from './myActions';
 import { ProfileCustomStore } from './profileCustom';
-import { XMirrorStore } from './xMirrorStore';
 
 export const storeKV: KVStorage = {
   getItem: (k: string) => AsyncStorage.getItem(k),
@@ -26,5 +25,3 @@ export const huntersSellFlowStore = new HuntersFlowStore(
 export const addressBookStore = new AddressBookStore();
 /** The one in-progress HuntersExchange deposit/withdraw flow. */
 export const xFlowStore = new XFlowStore();
-/** X mirror: X post id → cawId for everything already engraved. */
-export const xMirrorStore = new XMirrorStore();

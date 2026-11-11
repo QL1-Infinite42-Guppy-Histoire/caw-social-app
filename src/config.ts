@@ -37,17 +37,6 @@ export const CAW_ACTIONS = '0x95c2AFEc2dE8b09323Cdc7E40Bcce42C3C49E496';
  * on the user's domain purchase (pending, 2026-11-10).
  */
 export const EXCHANGE_SERVER_URL = '';
-/**
- * X mirror notification server base URL (v0.5.0-x). The SAME
- * worker/ package as the order server, extended with a cron
- * poller: it watches the linked X account (read-only token)
- * and pushes a notification when a new post appears. EMPTY
- * until the user's Worker is deployed and its URL is filled
- * in here — mirroring itself (detection when the app opens +
- * one-tap engraving) never depends on this server. See
- * worker/README.md.
- */
-export const X_MIRROR_SERVER_URL = '';
 export const MINTER = '0xFC2f8743E3b09a6c973B114c3a082433e974eD9f';
 export const QCAW = '0xd2140E16aDf37194036865E90BbCA1139b739d0D';
 /** CAT42 on 42 Chain (18 decimals) — the SuperLike currency.

@@ -12,7 +12,6 @@ import {
   View,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import * as Notifications from 'expo-notifications';
 import { StatusBar } from 'expo-status-bar';
 import {
   SafeAreaProvider,
@@ -42,24 +41,11 @@ import MyNamesScreen from './src/screens/MyNamesScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ComposeScreen from './src/screens/ComposeScreen';
-import XMirrScreen from './src/screens/XMirrorScreen';
 import PostDetailScreen from './src/screens/PostDetailScreen';
 import { HuntersSwapModal } from './src/screens/HuntersSwapScreen';
 import InboxScreen from './src/screens/InboxScreen';
 import { loadSeen, scanReactions } from './src/lib/inbox';
 import { storeKV } from './src/lib/stores';
-
-/* X mirror notifications (v0.5.0-x): foreground arrivals show
- * as a banner too — tapping one (or its 刻む action) opens the
- * mirror screen on that post's confirmation sheet. */
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-  }),
-});
 
 function LangToggle() {
   const { lang, changeLang } = useApp();
@@ -439,50 +425,7 @@ function Main() {
     closeCompose,
     postDetail,
     closePost,
-    mirrorOpen,
-    mirrorFocusId,
-    openMirror,
-    closeMirror,
   } = app;
-
-  /* X mirror deep link (v0.5.0-x): a tap on a new-post
-   * notification — the banner itself or its 刻む action button —
-   * opens the mirror screen with that post's confirmation
-   * sheet in front. The notification category (which gives the
-   * notification its action button) is (re)registered when the
-   * language changes so the button speaks the current one. The
-   * payload carries only the X post id + a text preview; the
-   * engraving itself still needs the normal unlock + sign
-   * flow — Main only exists once the app is unlocked, so a
-   * cold start from a notification lands here right after the
-   * unlock screen. */
-  useEffect(() => {
-    Notifications.setNotificationCategoryAsync('xmirror', [
-      {
-        identifier: 'engrave',
-        buttonTitle: tr('xpush.action'),
-        options: { opensAppToForeground: true },
-      },
-    ]).catch(() => {});
-    const openFromResponse = (
-      resp: Notifications.NotificationResponse | null,
-    ) => {
-      const data = resp?.notification.request.content.data as
-        | { xPostId?: unknown }
-        | undefined;
-      if (data && typeof data.xPostId === 'string' && data.xPostId) {
-        openMirror(data.xPostId);
-      }
-    };
-    const sub = Notifications.addNotificationResponseReceivedListener(
-      openFromResponse,
-    );
-    Notifications.getLastNotificationResponseAsync()
-      .then(openFromResponse)
-      .catch(() => {});
-    return () => sub.remove();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [app.lang]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -492,10 +435,6 @@ function Main() {
       }
       if (hsOpen) {
         setHsOpen(false);
-        return true;
-      }
-      if (mirrorOpen) {
-        closeMirror();
         return true;
       }
       if (composeOpen) {
@@ -513,7 +452,7 @@ function Main() {
       return false;
     });
     return () => sub.remove();
-  }, [cardOpen, hsOpen, composeOpen, mirrorOpen, profileName, postDetail, closeCompose, closeMirror, closeProfile, closePost]);
+  }, [cardOpen, hsOpen, composeOpen, profileName, postDetail, closeCompose, closeProfile, closePost]);
 
   // Navigating anywhere closes the name card (v0.4.5).
   useEffect(() => {
@@ -697,13 +636,6 @@ function Main() {
         onRequestClose={closeCompose}
       >
         <ComposeScreen onClose={closeCompose} />
-      </Modal>
-      <Modal
-        visible={mirrorOpen}
-        animationType="slide"
-        onRequestClose={closeMirror}
-      >
-        <XMirrScreen onClose={closeMirror} focusPostId={mirrorFocusId} />
       </Modal>
     </SafeAreaView>
   );

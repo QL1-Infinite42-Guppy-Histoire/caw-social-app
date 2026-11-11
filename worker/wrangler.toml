@@ -10,14 +10,6 @@ name = "huntersexchange-orders"
 main = "dist/worker.js"
 compatibility_date = "2024-11-01"
 
-# X mirror (v0.5.0-x): the cron trigger drives the new-post
-# poller (see worker.js `scheduled`). Every 15 minutes it
-# checks each registered X account once and pushes a
-# notification for each new post. The in-app detection path
-# does not depend on this trigger.
-[triggers]
-crons = ["*/15 * * * *"]
-
 [[kv_namespaces]]
 binding = "HX_KV"
 id = "REPLACE_WITH_KV_NAMESPACE_ID"
