@@ -14,9 +14,9 @@ https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.4.9** — released 2026-11-10.
+- **現在版 / Current: v0.5.0** — released 2026-11-11.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.4.9/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.5.0/caw-social.apk
   v0.4.9 changes the SuperLike price (user decision):
   one SuperLike now costs **1,000 CAT42 in total — 500 to
   the post's author and 500 burned** — sent as two transfers
