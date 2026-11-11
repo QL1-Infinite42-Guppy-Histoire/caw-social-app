@@ -168,6 +168,11 @@ export interface AppContextValue {
   closeCompose: () => void;
   /* password prompt plumbing (rendered by App) */
   pwPrompt: PwPromptState | null;
+  /** True while a prompt answer is being verified (v0.5.1,
+   *  F1). The prompt stays mounted with a busy state during
+   *  the scrypt verify, so the wait never looks like a frozen
+   *  screen. */
+  pwBusy: boolean;
   answerPwPrompt: (password: string | null) => Promise<void>;
   onWalletDeleted: () => void;
 }
@@ -215,6 +220,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [wallets, setWallets] = useState<WalletPublicInfo[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
   const [pwPrompt, setPwPrompt] = useState<PwPromptState | null>(null);
+  const [pwBusy, setPwBusy] = useState(false);
+  /** Synchronous twin of pwBusy: answerPwPrompt must refuse a
+   *  second answer while a verify is in flight, and state
+   *  alone cannot say so inside the same tick. */
+  const pwBusyRef = useRef(false);
   const [, setStoreTick] = useState(0);
   const secretRef = useRef<WalletSecretLoaded | null>(null);
   const addressRef = useRef<string | null>(null);
@@ -268,7 +278,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
-        const savedLang = await AsyncStorage.getItem(LANG_KEY);
+        // v0.5.1 (F5): these three reads are independent — the
+        // saved language (AsyncStorage), the active wallet's
+        // public info and the unlock method (unrelated
+        // SecureStore keys) — so they run as ONE parallel batch
+        // instead of the old sequential chain. Their results
+        // are applied in the original order below, so nothing
+        // downstream can observe a different sequence.
+        const [savedLang, info, method] = await Promise.all([
+          AsyncStorage.getItem(LANG_KEY),
+          getWalletPublicInfo(),
+          getUnlockMethod(),
+        ]);
         if (isLang(savedLang)) {
           setLang(savedLang);
           setLangState(savedLang);
@@ -282,12 +303,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
           // English UI.
           applyLayoutDirection(getLang());
         }
-        const info = await getWalletPublicInfo();
         if (info) {
           setHasWallet(true);
           setAddress(info.address);
           addressRef.current = info.address;
-          setUnlockMethod(await getUnlockMethod());
+          setUnlockMethod(method);
+          // ORDERED on purpose: the wallet LIST re-reads the
+          // registry that the migration inside
+          // getWalletPublicInfo may have just rewritten, so it
+          // stays after it (once migrated it costs one read).
           setWallets(await listWallets());
         } else {
           setLocked(false); // nothing to unlock — onboarding shows
@@ -429,16 +453,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const answerPwPrompt = useCallback(
     async (password: string | null) => {
       const prompt = pwPrompt;
-      setPwPrompt(null);
-      if (!prompt) return;
+      if (!prompt || pwBusyRef.current) return;
       if (password === null) {
+        setPwPrompt(null);
         prompt.resolve(false);
         return;
       }
-      // Throttled verify (v0.5.0-fix, audit M3): consecutive
-      // failures impose a progressive, persisted delay, so
-      // the prompt cannot be used to guess at speed.
-      prompt.resolve(await verifyPasswordThrottled(password));
+      // v0.5.1 (F1): the prompt now STAYS mounted while the
+      // verify runs, flagged busy. v0.5.0 closed the sheet
+      // first and awaited afterwards, so the scrypt verify's
+      // ~0.5–2 s on device read as a frozen screen. Only the
+      // presentation of the wait changed — the verification
+      // itself (and its outcome) is exactly as before.
+      pwBusyRef.current = true;
+      setPwBusy(true);
+      try {
+        // Throttled verify (v0.5.0-fix, audit M3): consecutive
+        // failures impose a progressive, persisted delay, so
+        // the prompt cannot be used to guess at speed.
+        prompt.resolve(await verifyPasswordThrottled(password));
+      } finally {
+        pwBusyRef.current = false;
+        setPwBusy(false);
+        setPwPrompt(null);
+      }
     },
     [pwPrompt],
   );
@@ -714,6 +752,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     openCompose,
     closeCompose,
     pwPrompt,
+    pwBusy,
     answerPwPrompt,
     onWalletDeleted,
   };

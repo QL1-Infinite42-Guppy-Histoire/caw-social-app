@@ -1672,9 +1672,14 @@ export function TipSheet({
 /* ---------- password prompt (for the password unlock method) ---------- */
 export function PasswordPrompt({
   visible,
+  busy = false,
   onAnswer,
 }: {
   visible: boolean;
+  /** v0.5.1 (F1): true while the entered password is being
+   *  verified — the sheet stays up with a spinner and locked
+   *  controls instead of vanishing into a frozen screen. */
+  busy?: boolean;
   onAnswer: (password: string | null) => void;
 }) {
   const insets = useSafeAreaInsets();
@@ -1694,16 +1699,27 @@ export function PasswordPrompt({
             onChangeText={setPw}
             placeholder={tr('unlock.pwPh')}
             autoFocus
+            editable={!busy}
           />
           <View style={{ height: 14 }} />
           <Pressable
-            style={S.bigBtn}
+            style={[S.bigBtn, busy && S.disabled]}
+            disabled={busy}
             onPress={() => onAnswer(pw)}
           >
-            <Text style={S.bigBtnText}>OK</Text>
+            {busy ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={S.bigBtnText}>OK</Text>
+            )}
           </Pressable>
+          {busy ? (
+            <Text style={[S.small, { marginTop: 10, textAlign: 'center' }]}>
+              {tr('unlock.checking')}
+            </Text>
+          ) : null}
           <View style={{ height: 10 }} />
-          <Pressable style={S.ghostBtn} onPress={() => onAnswer(null)}>
+          <Pressable style={S.ghostBtn} disabled={busy} onPress={() => onAnswer(null)}>
             <Text style={S.ghostBtnText}>{tr('settings.cancel')}</Text>
           </Pressable>
         </View>

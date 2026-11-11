@@ -133,9 +133,14 @@ export default function TimelineScreen() {
   }, []);
 
   useEffect(() => {
+    // v0.5.1 (F4): the feed's first page is issued FIRST, so
+    // it never queues behind name enumeration on the shared
+    // RPC endpoints. Balances and names start right after,
+    // unchanged — names still paint snapshot-first and finish
+    // in the background; only the issuance order moved.
+    loadFirst();
     app.refreshBalances().catch(() => {});
     app.refreshMyTokens().catch(() => {});
-    loadFirst();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadFirst]);
 

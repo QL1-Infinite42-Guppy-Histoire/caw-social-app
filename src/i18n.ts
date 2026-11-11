@@ -130,6 +130,7 @@ const EN = {
   'unlock.open': 'Open',
   'unlock.wrong': 'That password is not right.',
   'unlock.bio': 'Use fingerprint / face',
+  'unlock.checking': 'Checking…',
 
   'auth.reason': 'To open CAW Social',
   'auth.signReason': 'To OK this action',
@@ -644,6 +645,7 @@ const JA: Dict = {
   'unlock.open': '開く',
   'unlock.wrong': 'パスワードが違います。',
   'unlock.bio': '指紋・顔で開く',
+  'unlock.checking': '確認しています…',
 
   'auth.reason': 'CAW Social を開くため',
   'auth.signReason': 'この操作の確認のため',
@@ -1152,6 +1154,7 @@ const ZH: Dict = {
   'unlock.open': '打开',
   'unlock.wrong': '密码不对。',
   'unlock.bio': '用指纹 / 人脸打开',
+  'unlock.checking': '正在确认…',
 
   'auth.reason': '为了打开 CAW Social',
   'auth.signReason': '为了确认这个操作',
@@ -1657,6 +1660,7 @@ const KO: Dict = {
   'unlock.open': '열기',
   'unlock.wrong': '비밀번호가 다릅니다.',
   'unlock.bio': '지문 / 얼굴로 열기',
+  'unlock.checking': '확인 중…',
 
   'auth.reason': 'CAW Social을 열기 위해',
   'auth.signReason': '이 작업을 확인하기 위해',
@@ -2165,6 +2169,7 @@ const ES: Dict = {
   'unlock.open': 'Abrir',
   'unlock.wrong': 'Esa contraseña no es correcta.',
   'unlock.bio': 'Usar huella / rostro',
+  'unlock.checking': 'Comprobando…',
 
   'auth.reason': 'Para abrir CAW Social',
   'auth.signReason': 'Para confirmar esta acción',
@@ -2671,6 +2676,7 @@ const TR = {
   'unlock.open': 'Aç',
   'unlock.wrong': 'Bu parola doğru değil.',
   'unlock.bio': 'Parmak izi / yüz kullan',
+  'unlock.checking': 'Kontrol ediliyor…',
   'auth.reason': 'CAW Social\'i açmak için',
   'auth.signReason': 'Bu işlemi onaylamak için',
   'home.qom': 'QOM (küçük ücretler için)',
@@ -3155,6 +3161,7 @@ const FA = {
   'unlock.open': 'باز کن',
   'unlock.wrong': 'این گذرواژه درست نیست.',
   'unlock.bio': 'از اثر انگشت / چهره استفاده کن',
+  'unlock.checking': 'در حال بررسی…',
   'auth.reason': 'برای باز کردن CAW Social',
   'auth.signReason': 'برای تأیید این کار',
   'home.qom': 'QOM (برای کارمزدهای کوچک)',
@@ -3639,6 +3646,7 @@ const ID: Dict = {
   'unlock.open': "Buka",
   'unlock.wrong': "Kata sandinya tidak benar.",
   'unlock.bio': "Pakai sidik jari / wajah",
+  'unlock.checking': "Memeriksa…",
   'auth.reason': "Untuk membuka CAW Social",
   'auth.signReason': "Untuk menyetujui tindakan ini",
   'home.qom': "QOM (untuk biaya kecil)",
@@ -4122,6 +4130,7 @@ const VI: Dict = {
   'unlock.open': "Mở",
   'unlock.wrong': "Mật khẩu đó không đúng.",
   'unlock.bio': "Dùng vân tay / khuôn mặt",
+  'unlock.checking': "Đang kiểm tra…",
   'auth.reason': "Để mở CAW Social",
   'auth.signReason': "Để đồng ý hành động này",
   'home.qom': "QOM (cho các phí nhỏ)",
@@ -4605,6 +4614,7 @@ const PT: Dict = {
   'unlock.open': "Abrir",
   'unlock.wrong': "Essa senha não está certa.",
   'unlock.bio': "Usar digital / rosto",
+  'unlock.checking': "Verificando…",
   'auth.reason': "Para abrir o CAW Social",
   'auth.signReason': "Para aprovar esta ação",
   'home.qom': "QOM (para taxas pequenas)",
@@ -5088,6 +5098,7 @@ const NL: Dict = {
   'unlock.open': "Openen",
   'unlock.wrong': "Dat wachtwoord klopt niet.",
   'unlock.bio': "Gebruik vingerafdruk / gezicht",
+  'unlock.checking': "Controleren…",
   'auth.reason': "Om CAW Social te openen",
   'auth.signReason': "Om deze actie goed te keuren",
   'home.qom': "QOM (voor kleine kosten)",
@@ -5571,6 +5582,7 @@ const HI: Dict = {
   'unlock.open': "खोलें",
   'unlock.wrong': "वह पासवर्ड सही नहीं है।",
   'unlock.bio': "फ़िंगरप्रिंट / चेहरा उपयोग करें",
+  'unlock.checking': "जाँच हो रही है…",
   'auth.reason': "CAW Social खोलने के लिए",
   'auth.signReason': "इस कार्य को स्वीकृति देने के लिए",
   'home.qom': "QOM (छोटी फ़ीस के लिए)",
@@ -6054,6 +6066,7 @@ const FR: Dict = {
   'unlock.open': "Ouvrir",
   'unlock.wrong': "Ce mot de passe n’est pas juste.",
   'unlock.bio': "Utiliser empreinte / visage",
+  'unlock.checking': "Vérification…",
   'auth.reason': "Pour ouvrir CAW Social",
   'auth.signReason': "Pour valider cette action",
   'home.qom': "QOM (pour les petits frais)",
@@ -6540,6 +6553,7 @@ const TH: Dict = {
   'unlock.open': 'เปิด',
   'unlock.wrong': 'รหัสผ่านนั้นไม่ถูกต้อง',
   'unlock.bio': 'ใช้ลายนิ้วมือ / ใบหน้า',
+  'unlock.checking': 'กำลังตรวจสอบ…',
 
   'auth.reason': 'เพื่อเปิด CAW Social',
   'auth.signReason': 'เพื่อยืนยันการกระทำนี้',
@@ -7058,6 +7072,7 @@ const IT: Dict = {
   'unlock.open': 'Apri',
   'unlock.wrong': 'Quella password non è giusta.',
   'unlock.bio': 'Usa impronta / volto',
+  'unlock.checking': 'Verifica in corso…',
 
   'auth.reason': 'Per aprire CAW Social',
   'auth.signReason': 'Per confermare questa azione',
@@ -7576,6 +7591,7 @@ const PL: Dict = {
   'unlock.open': 'Otwórz',
   'unlock.wrong': 'To hasło nie jest dobre.',
   'unlock.bio': 'Użyj odcisku palca / twarzy',
+  'unlock.checking': 'Sprawdzanie…',
 
   'auth.reason': 'Aby otworzyć CAW Social',
   'auth.signReason': 'Aby potwierdzić tę czynność',
@@ -8094,6 +8110,7 @@ const UK: Dict = {
   'unlock.open': 'Відкрити',
   'unlock.wrong': 'Цей пароль неправильний.',
   'unlock.bio': 'Використати відбиток пальця / обличчя',
+  'unlock.checking': 'Перевірка…',
 
   'auth.reason': 'Щоб відкрити CAW Social',
   'auth.signReason': 'Щоб підтвердити цю дію',
@@ -8612,6 +8629,7 @@ const DE: Dict = {
   'unlock.open': 'Öffnen',
   'unlock.wrong': 'Dieses Passwort ist nicht richtig.',
   'unlock.bio': 'Fingerabdruck / Gesicht nutzen',
+  'unlock.checking': 'Wird geprüft…',
 
   'auth.reason': 'Um CAW Social zu öffnen',
   'auth.signReason': 'Um diese Aktion zu bestätigen',
@@ -9130,6 +9148,7 @@ const RU: Dict = {
   'unlock.open': 'Открыть',
   'unlock.wrong': 'Этот пароль неправильный.',
   'unlock.bio': 'Использовать отпечаток пальца / лицо',
+  'unlock.checking': 'Проверка…',
 
   'auth.reason': 'Чтобы открыть CAW Social',
   'auth.signReason': 'Чтобы подтвердить это действие',
@@ -9648,6 +9667,7 @@ const AR: Dict = {
   'unlock.open': 'افتح',
   'unlock.wrong': 'كلمة المرور تلك غير صحيحة.',
   'unlock.bio': 'استخدم بصمة الإصبع / الوجه',
+  'unlock.checking': 'جارٍ التحقق…',
 
   'auth.reason': 'لفتح CAW Social',
   'auth.signReason': 'لتأكيد هذا الإجراء',

@@ -665,6 +665,7 @@ function Shell() {
       {content}
       <PasswordPrompt
         visible={!!app.pwPrompt}
+        busy={app.pwBusy}
         onAnswer={(pw) => {
           app.answerPwPrompt(pw);
         }}

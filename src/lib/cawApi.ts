@@ -654,16 +654,18 @@ export interface TokenBalance {
   decimals: number;
 }
 
-export async function walletBalances(
-  address: string,
-): Promise<{
+export interface WalletBalances {
   qom: bigint | null;
   qcaw: bigint | null;
   f42: bigint | null;
   cat42: bigint | null;
   oTok: TokenBalance | null;
   ket: TokenBalance | null;
-}> {
+}
+
+async function fetchWalletBalances(
+  address: string,
+): Promise<WalletBalances> {
   // A field is null when its read never succeeded — the caller
   // keeps whatever it already shows (or the honest "—" before the
   // first read). v0.4.7: the pre-fix version caught failures into
@@ -730,6 +732,31 @@ export async function walletBalances(
     token42(KET42),
   ]);
   return { qom, qcaw, f42, cat42, oTok, ket };
+}
+
+/* In-flight dedupe (v0.5.1, F2): unlock and the timeline
+ * mount both fire refreshBalances at startup, which used to
+ * run this 8-RPC set TWICE in parallel competition. Concurrent
+ * calls for the same address now share the one in-flight
+ * fetch. The entry is dropped the moment the fetch settles,
+ * so this is NOT a result cache: the next explicit refresh
+ * always reads fresh values, exactly as before. The promise
+ * never rejects (every field resolves null on failure inside
+ * fetchWalletBalances), and each field keeps its own
+ * success/failure — sharing the fetch cannot turn one token's
+ * failed read into another token's value. */
+const balancesInFlight = new Map<string, Promise<WalletBalances>>();
+export function walletBalances(address: string): Promise<WalletBalances> {
+  const key = address.toLowerCase();
+  const hit = balancesInFlight.get(key);
+  if (hit) return hit;
+  const p = fetchWalletBalances(address);
+  balancesInFlight.set(key, p);
+  const evict = () => {
+    if (balancesInFlight.get(key) === p) balancesInFlight.delete(key);
+  };
+  p.then(evict, evict);
+  return p;
 }
 
 export const followerCount = (id: bigint): Promise<bigint> =>

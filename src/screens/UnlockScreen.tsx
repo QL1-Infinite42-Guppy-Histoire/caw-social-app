@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useApp } from '../context/AppContext';
@@ -10,12 +10,27 @@ export default function UnlockScreen() {
   const app = useApp();
   const [failed, setFailed] = useState(false);
   const [tried, setTried] = useState(false);
+  /* v0.5.1 (F1): busy feedback while unlock runs — the
+   * scrypt verify behind the password prompt takes ~0.5–2 s
+   * on device, and with no spinner the screen read as frozen.
+   * The ref guards re-entry inside the same tick (the mount
+   * auto-attempt plus a fast double tap). */
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
 
   const attempt = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
     setFailed(false);
-    const ok = await app.unlock();
-    setTried(true);
-    if (!ok) setFailed(true);
+    try {
+      const ok = await app.unlock();
+      setTried(true);
+      if (!ok) setFailed(true);
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -39,11 +54,22 @@ export default function UnlockScreen() {
         </Text>
       ) : null}
       <View style={{ height: 22 }} />
-      <Pressable style={[S.bigBtn, { alignSelf: 'stretch' }]} onPress={attempt}>
-        <Text style={S.bigBtnText}>
-          {app.unlockMethod === 'password' ? tr('unlock.open') : tr('unlock.bio')}
-        </Text>
+      <Pressable
+        style={[S.bigBtn, { alignSelf: 'stretch' }, busy && S.disabled]}
+        disabled={busy}
+        onPress={attempt}
+      >
+        {busy ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={S.bigBtnText}>
+            {app.unlockMethod === 'password' ? tr('unlock.open') : tr('unlock.bio')}
+          </Text>
+        )}
       </Pressable>
+      {busy ? (
+        <Text style={[S.small, { marginTop: 12 }]}>{tr('unlock.checking')}</Text>
+      ) : null}
       {failed && app.unlockMethod === 'password' ? (
         <Text style={[S.err, { marginTop: 12 }]}>{tr('unlock.wrong')}</Text>
       ) : null}

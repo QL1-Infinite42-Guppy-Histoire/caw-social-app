@@ -316,11 +316,20 @@ try {
   const tlSrc = readFileSync(ROOT + 'src/screens/TimelineScreen.tsx', 'utf8');
   const appSrc = readFileSync(ROOT + 'App.tsx', 'utf8');
 
-  const wbAt = apiSrc.indexOf('export async function walletBalances');
+  // v0.5.1 (F2): walletBalances is now an in-flight dedupe
+  // wrapper; the fetch lives in fetchWalletBalances and the
+  // field types in the WalletBalances interface. The pins
+  // below follow the code to its new home, unchanged in what
+  // they demand.
+  const wbAt = apiSrc.indexOf('async function fetchWalletBalances');
   const wbEnd = apiSrc.indexOf('export const followerCount');
   const wbRegion = apiSrc.slice(wbAt, wbEnd > wbAt ? wbEnd : wbAt + 1400);
+  const wbTypes = apiSrc.slice(
+    apiSrc.indexOf('export interface WalletBalances'),
+    wbAt,
+  );
   check('v0.4.7: walletBalances types its fields bigint | null (null = no successful read)',
-    /Promise<\{\s*qom: bigint \| null;\s*qcaw: bigint \| null;/.test(wbRegion));
+    /\{\s*qom: bigint \| null;\s*qcaw: bigint \| null;/.test(wbTypes));
   check('v0.4.7: walletBalances never converts a failed read into 0n',
     wbAt >= 0 && !/catch\(\(\) => 0n\)/.test(wbRegion) &&
     /catch\(\(\) => null\)/.test(wbRegion));
@@ -399,11 +408,15 @@ try {
   const i18nSrc = readFileSync(ROOT + 'src/i18n.ts', 'utf8');
   const uiSrc = readFileSync(ROOT + 'src/components/ui.tsx', 'utf8');
 
-  const wbAt = apiSrc.indexOf('export async function walletBalances');
+  const wbAt = apiSrc.indexOf('async function fetchWalletBalances');
   const wbEnd = apiSrc.indexOf('export const followerCount');
   const wbRegion = apiSrc.slice(wbAt, wbEnd > wbAt ? wbEnd : wbAt + 3200);
+  const wbTypes = apiSrc.slice(
+    apiSrc.indexOf('export interface WalletBalances'),
+    wbAt,
+  );
   check('v0.4.8: walletBalances types the 42 Chain fields bigint | null',
-    /f42: bigint \| null;\s*cat42: bigint \| null;/.test(wbRegion));
+    /f42: bigint \| null;\s*cat42: bigint \| null;/.test(wbTypes));
   check('v0.4.8: [42] is a native eth_getBalance over the 42 Chain RPC helper',
     /rpc42\('eth_getBalance'/.test(wbRegion));
   check('v0.4.8: CAT42 is an ERC-20 balanceOf over the 42 Chain call helper',
