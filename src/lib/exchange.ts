@@ -320,6 +320,47 @@ export function exchangeAddressSync(): string | null {
   return hxAddressCache;
 }
 
+/* ---------------- order nonces (audit L5) ----------------
+ * An order nonce used to be a bare Date.now() — two orders
+ * drafted inside the same millisecond collided and the
+ * contract rejected one. The nonce is now the timestamp
+ * combined with a PERSISTED per-account monotonic counter
+ * (and a session-level last-value guard), so no two orders
+ * from an account ever share one, even under a frozen or
+ * backwards clock. Stored orders carry the nonce as a plain
+ * decimal string either way — old (bare-timestamp) and new
+ * values deserialize identically. */
+
+export function combineOrderNonce(nowMs: number, counter: number): string {
+  const c = Number.isFinite(counter) && counter > 0 ? Math.floor(counter) : 0;
+  return (BigInt(nowMs) * 1_000_000n + BigInt(c % 1_000_000)).toString();
+}
+
+const HX_NONCE_KEY = 'caw-hx-nonce-v1';
+const hxNonceLast = new Map<string, bigint>();
+
+/** The next order nonce for an account: strictly greater
+ *  than every nonce this device has issued for it. */
+export async function nextOrderNonce(address: string): Promise<string> {
+  const key = HX_NONCE_KEY + '-' + address.toLowerCase();
+  let counter = 0;
+  if (hxKv) {
+    try {
+      const raw = await hxKv.getItem(key);
+      const prev = raw ? Number.parseInt(raw, 10) : 0;
+      counter = (Number.isFinite(prev) && prev > 0 ? prev : 0) + 1;
+      await hxKv.setItem(key, String(counter));
+    } catch {
+      counter = Date.now() % 1_000_000;
+    }
+  }
+  let candidate = BigInt(combineOrderNonce(Date.now(), counter));
+  const last = hxNonceLast.get(key);
+  if (last !== undefined && candidate <= last) candidate = last + 1n;
+  hxNonceLast.set(key, candidate);
+  return candidate.toString();
+}
+
 /* ---------------- on-chain reads / validation ---------------- */
 
 const hxIface = new Interface(EXCHANGE_ABI as unknown as any[]);

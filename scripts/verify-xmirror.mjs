@@ -639,5 +639,128 @@ const PAGE2 = {
   }
 }
 
+/* ================= §6 v0.5.0-fix: M5 endpoint auth, L4 ================= */
+{
+  const read = (p) => readFileSync(ROOT + '/' + p, 'utf8');
+  const SECRET = 'a1b2c3d4'.repeat(8); // 64 hex chars
+  const SECRET2 = 'e5f6a7b8'.repeat(8);
+  const body = { xUserId: '123456' };
+
+  /* planRegistration: token proof is mandatory, always. */
+  ok(
+    WX.planRegistration(null, body, null, SECRET).ok === false,
+    'M5: register with an UNVALIDATED token is refused (no /users/me answer, no registration)',
+  );
+  ok(
+    WX.planRegistration(null, body, '999999', SECRET).error === 'token-mismatch',
+    'M5: register where the token belongs to a DIFFERENT account is refused',
+  );
+  {
+    const p = WX.planRegistration(null, body, '123456', SECRET);
+    ok(p.ok === true && p.regSecret === SECRET, 'M5: a first registration with a valid token + secret succeeds and stores the secret');
+  }
+  ok(
+    WX.planRegistration(null, body, '123456', 'too-short').ok === false &&
+      WX.planRegistration(null, body, '123456', null).ok === false,
+    'M5: a first registration without a well-formed secret is refused',
+  );
+  {
+    const existing = { xUserId: '123456', regSecret: SECRET };
+    ok(
+      WX.planRegistration(existing, body, '123456', null).ok === false &&
+        WX.planRegistration(existing, body, '123456', SECRET2).ok === false,
+      'M5: overwriting a secret-carrying record without (or with the wrong) secret is refused',
+    );
+    const p = WX.planRegistration(existing, body, '123456', SECRET);
+    ok(p.ok === true && p.regSecret === SECRET, 'M5: overwriting with the record’s own secret succeeds');
+  }
+  {
+    const legacy = { xUserId: '123456' }; // pre-fix record
+    const p = WX.planRegistration(legacy, body, '123456', SECRET2);
+    ok(
+      p.ok === true && p.regSecret === SECRET2,
+      'M5: a legacy (secret-less) record can be re-registered by the token-proven owner and ADOPTS the presented secret',
+    );
+  }
+  ok(
+    WX.planUnregister(null, null).ok === true,
+    'M5: unregistering a non-existent record is an idempotent success',
+  );
+  ok(
+    WX.planUnregister({ xUserId: '123456' }, null).ok === true,
+    'M5: a legacy record unregisters without a secret (the pre-fix window)',
+  );
+  ok(
+    WX.planUnregister({ xUserId: '123456', regSecret: SECRET }, null).ok === false &&
+      WX.planUnregister({ xUserId: '123456', regSecret: SECRET }, SECRET2).ok === false &&
+      WX.planUnregister({ xUserId: '123456', regSecret: SECRET }, SECRET).ok === true,
+    'M5: unregistering a secret-carrying record requires its secret',
+  );
+  ok(
+    WX.isRegSecret(SECRET) && !WX.isRegSecret('zz') && !WX.isRegSecret(42),
+    'M5: the secret shape is pinned (32–128 lowercase hex chars)',
+  );
+
+  /* Worker wiring. */
+  const workerJs = read('worker/worker.js');
+  ok(
+    workerJs.includes('/users/me') &&
+      workerJs.includes('planRegistration') &&
+      workerJs.includes('planUnregister'),
+    'M5 wiring: the Worker validates the token against /2/users/me and decides via the pure plan functions',
+  );
+  ok(
+    workerJs.includes("request.headers.get('x-reg-secret')") &&
+      workerJs.includes('content-type, x-reg-secret') &&
+      workerJs.includes('regSecret: plan.regSecret'),
+    'M5 wiring: the secret arrives as a header, is CORS-allowed, and is stored (never returned)',
+  );
+
+  /* App wiring. */
+  const xc = read('src/lib/xconnect.ts');
+  ok(
+    xc.includes('ensureRegSecret') &&
+      xc.includes("'x-reg-secret': regSecret") &&
+      xc.includes("REG_SECRET_KEY = 'caw-x-regsecret'"),
+    'M5 wiring: the app generates the secret on-device (secure store) and sends it on register',
+  );
+  ok(
+    xc.includes('loadRegSecret') &&
+      xc.includes("'/x/unregister'"),
+    'M5 wiring: unregister presents the stored secret',
+  );
+  const iSave = xc.indexOf('await saveXSession(next)');
+  const iReReg = xc.indexOf('registerPush(next)');
+  ok(
+    iSave > 0 && iReReg > iSave && xc.includes('loadPushRegistration'),
+    'L4 wiring: after an app-side token refresh the fresh pair is re-registered with the Worker',
+  );
+  {
+    // The Worker-side half of L4 is the applyTokenResponse
+    // merge (pinned in §4): a Worker refresh rewrites its
+    // stored pair in place. Re-assert the shape here so the
+    // pair of behaviours is pinned side by side.
+    const sub = { accessToken: 'old-a', refreshToken: 'old-r', expiresAt: 1 };
+    const next = WX.applyTokenResponse(
+      sub,
+      { access_token: 'new-a', refresh_token: 'new-r', expires_in: 7200 },
+      1000,
+    );
+    ok(
+      next !== null && next.accessToken === 'new-a' && next.refreshToken === 'new-r',
+      'L4: a Worker-side refresh updates the stored token pair (both copies converge)',
+    );
+  }
+  try {
+    const bundle = read('worker/dist/worker.js');
+    ok(
+      bundle.includes('/users/me') && bundle.includes('x-reg-secret'),
+      'M5: the built Worker bundle carries the authenticated endpoints',
+    );
+  } catch {
+    ok(false, 'M5: worker bundle missing (the §5 build should have produced it)');
+  }
+}
+
 console.log(`\nxmirror: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -29,6 +29,11 @@
  *    killed app resumes at the first step that has NOT
  *    completed — a confirmed bridge/deposit/withdraw send is
  *    never re-planned;
+ *  - a send that was broadcast but could NOT be confirmed
+ *    is recorded as the step's pendingSend (hash persisted
+ *    at broadcast time, audit M2): re-entering the step
+ *    resolves THAT hash's receipt first and never resends
+ *    blindly — the double-bridge / double-deposit guard;
  *  - bridge arrivals are judged by balance DELTA against the
  *    baseline recorded just before the bridge send
  *    (xArrivalVerdict) — never by the wallet's total;
@@ -42,7 +47,7 @@
  */
 import { Interface, getAddress, zeroPadValue } from 'ethers';
 
-import { DOMAIN_42 } from './chains';
+import { DOMAIN_42, type HsChainKey } from './chains';
 import { expected42Usdt, toTargetUsdtRaw, type TxReq } from './hunters';
 import type { KVStorage } from './myActions';
 
@@ -102,7 +107,101 @@ export interface XFlow {
    *  whose bridgeHash is set NEVER re-plans its bridge step:
    *  the step index has already advanced past it. */
   bridgeHash?: string;
+  /**
+   * A send of the CURRENT step that has been broadcast but
+   * not yet confirmed (v0.5.0-fix, audit M2). Recorded
+   * BEFORE the broadcast (with the step's pre-send baselines)
+   * and completed with the hash the moment the broadcast
+   * returns it — so an app kill, a slow RPC, or a plain
+   * re-tap can never make the step send twice: re-entering
+   * the step looks THIS hash's receipt up FIRST (confirmed →
+   * advance without resending; still pending → wait; only a
+   * definitively-gone send, older than
+   * X_PENDING_RESEND_AFTER_MS with no receipt anywhere, may
+   * be resent). Absent on flows saved before v0.5.0-fix.
+   */
+  pendingSend?: XPendingSend;
+  /**
+   * The pending wait step judges arrival by ANY positive
+   * balance delta over its baseline (v0.5.0-fix, audit L6):
+   * set when the bridge's live fee quote FAILED at send
+   * time, so no honest expected amount exists. An expected
+   * figure computed with a guessed fee of 0 would overstate
+   * the arrival and could pin the wait forever; with the
+   * fee unknown, "something arrived" is the truthful test.
+   */
+  expectDeltaOnly?: boolean;
   savedAt: number;
+}
+
+/**
+ * One broadcast-but-unconfirmed send of an exchange flow
+ * step (audit M2). `sub: 'approve'` marks the step's
+ * allowance sub-send, which is guarded by exactly the same
+ * rule as the step's main send. `legs` is used only by the
+ * bridgeQl1Qom batch: every leg's hash in send order (the
+ * bridge leg is the one whose confirmation advances the
+ * step; earlier legs are idempotent to re-plan).
+ */
+export interface XPendingSend {
+  step: XStepId;
+  sub?: 'approve';
+  chain: HsChainKey;
+  /** The broadcast hash, filled in the moment the broadcast
+   *  returns it. Absent only when the app died mid-broadcast
+   *  before any hash was learned — such a record proves
+   *  nothing was confirmed and is simply dropped. */
+  hash?: string;
+  /** When the pending record was created (ms epoch). */
+  at: number;
+  /** Pre-send baselines / expectations the step's advance
+   *  needs after a receipt-first resolution (captured BEFORE
+   *  the broadcast, so a killed app loses nothing). */
+  base42?: string;
+  baseBsc?: string;
+  baseQl1?: string;
+  expectedBsc?: string;
+  expectDeltaOnly?: boolean;
+  legs?: { kind: string; hash: string }[];
+}
+
+/** How long an unconfirmed send must age, with no receipt
+ *  on any endpoint, before the step may be resent. Generous
+ *  on purpose: QL1/42/BSC congestion resolves far inside it,
+ *  and the resend path re-checks the receipt once more. */
+export const X_PENDING_RESEND_AFTER_MS = 15 * 60 * 1000;
+
+/** A copy of the flow with its pendingSend removed (the send
+ *  resolved one way or another; the record has done its job). */
+export function xClearPending(flow: XFlow): XFlow {
+  if (flow.pendingSend === undefined) return flow;
+  const next = { ...flow };
+  delete next.pendingSend;
+  return next;
+}
+
+/** True when `p` is the pending send of exactly this step
+ *  (and sub-send) — the only record a step entry consults. */
+export function xPendingMatches(
+  flow: XFlow,
+  step: XStepId,
+  sub?: 'approve',
+): XPendingSend | null {
+  const p = flow.pendingSend;
+  if (!p || p.step !== step) return null;
+  if ((p.sub ?? undefined) !== (sub ?? undefined)) return null;
+  return p;
+}
+
+/** A pending send may be replaced by a fresh broadcast only
+ *  when it HAS a hash (a hashless record never proved a
+ *  broadcast), that hash still has no receipt, and the
+ *  record is older than the generous resend window. */
+export function xPendingResendAllowed(
+  p: XPendingSend,
+  now: number,
+): boolean {
+  return !!p.hash && now - p.at >= X_PENDING_RESEND_AFTER_MS;
 }
 
 export const XFLOW_KINDS: XFlowKind[] = [
@@ -222,6 +321,21 @@ export function xArrivalVerdict(
   return nowRaw - baseRaw >= expectedRaw ? 'arrived' : 'pending';
 }
 
+/**
+ * Arrival verdict when the expected amount is UNKNOWN
+ * (audit L6 — the fee quote failed at send time): any
+ * positive delta over the pre-send baseline counts as the
+ * arrival. Used only via XFlow.expectDeltaOnly; the plain
+ * verdict above stays the rule whenever a live quote DID
+ * produce an expectation.
+ */
+export function xArrivalVerdictDeltaOnly(
+  baseRaw: bigint,
+  nowRaw: bigint,
+): 'pending' | 'arrived' {
+  return nowRaw - baseRaw > 0n ? 'arrived' : 'pending';
+}
+
 /** Setup preview for depUsdt from BSC: what should arrive on
  *  42 (the standard −2 USDT arrival deduction). The send
  *  itself re-quotes live. */
@@ -272,6 +386,66 @@ export function serializeXFlow(flow: XFlow): string {
   return JSON.stringify(flow);
 }
 
+const X_STEP_IDS: XStepId[] = [
+  'bridgeIn',
+  'bridgeQl1',
+  'bridgeQl1Qom',
+  'wait42',
+  'deposit',
+  'escrowOut',
+  'bridgeOut',
+  'waitBsc',
+  'deliverQl1',
+  'bridge42Qom',
+  'waitQl1',
+];
+const X_CHAINS: HsChainKey[] = ['bsc', 'ethereum', 'infinite', 'ql1'];
+const HASH_RE = /^0x[0-9a-fA-F]{64}$/;
+
+/**
+ * Validate a stored pendingSend. A malformed one is DROPPED
+ * (undefined) rather than refusing the whole flow: the worst
+ * a dropped record can do is lose the double-send guard for
+ * a send whose evidence was corrupt anyway, while refusing
+ * the flow would strand the user's in-progress deposit.
+ */
+export function sanitizeXPendingSend(
+  raw: unknown,
+  flowSteps: XStepId[],
+): XPendingSend | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const p = raw as XPendingSend;
+  if (!X_STEP_IDS.includes(p.step) || !flowSteps.includes(p.step)) {
+    return undefined;
+  }
+  /* A wait step never sends — a record naming one is corrupt
+   * by construction. */
+  if (xIsWaitStep(p.step)) return undefined;
+  if (p.sub !== undefined && p.sub !== 'approve') return undefined;
+  if (!X_CHAINS.includes(p.chain)) return undefined;
+  if (typeof p.at !== 'number' || !(p.at > 0)) return undefined;
+  if (p.hash !== undefined && !HASH_RE.test(p.hash)) return undefined;
+  for (const k of ['base42', 'baseBsc', 'baseQl1', 'expectedBsc'] as const) {
+    if (p[k] !== undefined && !/^\d+$/.test(p[k] as string)) {
+      return undefined;
+    }
+  }
+  if (p.legs !== undefined) {
+    if (!Array.isArray(p.legs)) return undefined;
+    for (const leg of p.legs) {
+      if (
+        !leg ||
+        typeof leg.kind !== 'string' ||
+        typeof leg.hash !== 'string' ||
+        !HASH_RE.test(leg.hash)
+      ) {
+        return undefined;
+      }
+    }
+  }
+  return p;
+}
+
 /** Parse + validate a stored flow. Anything malformed, of an
  *  unknown kind, or pointing past its own step list is
  *  refused (null) rather than resumed into a wrong state. */
@@ -294,7 +468,13 @@ export function deserializeXFlow(raw: string | null): XFlow | null {
     ) {
       return null;
     }
-    return f;
+    const clean: XFlow = { ...f };
+    clean.pendingSend = sanitizeXPendingSend(f.pendingSend, steps);
+    if (clean.pendingSend === undefined) delete clean.pendingSend;
+    if (typeof clean.expectDeltaOnly !== 'boolean') {
+      delete clean.expectDeltaOnly;
+    }
+    return clean;
   } catch {
     return null;
   }

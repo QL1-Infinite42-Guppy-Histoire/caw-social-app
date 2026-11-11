@@ -988,8 +988,8 @@ const XF = await import(OUT + '/lib/exchangeFlows.js');
   const i18n = await import(OUT6 + '/i18n.js');
   const srcI = readFileSync(ROOT + '/src/i18n.ts', 'utf8');
   ok(
-    (srcI.match(/'hxd\./g) || []).length === 900,
-    'hxd strings: 45 keys × 20 languages in source',
+    (srcI.match(/'hxd\./g) || []).length === 920,
+    'hxd strings: 46 keys × 20 languages in source (hxd.pendingNote added in v0.5.0-fix)',
   );
   const LANGS20 = ['en', 'ja', 'zh', 'ko', 'es', 'tr', 'fa', 'id', 'vi', 'pt', 'nl', 'hi', 'fr', 'th', 'it', 'pl', 'uk', 'de', 'ru', 'ar'];
   let allOk = true;
@@ -1026,6 +1026,227 @@ const XF = await import(OUT + '/lib/exchangeFlows.js');
       i18n.tr('hxd.wdQomIntro').includes('ネイティブ QOM'),
     'JA QOM intros name the bridge and the native-QOM return honestly',
   );
+}
+
+/* ---------- 7. v0.5.0-fix: M2 pending-send guard, L5 nonce,
+ * L6 delta-only arrival --------------------------------------
+ * The audit's top finding: an exchange-flow send that was
+ * broadcast but never confirmed (slow RPC, killed app)
+ * recorded NOTHING, so re-entering the step re-sent it —
+ * a second bridge fee, a doubled deposit. The fix records
+ * the hash at broadcast time (XFlow.pendingSend) and
+ * resolves it by receipt on re-entry. The state machine
+ * half is pinned here; the screen wiring is pinned by
+ * statics below. */
+{
+  const HN = await import(OUT + '/lib/hunters.js');
+  const H1 = '0x' + '11'.repeat(32);
+  const H2 = '0x' + '22'.repeat(32);
+  const base = {
+    v: 1, kind: 'depUsdt', route: 'bsc', step: 0,
+    amountRaw: (100n * E18).toString(), savedAt: 1700000000000,
+  };
+  const withPend = {
+    ...base,
+    pendingSend: {
+      step: 'bridgeIn', chain: 'bsc', hash: H1, at: 1700000000000,
+      base42: '5',
+    },
+  };
+  {
+    const back = XF.deserializeXFlow(XF.serializeXFlow(withPend));
+    ok(
+      back !== null &&
+        back.pendingSend !== undefined &&
+        back.pendingSend.hash === H1 &&
+        back.pendingSend.base42 === '5' &&
+        back.pendingSend.step === 'bridgeIn',
+      'M2: a pendingSend (hash + baselines) survives the store round-trip',
+    );
+    const batch = {
+      ...base, kind: 'depQom', route: 'ql1',
+      pendingSend: {
+        step: 'bridgeQl1Qom', chain: 'ql1', at: 1700000000000,
+        base42: '7',
+        legs: [
+          { kind: 'wrap', hash: H1 },
+          { kind: 'bridge', hash: H2 },
+        ],
+      },
+    };
+    const backB = XF.deserializeXFlow(XF.serializeXFlow(batch));
+    ok(
+      backB !== null &&
+        backB.pendingSend.legs.length === 2 &&
+        backB.pendingSend.legs[1].kind === 'bridge' &&
+        backB.pendingSend.legs[1].hash === H2,
+      'M2: the QL1 batch leg list (wrap → bridge) survives the round-trip',
+    );
+    const delta = { ...base, expectDeltaOnly: true };
+    const backD = XF.deserializeXFlow(XF.serializeXFlow(delta));
+    ok(backD !== null && backD.expectDeltaOnly === true, 'L6: expectDeltaOnly survives the round-trip');
+  }
+  {
+    // A malformed pendingSend is dropped, the FLOW is kept.
+    const bad = (p) =>
+      XF.deserializeXFlow(
+        JSON.stringify({ ...base, pendingSend: p }),
+      );
+    const b1 = bad({ step: 'bridgeIn', chain: 'bsc', hash: '0xzz', at: 1 });
+    const b2 = bad({ step: 'bridgeIn', chain: 'mars', hash: H1, at: 1 });
+    const b3 = bad({ step: 'wait42', chain: 'bsc', hash: H1, at: 1 });
+    const b4 = bad({ step: 'bridgeIn', chain: 'bsc', hash: H1, at: 1, base42: 'x' });
+    ok(
+      b1 !== null && b1.pendingSend === undefined &&
+        b2 !== null && b2.pendingSend === undefined &&
+        b3 !== null && b3.pendingSend === undefined &&
+        b4 !== null && b4.pendingSend === undefined,
+      'M2: malformed pendingSend records (bad hash / chain / step / baseline) are dropped, never fatal to the flow',
+    );
+    const legacy = XF.deserializeXFlow(JSON.stringify(base));
+    ok(
+      legacy !== null && legacy.pendingSend === undefined,
+      'M2: pre-fix stored flows (no pendingSend) still resume exactly as before',
+    );
+  }
+  {
+    const f = { ...withPend };
+    ok(
+      XF.xPendingMatches(f, 'bridgeIn')?.hash === H1 &&
+        XF.xPendingMatches(f, 'bridgeIn', 'approve') === null &&
+        XF.xPendingMatches(f, 'deposit') === null &&
+        XF.xPendingMatches(base, 'bridgeIn') === null,
+      'M2: pending matching is exact per step and per sub-send (an approve record never satisfies the main send)',
+    );
+    const cleared = XF.xClearPending(f);
+    ok(
+      cleared.pendingSend === undefined && cleared.kind === 'depUsdt' &&
+        f.pendingSend !== undefined,
+      'M2: xClearPending removes only the record (input untouched)',
+    );
+    const now = 1700000000000;
+    ok(
+      XF.xPendingResendAllowed({ step: 'bridgeIn', chain: 'bsc', at: now }, now + XF.X_PENDING_RESEND_AFTER_MS + 1) === false &&
+        XF.xPendingResendAllowed({ step: 'bridgeIn', chain: 'bsc', hash: H1, at: now }, now + 1000) === false &&
+        XF.xPendingResendAllowed({ step: 'bridgeIn', chain: 'bsc', hash: H1, at: now }, now + XF.X_PENDING_RESEND_AFTER_MS) === true,
+      'M2: resend is allowed only for a RECORDED hash older than the generous window — never for a fresh or hashless record',
+    );
+  }
+  {
+    // executeStepSend: the broadcast hook fires with the
+    // hash BEFORE confirmation, and a throwing hook cannot
+    // break the send.
+    const order = [];
+    const hash = await HN.executeStepSend({
+      broadcast: async () => { order.push('broadcast'); return H1; },
+      onBroadcast: (h) => { order.push('hook:' + (h === H1 ? 'hash' : 'wrong')); },
+      confirm: async () => { order.push('confirm'); return { status: 1 }; },
+    });
+    ok(
+      hash === H1 && order.join(',') === 'broadcast,hook:hash,confirm',
+      'M2: executeStepSend reports the hash at broadcast time, before confirmation begins',
+    );
+    const hash2 = await HN.executeStepSend({
+      broadcast: async () => H2,
+      onBroadcast: () => { throw new Error('hook boom'); },
+      confirm: async () => ({ status: 1 }),
+    });
+    ok(hash2 === H2, 'M2: a throwing broadcast hook never breaks the send itself');
+    let unc = null;
+    try {
+      await HN.executeStepSend({
+        broadcast: async () => H1,
+        confirm: async () => null,
+      });
+    } catch (e) {
+      unc = e;
+    }
+    ok(
+      unc instanceof HN.TxUnconfirmedError && unc.hash === H1,
+      'M2: an unconfirmable send throws TxUnconfirmedError carrying the hash (the record the guard keeps)',
+    );
+  }
+  {
+    ok(
+      XF.xArrivalVerdictDeltaOnly(100n, 100n) === 'pending' &&
+        XF.xArrivalVerdictDeltaOnly(100n, 99n) === 'pending' &&
+        XF.xArrivalVerdictDeltaOnly(100n, 101n) === 'arrived',
+      'L6: the delta-only verdict needs a strictly positive delta — an unknown fee is never papered over with fee=0',
+    );
+  }
+  {
+    // L5: persisted per-account counter + timestamp.
+    ok(
+      HX.combineOrderNonce(1700000000000, 1) !== HX.combineOrderNonce(1700000000000, 2) &&
+        HX.combineOrderNonce(1700000000000, 0) === (1700000000000n * 1000000n).toString(),
+      'L5: combineOrderNonce separates same-millisecond orders by counter',
+    );
+    const m = new Map();
+    HX.initExchangeStore({
+      getItem: async (k) => (m.has(k) ? m.get(k) : null),
+      setItem: async (k, v) => { m.set(k, v); },
+    });
+    const realNow = Date.now;
+    Date.now = () => 1700000000000; // frozen clock
+    try {
+      const seen = new Set();
+      let mono = true;
+      let prev = -1n;
+      for (let i = 0; i < 300; i++) {
+        const n = await HX.nextOrderNonce(makerWallet.address);
+        if (!/^\d+$/.test(n)) mono = false;
+        if (seen.has(n)) mono = false;
+        seen.add(n);
+        const v = BigInt(n);
+        if (v <= prev) mono = false;
+        prev = v;
+      }
+      ok(mono && seen.size === 300, 'L5: 300 nonces under a FROZEN clock are all distinct and strictly increasing');
+      const other1 = await HX.nextOrderNonce(takerWallet.address);
+      const other2 = await HX.nextOrderNonce(takerWallet.address);
+      ok(
+        other1 !== other2 &&
+          [...m.keys()].filter((k) => k.startsWith('caw-hx-nonce-v1-')).length === 2,
+        'L5: the counter is persisted per-account (two makers, two independent sequences)',
+      );
+    } finally {
+      Date.now = realNow;
+    }
+    // Stored orders tolerate both nonce formats.
+    const oldOrder = HX.deserializeOrder({
+      maker: makerWallet.address, tokenGive: HX.HX_CAW, amountGive: '5',
+      tokenGet: HX.HX_USDT, amountGet: '6', expiry: 1999999999,
+      nonce: '1700000000000',
+    });
+    ok(
+      oldOrder !== null && oldOrder.nonce === '1700000000000',
+      'L5: orders stored with the old bare-timestamp nonce still deserialize',
+    );
+  }
+  {
+    const scr = readFileSync(ROOT + '/src/screens/ExchangeSection.tsx', 'utf8');
+    ok(
+      (scr.match(/guardedXSend\(/g) || []).length >= 7 &&
+        scr.includes('waitForReceiptRobust') &&
+        scr.includes('xPendingMatches') &&
+        scr.includes('XStillPendingError') &&
+        scr.includes('recordLeg'),
+      'M2 wiring: every exchange send routes through the guard; re-entry probes receipts; the QL1 batch records each leg',
+    );
+    ok(
+      scr.includes('expectDeltaOnly') &&
+        scr.includes('xArrivalVerdictDeltaOnly'),
+      'L6 wiring: a failed QOM fee quote marks the flow delta-only and the wait steps judge by delta',
+    );
+    ok(
+      !scr.includes('nonce: Date.now()') && scr.includes('nextOrderNonce'),
+      'L5 wiring: no bare-timestamp nonce remains; placeOrder assigns the persisted-counter nonce at signing',
+    );
+    ok(
+      scr.includes("tr('hxd.pendingNote')"),
+      'M2 wiring: the flow card shows the pending-send note while a send is unconfirmed',
+    );
+  }
 }
 
 console.log(`\nexchange: ${pass} passed, ${fail} failed`);

@@ -143,7 +143,11 @@ async function confirmForSigner(
  * could be obtained (the tx may still have succeeded — callers
  * must not present that as a plain failure).
  */
-export async function sendTxReq(signer: Wallet, req: TxReq): Promise<string> {
+export async function sendTxReq(
+  signer: Wallet,
+  req: TxReq,
+  onBroadcast?: (hash: string) => void,
+): Promise<string> {
   return executeStepSend({
     broadcast: async () => {
       const tx = await signer.sendTransaction({
@@ -154,6 +158,7 @@ export async function sendTxReq(signer: Wallet, req: TxReq): Promise<string> {
       return tx.hash;
     },
     confirm: (hash) => confirmForSigner(signer, hash),
+    onBroadcast,
   });
 }
 

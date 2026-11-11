@@ -160,6 +160,7 @@ export default function PostDetailScreen({
   /* ---------- Tip (v0.5.0) ---------- */
   const [tipItem, setTipItem] = useState<TimelineItem | null>(null);
   const [tipName, setTipName] = useState('');
+  const [tipRecipient, setTipRecipient] = useState<string | null>(null);
   const [tipBusy, setTipBusy] = useState(false);
 
   const handleTip = useCallback(
@@ -171,6 +172,12 @@ export default function PostDetailScreen({
       resolveName(item.senderId)
         .then((n) => setTipName(n ? '@' + n : ''))
         .catch(() => setTipName(''));
+      /* M1: recipient for the sheet's spot-check line —
+       * performTip re-resolves and cross-checks at send. */
+      setTipRecipient(null);
+      nameOwner(item.senderId)
+        .then((a) => setTipRecipient(a))
+        .catch(() => setTipRecipient(null));
       setTipItem(item);
     },
     [app],
@@ -191,7 +198,9 @@ export default function PostDetailScreen({
             ? tr('tip.self')
             : e instanceof Error && e.message === 'shortfall'
               ? tr('tip.shortfall')
-              : tr('act.failed');
+              : e instanceof Error && e.message === 'recipient-mismatch'
+                ? tr('tip.mismatch')
+                : tr('act.failed');
         setSlStatus((prev) => ({ ...prev, [item.hash]: msg }));
       } finally {
         setTipBusy(false);
@@ -367,6 +376,7 @@ export default function PostDetailScreen({
       <TipSheet
         visible={!!tipItem}
         authorLabel={tipName}
+        recipient={tipRecipient}
         balanceRaw={app.cat42}
         busy={tipBusy}
         onConfirm={confirmTip}

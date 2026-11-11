@@ -74,6 +74,32 @@ export function tipShortfall(balance: bigint, amountRaw: bigint): boolean {
   return balance < amountRaw;
 }
 
+/**
+ * The M1 recipient cross-check verdict (v0.5.0-fix). A tip is
+ * a plain transfer: once sent to a wrong address it cannot
+ * be taken back, and the recipient comes from ONE read —
+ * ownerOf on the primary QL1 RPC. So the primary resolution
+ * is re-read through a second, independent endpoint:
+ *  - 'ok'         both endpoints answered and agree;
+ *  - 'primary'    the second endpoint could not be read
+ *                 (null) — the primary's word stands, as
+ *                 before (an unreachable checker must not
+ *                 brick tipping);
+ *  - 'mismatch'   both answered and DISAGREE → the tip must
+ *                 be refused outright: one of the two is
+ *                 lying or broken, and there is no way to
+ *                 tell which from here.
+ * `primary` itself is never null here — an unreadable
+ * primary refuses the tip before this is consulted.
+ */
+export function tipRecipientVerdict(
+  primary: string,
+  alt: string | null,
+): 'ok' | 'primary' | 'mismatch' {
+  if (alt === null) return 'primary';
+  return primary.toLowerCase() === alt.toLowerCase() ? 'ok' : 'mismatch';
+}
+
 /** A trustworthy CAT42 balance read on 42 Chain (throws on
  *  RPC failure). Kept here (not in lib/superlike.ts, whose
  *  CAT42 reads left with the old design) for the tip flow. */

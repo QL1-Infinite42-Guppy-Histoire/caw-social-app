@@ -34,6 +34,10 @@
  * push payload carries only the post id + a short preview.
  * The server can never post to X (read-only scope) and holds
  * no wallet material — engraving is signed in the app.
+ * Since v0.5.0-fix (audit M5) the /x endpoints are
+ * authenticated: registration proves control of the X
+ * account via /2/users/me, and overwrite/unregister of a
+ * record carrying a registration secret requires it.
  *
  * Binding: HX_KV (KV namespace). No secrets, no keys.
  * Deploy: see worker/README.md. wrangler.toml's main points
@@ -59,6 +63,8 @@ import {
   maxNumericId,
   parseTimeline,
   planPoll,
+  planRegistration,
+  planUnregister,
   refreshBody,
   timelineQuery,
   tokenNeedsRefresh,
@@ -78,7 +84,7 @@ function json(body, status) {
       'content-type': 'application/json',
       'access-control-allow-origin': '*',
       'access-control-allow-methods': 'GET, POST, OPTIONS',
-      'access-control-allow-headers': 'content-type',
+      'access-control-allow-headers': 'content-type, x-reg-secret',
     },
   });
 }
@@ -197,9 +203,47 @@ export default {
       }
       const err = validateRegistration(body);
       if (err) return json({ error: err }, 400);
-      // Store exactly the subscription shape the poller reads.
-      // Re-registering (new device, fresh token) replaces it;
-      // the seen set is kept, so nothing re-notifies.
+      /* M5 (v0.5.0-fix): a registration must prove control
+       * of the X account it names. The presented access
+       * token is validated against X's /2/users/me — the
+       * token's account id must equal the registered user
+       * id — and overwriting a record that carries a
+       * registration secret requires that secret (the
+       * x-reg-secret header). The decision itself is the
+       * pure planRegistration in xmirror.js. */
+      let meId = null;
+      try {
+        const meRes = await fetch(`${X_API}/users/me`, {
+          headers: { authorization: `Bearer ${body.accessToken}` },
+        });
+        if (meRes.ok) {
+          const me = await meRes.json();
+          if (me && me.data && typeof me.data.id === 'string') {
+            meId = me.data.id;
+          }
+        }
+      } catch {
+        meId = null;
+      }
+      let existing = null;
+      try {
+        const rawSub = await env.HX_KV.get(xsubKey(body.xUserId));
+        existing = rawSub ? JSON.parse(rawSub) : null;
+      } catch {
+        existing = null;
+      }
+      const plan = planRegistration(
+        existing,
+        body,
+        meId,
+        request.headers.get('x-reg-secret'),
+      );
+      if (!plan.ok) return json({ error: plan.error }, 403);
+      // Store exactly the subscription shape the poller reads
+      // (plus the registration secret, which is never
+      // returned). Re-registering (new device, fresh token)
+      // replaces it; the seen set is kept, so nothing
+      // re-notifies.
       await env.HX_KV.put(
         xsubKey(body.xUserId),
         JSON.stringify({
@@ -211,6 +255,7 @@ export default {
           accessToken: body.accessToken,
           refreshToken: body.refreshToken,
           expiresAt: body.expiresAt,
+          regSecret: plan.regSecret,
         }),
       );
       return json({ ok: true });
@@ -226,6 +271,21 @@ export default {
       if (!body || typeof body.xUserId !== 'string' || !body.xUserId) {
         return json({ error: 'bad-user-id' }, 400);
       }
+      /* M5: deleting a record that carries a registration
+       * secret requires presenting it (legacy records
+       * without one stay deletable — see planUnregister). */
+      let existing = null;
+      try {
+        const rawSub = await env.HX_KV.get(xsubKey(body.xUserId));
+        existing = rawSub ? JSON.parse(rawSub) : null;
+      } catch {
+        existing = null;
+      }
+      const plan = planUnregister(
+        existing,
+        request.headers.get('x-reg-secret'),
+      );
+      if (!plan.ok) return json({ error: plan.error }, 403);
       await env.HX_KV.delete(xsubKey(body.xUserId));
       await env.HX_KV.delete(xseenKey(body.xUserId));
       return json({ ok: true });

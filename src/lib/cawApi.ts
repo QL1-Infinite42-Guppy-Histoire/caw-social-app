@@ -5,7 +5,7 @@
  */
 import { decodeBase64, toUtf8String } from 'ethers';
 
-import { API, CAT42, CAW_ACTIONS, CAW_NAME, EXPLORER, KET42, MINTER, O_TOKEN, QCAW, RPC, SEL } from '../config';
+import { API, CAT42, CAW_ACTIONS, CAW_NAME, EXPLORER, KET42, MINTER, O_TOKEN, QCAW, RPC, RPC_ALT, SEL } from '../config';
 import { HS_CHAINS } from './chains';
 import {
   CawAction,
@@ -37,8 +37,13 @@ export interface Page<T> {
 
 /* ---------- read-only RPC ---------- */
 let rpcSeq = 0;
-export async function rpc(method: string, params: unknown[]): Promise<any> {
-  const res = await fetch(RPC, {
+/** One JSON-RPC call against an explicit endpoint. */
+export async function rpcAt(
+  url: string,
+  method: string,
+  params: unknown[],
+): Promise<any> {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcSeq, method, params }),
@@ -47,9 +52,20 @@ export async function rpc(method: string, params: unknown[]): Promise<any> {
   if (j.error) throw new Error(j.error.message || 'rpc error');
   return j.result;
 }
+export async function rpc(method: string, params: unknown[]): Promise<any> {
+  return rpcAt(RPC, method, params);
+}
 
 export const ethCall = (to: string, data: string): Promise<string> =>
   rpc('eth_call', [{ to, data }, 'latest']);
+
+/** eth_call against an explicit endpoint (the M1 cross-check
+ *  reads through RPC_ALT; see nameOwnerAlt). */
+export const ethCallAt = (
+  url: string,
+  to: string,
+  data: string,
+): Promise<string> => rpcAt(url, 'eth_call', [{ to, data }, 'latest']);
 
 /**
  * Many QL1 calls in ONE HTTP request (JSON-RPC batch), the QL1
@@ -227,6 +243,12 @@ export const readUint = async (to: string, data: string): Promise<bigint> =>
   decUintRet(await ethCall(to, data));
 export const readAddr = async (to: string, data: string): Promise<string> =>
   decAddrRet(await ethCall(to, data));
+/** readAddr against an explicit endpoint (cross-checks). */
+export const readAddrAt = async (
+  url: string,
+  to: string,
+  data: string,
+): Promise<string> => decAddrRet(await ethCallAt(url, to, data));
 export const readStr = async (to: string, data: string): Promise<string> =>
   decStringRet(await ethCall(to, data));
 
@@ -725,6 +747,18 @@ export const likesCount = (a: CawAction): Promise<bigint> =>
 export const nameOwner = (id: bigint): Promise<string> =>
   readAddr(CAW_NAME, SEL.ownerOf + word(id));
 
+/**
+ * The same ownerOf read through the SECOND independent QL1
+ * endpoint (config RPC_ALT — the explorer's eth-rpc proxy).
+ * Exists for the tip-recipient cross-check (audit M1): the
+ * primary resolution decides, this one can only VETO it when
+ * the two disagree. Throws on any read failure, like
+ * nameOwner — callers treat a throw as "no cross-check
+ * available", never as agreement.
+ */
+export const nameOwnerAlt = (id: bigint): Promise<string> =>
+  readAddrAt(RPC_ALT, CAW_NAME, SEL.ownerOf + word(id));
+
 /* ---------- name check (for minting) ---------- */
 export interface NameCheck {
   valid: boolean;
@@ -744,12 +778,22 @@ export async function checkName(name: string): Promise<NameCheck> {
   return { valid, taken: res.status === 'ok', cost };
 }
 
-export const qcawAllowance = (owner: string, spender: string): Promise<bigint> =>
+/**
+ * qCAW allowance / balance with the v0.4.7 discipline
+ * (restored in v0.5.0-fix, audit L1): a failed read resolves
+ * NULL — "unreadable" — never a fake 0. Callers must treat
+ * null as unknown (gate closed / approve-to-be-sure), not as
+ * an empty wallet.
+ */
+export const qcawAllowance = (
+  owner: string,
+  spender: string,
+): Promise<bigint | null> =>
   readUint(QCAW, SEL.allowance + encAddr(owner) + encAddr(spender)).catch(
-    () => 0n,
+    () => null,
   );
-export const qcawBalance = (owner: string): Promise<bigint> =>
-  readUint(QCAW, SEL.balanceOf + encAddr(owner)).catch(() => 0n);
+export const qcawBalance = (owner: string): Promise<bigint | null> =>
+  readUint(QCAW, SEL.balanceOf + encAddr(owner)).catch(() => null);
 
 /* ---------- timeline & profile posts (Blockscout) ---------- */
 function qs(params: Record<string, unknown>): string {

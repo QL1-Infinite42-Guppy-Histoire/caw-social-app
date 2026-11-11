@@ -3,6 +3,7 @@ import type { AppContextValue } from '../context/AppContext';
 import {
   invalidateFeedHead,
   nameOwner,
+  nameOwnerAlt,
   type TimelineItem,
 } from './cawApi';
 import { isSelfFollowOwners, type CawAction } from './cawCore';
@@ -24,6 +25,7 @@ import {
   buildTipData,
   cat42BalanceOf,
   tipBlockReason,
+  tipRecipientVerdict,
   tipShortfall,
 } from './tip';
 import {
@@ -385,6 +387,15 @@ export async function performSuperRecawBurn(
  * fresh and short of the amount is a hard stop
  * (Error('shortfall'), the balance attached as `balance`).
  * Throws Error('auth') / Error('locked') like performAction.
+ *
+ * Recipient cross-check (v0.5.0-fix, audit M1): the resolved
+ * owner is ALSO read through the second independent QL1
+ * endpoint (nameOwnerAlt). When both endpoints answer and
+ * DISAGREE, the tip is refused with
+ * Error('recipient-mismatch') — a plain transfer cannot be
+ * recalled, so two conflicting answers mean "do not send".
+ * When the second endpoint cannot be read at all, the
+ * primary's resolution stands (tipRecipientVerdict).
  */
 export async function performTip(
   app: AppContextValue,
@@ -393,6 +404,12 @@ export async function performTip(
   if (!app.address) throw new Error('locked');
   if (args.amountRaw <= 0n) throw new Error('bad-amount');
   const authorOwner = await nameOwner(args.target.senderId);
+  const altOwner = await nameOwnerAlt(args.target.senderId).catch(
+    () => null,
+  );
+  if (tipRecipientVerdict(authorOwner, altOwner) === 'mismatch') {
+    throw new Error('recipient-mismatch');
+  }
   const blocked = tipBlockReason({
     senderId: args.target.senderId,
     myTokenIds: app.myTokens.map((t) => t.id),

@@ -61,6 +61,74 @@ export function validateRegistration(body) {
   return null;
 }
 
+/* ---------------- endpoint authentication (M5) ----------------
+ * v0.5.0-fix: /x/register and /x/unregister used to trust
+ * any caller, and X user ids are public — anyone could
+ * overwrite or delete someone else's subscription record.
+ * The rules now, decided here as pure functions:
+ *  - register must prove control of the X account: the
+ *    Worker validates the presented access token against
+ *    X's /2/users/me, and the token's account id must EQUAL
+ *    the user id being registered (meId below);
+ *  - once a record carries a registration secret (generated
+ *    on-device at first registration, stored in the app's
+ *    SecureStore, sent as the x-reg-secret header), only a
+ *    caller presenting that secret may overwrite or delete
+ *    the record;
+ *  - a pre-fix record WITHOUT a secret may be overwritten
+ *    by a token-proven registration (which then ADOPTS the
+ *    presented secret) and unregistered without one — the
+ *    legacy window closes itself on the first re-register. */
+
+const REG_SECRET = /^[0-9a-f]{32,128}$/;
+export const isRegSecret = (s) =>
+  typeof s === 'string' && REG_SECRET.test(s);
+
+/**
+ * Decide a registration. `existing` is the stored record or
+ * null; `meId` is the account id the presented access token
+ * resolved to via /2/users/me (null when the token did not
+ * validate); `presentedSecret` is the x-reg-secret header.
+ * Returns { ok: true, regSecret } — the secret to store —
+ * or { ok: false, error }.
+ */
+export function planRegistration(existing, body, meId, presentedSecret) {
+  if (meId === null || meId === undefined) {
+    return { ok: false, error: 'token-invalid' };
+  }
+  if (meId !== body.xUserId) {
+    return { ok: false, error: 'token-mismatch' };
+  }
+  if (existing && typeof existing.regSecret === 'string' && existing.regSecret) {
+    if (presentedSecret !== existing.regSecret) {
+      return { ok: false, error: 'secret-required' };
+    }
+    return { ok: true, regSecret: existing.regSecret };
+  }
+  /* New record (or a legacy record without a secret): the
+   * presented secret becomes the record's secret, so it
+   * must be well-formed. */
+  if (!isRegSecret(presentedSecret)) {
+    return { ok: false, error: 'secret-invalid' };
+  }
+  return { ok: true, regSecret: presentedSecret };
+}
+
+/**
+ * Decide an unregistration. Deleting a record that does not
+ * exist is a no-op success (idempotent). A record WITH a
+ * secret requires it; a legacy record without one does not.
+ */
+export function planUnregister(existing, presentedSecret) {
+  if (!existing) return { ok: true };
+  if (typeof existing.regSecret === 'string' && existing.regSecret) {
+    return presentedSecret === existing.regSecret
+      ? { ok: true }
+      : { ok: false, error: 'secret-required' };
+  }
+  return { ok: true };
+}
+
 /** Classify one raw tweet (same rules as the app). */
 export function classifyTweet(raw) {
   if (!raw || typeof raw !== 'object') return null;

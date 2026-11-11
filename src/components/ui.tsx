@@ -1495,6 +1495,7 @@ function plainDecimal(raw: bigint): string {
 export function TipSheet({
   visible,
   authorLabel,
+  recipient,
   balanceRaw,
   busy,
   onConfirm,
@@ -1502,6 +1503,17 @@ export function TipSheet({
 }: {
   visible: boolean;
   authorLabel: string;
+  /**
+   * The resolved recipient address (audit M1): a tip is a
+   * plain transfer and cannot be recalled, so the sheet
+   * SHOWS where the CAT42 will actually go — shortened with
+   * the last four characters emphasised, the app's usual
+   * spot-check shape — instead of only naming the author.
+   * Null while unresolved (the line is then omitted; the
+   * send itself still re-resolves and cross-checks in
+   * performTip before signing).
+   */
+  recipient?: string | null;
   balanceRaw: bigint | null;
   busy?: boolean;
   onConfirm: (amountRaw: bigint) => void;
@@ -1540,6 +1552,14 @@ export function TipSheet({
           <Text style={[S.body, { marginTop: 8 }]}>
             {tr('tip.body', { name: authorLabel || '—' })}
           </Text>
+          {recipient ? (
+            <Text style={[S.small, { marginTop: 6 }]}>
+              {tr('tip.to')}: {recipient.slice(0, 6)}…
+              <Text style={{ fontWeight: '700' }}>
+                {recipient.slice(-4)}
+              </Text>
+            </Text>
+          ) : null}
           <Text style={[S.small, { marginTop: 6 }]}>
             {tr('tip.balance', {
               balance:

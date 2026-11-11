@@ -56,6 +56,43 @@ const STORE_OPTIONS = {
 const CLIENT_ID_KEY = 'caw-x-client-id';
 const SESSION_KEY = 'caw-x-session';
 const PUSH_KEY = 'caw-x-push';
+/** The per-registration secret (audit M5): generated on this
+ *  device at first registration and kept in the secure
+ *  store. The Worker requires it (as the x-reg-secret
+ *  header) to overwrite or delete the registration record,
+ *  so a stranger who merely knows the public X user id can
+ *  no longer hijack or kill the subscription. */
+const REG_SECRET_KEY = 'caw-x-regsecret';
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/** The device's registration secret, created on first use. */
+export async function ensureRegSecret(): Promise<string> {
+  try {
+    const existing = await SecureStore.getItemAsync(
+      REG_SECRET_KEY,
+      STORE_OPTIONS,
+    );
+    if (existing) return existing;
+  } catch {
+    /* fall through and mint one */
+  }
+  const secret = bytesToHex(await Crypto.getRandomBytesAsync(32));
+  await SecureStore.setItemAsync(REG_SECRET_KEY, secret, STORE_OPTIONS);
+  return secret;
+}
+
+async function loadRegSecret(): Promise<string | null> {
+  try {
+    return await SecureStore.getItemAsync(REG_SECRET_KEY, STORE_OPTIONS);
+  } catch {
+    return null;
+  }
+}
 
 export class XApiError extends Error {
   info: XErrorInfo;
@@ -128,8 +165,11 @@ export async function disconnectX(): Promise<void> {
     await xMirrorStore.reset().catch(() => {});
   }
   if (s && X_MIRROR_SERVER_URL) {
+    // Unregister BEFORE the secret is wiped — the Worker
+    // requires it to delete a secret-carrying record.
     await unregisterPush(s).catch(() => {});
   }
+  await SecureStore.deleteItemAsync(REG_SECRET_KEY, STORE_OPTIONS);
 }
 
 /* ------------------------------------------------------------------ */
@@ -241,6 +281,19 @@ export async function usableXSession(): Promise<XSession> {
   if (!grant) throw new XApiError({ kind: 'unknown', detail: 'refresh shape' });
   const next: XSession = { ...grant, userId: s.userId, username: s.username };
   await saveXSession(next);
+  /* L4 mitigation (v0.5.0-fix): a refresh ROTATES the token
+   * pair — the Worker's stored copy would go stale and its
+   * next refresh would fail. When push is registered, hand
+   * the Worker the fresh pair right away (best-effort; the
+   * Worker also updates its own copy whenever IT refreshes).
+   * registerPush never calls back into usableXSession, so
+   * this cannot recurse. */
+  if (X_MIRROR_SERVER_URL) {
+    const reg = await loadPushRegistration().catch(() => null);
+    if (reg && reg.xUserId === next.userId) {
+      await registerPush(next).catch(() => {});
+    }
+  }
   return next;
 }
 
@@ -355,11 +408,15 @@ export async function devicePushToken(): Promise<string | null> {
   }
 }
 
-async function pushPost(path: string, body: unknown): Promise<boolean> {
+async function pushPost(
+  path: string,
+  body: unknown,
+  headers?: Record<string, string>,
+): Promise<boolean> {
   try {
     const res = await fetch(X_MIRROR_SERVER_URL + path, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...(headers ?? {}) },
       body: JSON.stringify(body),
     });
     return res.ok;
@@ -382,15 +439,25 @@ export async function registerPush(
   if (!X_MIRROR_SERVER_URL) return 'no-server';
   const pushToken = await devicePushToken();
   if (!pushToken) return 'no-token';
-  const ok = await pushPost('/x/register', {
-    pushToken,
-    xUserId: session.userId,
-    username: session.username,
-    clientId: await loadXClientId(),
-    accessToken: session.accessToken,
-    refreshToken: session.refreshToken,
-    expiresAt: session.expiresAt,
-  });
+  /* M5: the registration carries the device's registration
+   * secret — the Worker stores it with the record and
+   * requires it for any later overwrite or delete. The
+   * access token in the body doubles as the account-control
+   * proof (the Worker checks it against /2/users/me). */
+  const regSecret = await ensureRegSecret();
+  const ok = await pushPost(
+    '/x/register',
+    {
+      pushToken,
+      xUserId: session.userId,
+      username: session.username,
+      clientId: await loadXClientId(),
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      expiresAt: session.expiresAt,
+    },
+    { 'x-reg-secret': regSecret },
+  );
   if (!ok) return 'failed';
   await SecureStore.setItemAsync(
     PUSH_KEY,
@@ -414,5 +481,13 @@ export async function loadPushRegistration(): Promise<PushRegistration | null> {
 }
 
 async function unregisterPush(session: XSession): Promise<void> {
-  await pushPost('/x/unregister', { xUserId: session.userId });
+  /* M5: present the registration secret when this device
+   * has one — the Worker refuses to delete a secret-carrying
+   * record without it. */
+  const secret = await loadRegSecret();
+  await pushPost(
+    '/x/unregister',
+    { xUserId: session.userId },
+    secret ? { 'x-reg-secret': secret } : undefined,
+  );
 }

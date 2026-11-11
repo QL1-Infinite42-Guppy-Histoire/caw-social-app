@@ -200,5 +200,115 @@ const E18 = 10n ** 18n;
   ok(ui.includes('onTip'), 'PostCard exposes the tip action');
 }
 
+/* ---------- M1: recipient cross-check + sheet display
+ * (v0.5.0-fix) ---------- */
+{
+  const OTHER = '0x000000000000000000000000000000000000dEaD';
+  ok(
+    TIP.tipRecipientVerdict(AUTHOR, AUTHOR) === 'ok' &&
+      TIP.tipRecipientVerdict(AUTHOR, AUTHOR.toLowerCase()) === 'ok',
+    'M1 verdict: both endpoints agree (case-insensitive) → ok',
+  );
+  ok(
+    TIP.tipRecipientVerdict(AUTHOR, null) === 'primary',
+    'M1 verdict: an unreachable second endpoint leaves the primary resolution standing',
+  );
+  ok(
+    TIP.tipRecipientVerdict(AUTHOR, OTHER) === 'mismatch',
+    'M1 verdict: two different answers → mismatch (the tip must be refused)',
+  );
+  ok(
+    CFG.RPC_ALT && CFG.RPC_ALT !== CFG.RPC,
+    'M1: the cross-check endpoint is configured and distinct from the primary RPC',
+  );
+
+  const CAW = await import(OUT + '/lib/cawApi.js');
+  const enc = (addr) => '0x' + '0'.repeat(24) + addr.slice(2).toLowerCase();
+  const realFetch = globalThis.fetch;
+  try {
+    // Both endpoints answer; the ALT one is stubbed to a
+    // DIFFERENT owner — the composition performTip uses must
+    // yield 'mismatch' (a hard stop before any signing).
+    globalThis.fetch = async (url) => ({
+      ok: true,
+      json: async () => ({
+        jsonrpc: '2.0',
+        result: enc(String(url).includes('scan.qom.network') ? OTHER : AUTHOR),
+      }),
+    });
+    const primary = await CAW.nameOwner(190n);
+    const alt = await CAW.nameOwnerAlt(190n).catch(() => null);
+    ok(
+      primary.toLowerCase() === AUTHOR.toLowerCase() &&
+        alt !== null &&
+        alt.toLowerCase() === OTHER.toLowerCase() &&
+        TIP.tipRecipientVerdict(primary, alt) === 'mismatch',
+      'M1: a disagreeing second endpoint produces the hard-stop verdict (stubbed RPCs)',
+    );
+    // The second endpoint down: the read rejects, the
+    // catch-to-null composition yields 'primary'.
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('scan.qom.network')) throw new Error('down');
+      return {
+        ok: true,
+        json: async () => ({ jsonrpc: '2.0', result: enc(AUTHOR) }),
+      };
+    };
+    const altDown = await CAW.nameOwnerAlt(190n).catch(() => null);
+    ok(
+      altDown === null && TIP.tipRecipientVerdict(AUTHOR, altDown) === 'primary',
+      'M1: a failed cross-check read degrades to the primary verdict, never to a fake agreement',
+    );
+    /* L1: qCAW reads follow the null discipline. */
+    globalThis.fetch = async () => { throw new Error('down'); };
+    ok(
+      (await CAW.qcawBalance(AUTHOR)) === null &&
+        (await CAW.qcawAllowance(AUTHOR, AUTHOR)) === null,
+      'L1: failed qCAW balance/allowance reads resolve null — never a fake 0',
+    );
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({
+        jsonrpc: '2.0',
+        result: '0x' + (1000n).toString(16).padStart(64, '0'),
+      }),
+    });
+    ok(
+      (await CAW.qcawBalance(AUTHOR)) === 1000n &&
+        (await CAW.qcawAllowance(AUTHOR, AUTHOR)) === 1000n,
+      'L1: healthy qCAW reads still resolve their real values',
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  const flowAll = readFileSync(ROOT + '/src/lib/actionFlow.ts', 'utf8');
+  const flow = flowAll.slice(flowAll.indexOf('export async function performTip'));
+  const iMismatch = flow.indexOf("Error('recipient-mismatch')");
+  const iSend = flow.indexOf('sendCalldata');
+  ok(
+    flow.includes('nameOwnerAlt') && iMismatch > 0 && iMismatch < iSend,
+    'M1 wiring: performTip cross-checks via the second endpoint and refuses BEFORE the send on disagreement',
+  );
+  const ui = readFileSync(ROOT + '/src/components/ui.tsx', 'utf8');
+  ok(
+    ui.includes('recipient?: string | null') &&
+      ui.includes("tr('tip.to')") &&
+      ui.includes('recipient.slice(-4)'),
+    'M1 wiring: the TipSheet shows the resolved recipient with the last-4 emphasis',
+  );
+  for (const [file, label] of [
+    ['src/screens/TimelineScreen.tsx', 'TimelineScreen'],
+    ['src/screens/ProfileScreen.tsx', 'ProfileScreen'],
+    ['src/screens/PostDetailScreen.tsx', 'PostDetailScreen'],
+  ]) {
+    const s = readFileSync(ROOT + '/' + file, 'utf8');
+    ok(
+      s.includes('recipient={tipRecipient}') && s.includes("tr('tip.mismatch')"),
+      `M1 wiring: ${label} passes the recipient to the sheet and surfaces the mismatch stop`,
+    );
+  }
+}
+
 console.log(`\ntip: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

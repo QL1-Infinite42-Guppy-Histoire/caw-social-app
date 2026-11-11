@@ -111,7 +111,11 @@ function NameCard({
       // The name contract pulls CAW in, so it needs an allowance first.
       if (app.address) {
         const allow = await qcawAllowance(app.address, CAW_NAME);
-        if (allow < amt) {
+        // L1: an unreadable allowance is null (unknown), not
+        // 0 — the honest response is to approve the exact
+        // amount anyway (harmless if already covered; the
+        // deposit send below surfaces any real failure).
+        if (allow === null || allow < amt) {
           setStatus({ text: tr('mine.approveFirst'), kind: 'info' });
           await sendCalldata(
             signer,

@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Alert } from 'react-native';
+import { Alert, AppState } from 'react-native';
 import React, {
   ReactNode,
   createContext,
@@ -47,6 +47,14 @@ import type { ProfileCustom } from '../lib/profileCustom';
 import { applyLayoutDirection } from '../lib/rtl';
 import { myActionStore, profileCustomStore, storeKV } from '../lib/stores';
 import {
+  AUTO_LOCK_MS,
+  autoLockDue,
+  autoLockInitial,
+  autoLockOnBackground,
+  autoLockOnForeground,
+  type AutoLockState,
+} from '../lib/autoLock';
+import {
   UnlockMethod,
   authenticate,
   getUnlockMethod,
@@ -54,7 +62,7 @@ import {
   listWallets,
   loadWalletSecret,
   setActiveWallet,
-  verifyPassword,
+  verifyPasswordThrottled,
   type WalletKind,
   type WalletPublicInfo,
 } from '../lib/walletStore';
@@ -440,7 +448,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         prompt.resolve(false);
         return;
       }
-      prompt.resolve(await verifyPassword(password));
+      // Throttled verify (v0.5.0-fix, audit M3): consecutive
+      // failures impose a progressive, persisted delay, so
+      // the prompt cannot be used to guess at speed.
+      prompt.resolve(await verifyPasswordThrottled(password));
     },
     [pwPrompt],
   );
@@ -496,6 +507,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
     secretRef.current = null;
     setLocked(true);
   }, []);
+
+  /* Auto-lock (v0.5.0-fix, audit M4): backgrounding the app
+   * starts a 60-second clock (lib/autoLock.ts); if the app
+   * is still in the background when it runs out, lock —
+   * clearing the in-memory secret exactly as the manual
+   * lock above does. Foregrounding inside the grace period
+   * cancels the clock and the session continues. Only a
+   * real 'background' transition starts it, so the
+   * biometric prompt's own transient states never count. */
+  const autoLockRef = useRef<AutoLockState>(autoLockInitial);
+  const autoLockTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'background') {
+        autoLockRef.current = autoLockOnBackground(
+          autoLockRef.current,
+          Date.now(),
+        );
+        if (autoLockTimer.current) clearTimeout(autoLockTimer.current);
+        autoLockTimer.current = setTimeout(() => {
+          if (autoLockDue(autoLockRef.current, Date.now())) lock();
+        }, AUTO_LOCK_MS);
+      } else if (next === 'active') {
+        autoLockRef.current = autoLockOnForeground(autoLockRef.current);
+        if (autoLockTimer.current) {
+          clearTimeout(autoLockTimer.current);
+          autoLockTimer.current = null;
+        }
+      }
+    });
+    return () => {
+      sub.remove();
+      if (autoLockTimer.current) clearTimeout(autoLockTimer.current);
+    };
+  }, [lock]);
 
   const completeOnboarding = useCallback(async () => {
     const info = await getWalletPublicInfo();

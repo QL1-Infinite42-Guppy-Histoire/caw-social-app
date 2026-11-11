@@ -523,6 +523,7 @@ export default function TimelineScreen() {
   /* ---------- Tip (v0.5.0) ---------- */
   const [tipItem, setTipItem] = useState<TimelineItem | null>(null);
   const [tipName, setTipName] = useState('');
+  const [tipRecipient, setTipRecipient] = useState<string | null>(null);
   const [tipBusy, setTipBusy] = useState(false);
 
   const handleTip = useCallback(
@@ -537,6 +538,13 @@ export default function TimelineScreen() {
       resolveName(item.senderId)
         .then((n) => setTipName(n ? '@' + n : ''))
         .catch(() => setTipName(''));
+      /* M1: resolve the recipient for display on the sheet —
+       * the send itself re-resolves and cross-checks in
+       * performTip; this read only fills the spot-check line. */
+      setTipRecipient(null);
+      nameOwner(item.senderId)
+        .then((a) => setTipRecipient(a))
+        .catch(() => setTipRecipient(null));
       setTipItem(item);
     },
     [app],
@@ -561,7 +569,9 @@ export default function TimelineScreen() {
             ? tr('tip.self')
             : e instanceof Error && e.message === 'shortfall'
               ? tr('tip.shortfall')
-              : tr('act.failed');
+              : e instanceof Error && e.message === 'recipient-mismatch'
+                ? tr('tip.mismatch')
+                : tr('act.failed');
         setStatusByHash((prev) => ({ ...prev, [item.hash]: msg }));
         setTipItem(null);
       } finally {
@@ -996,6 +1006,7 @@ export default function TimelineScreen() {
       <TipSheet
         visible={!!tipItem}
         authorLabel={tipName}
+        recipient={tipRecipient}
         balanceRaw={cat42}
         busy={tipBusy}
         onConfirm={confirmTip}

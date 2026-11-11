@@ -554,5 +554,22 @@ try {
     (i18nSrc.match(/'get\.invalid'/g) || []).length === 20);
 }
 
+/* ---- L2 (v0.5.0-fix): the mint re-checks before it sends ---- */
+{
+  const getSrc2 = readFileSync(new URL('../src/screens/GetNameScreen.tsx', import.meta.url).pathname, 'utf8');
+  const mint = getSrc2.slice(getSrc2.indexOf('const doMint'));
+  const iRecheck = mint.indexOf('await checkName(checkedName)');
+  const iAuth = mint.indexOf('app.requireAuth()');
+  const iSend = mint.indexOf('sendCalldata');
+  check('L2: doMint re-runs the availability+cost check BEFORE auth and the mint send',
+    iRecheck > 0 && iRecheck < iAuth && iAuth < iSend);
+  check('L2: a changed (or unreadable) re-check aborts with the fresh-change message',
+    mint.includes('fresh.cost !== cost') && mint.includes("tr('get.changed')") &&
+    mint.includes('fresh.taken'));
+  const i18nSrc2 = readFileSync(new URL('../src/i18n.ts', import.meta.url).pathname, 'utf8');
+  check('L2: get.changed exists in all 20 languages',
+    (i18nSrc2.match(/'get\.changed'/g) || []).length === 20);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

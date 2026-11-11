@@ -272,6 +272,14 @@ export interface StepSendDeps {
   broadcast: () => Promise<string>;
   /** Confirm a broadcast tx; resolves null when unconfirmable. */
   confirm: (hash: string) => Promise<ReceiptLike | null>;
+  /**
+   * Called with the hash the MOMENT the broadcast returns it
+   * — before confirmation begins (v0.5.0-fix, audit M2).
+   * Callers that persist flow state use it to record the hash
+   * at broadcast time, so an app kill during the confirmation
+   * window never loses the only evidence the send happened.
+   */
+  onBroadcast?: (hash: string) => void;
 }
 
 /**
@@ -283,6 +291,13 @@ export interface StepSendDeps {
  */
 export async function executeStepSend(deps: StepSendDeps): Promise<string> {
   const hash = await deps.broadcast();
+  if (deps.onBroadcast) {
+    try {
+      deps.onBroadcast(hash);
+    } catch {
+      /* a bookkeeping hook must never break the send itself */
+    }
+  }
   const receipt = await deps.confirm(hash);
   if (!receipt) throw new TxUnconfirmedError(hash);
   if (receipt.status !== 1) throw new TxRevertedError(hash);
