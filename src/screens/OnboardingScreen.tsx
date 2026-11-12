@@ -133,7 +133,7 @@ export default function OnboardingScreen() {
             hitSlop={8}
           >
             <Text style={styles.langBtn}>
-              🌐 {LANGS.find((l) => l.code === app.lang)?.label} ▾
+              {LANGS.find((l) => l.code === app.lang)?.label} ▾
             </Text>
           </Pressable>
         </View>

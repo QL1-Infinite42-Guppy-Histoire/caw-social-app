@@ -19,6 +19,7 @@ import { clearNameCaches, followerCount, qcawAllowance } from '../lib/cawApi';
 import {
   encAddr,
   fmtAmount,
+  fmtCardDisplay,
   parseAmount,
   word,
   type NameToken,
@@ -171,7 +172,7 @@ function NameCard({
 
   const custom = app.customFor(token.id);
   return (
-    <View style={styles.card}>
+    <View style={styles.nameRow}>
       {/* Compact row (v0.3.7): one line per name — avatar, name +
        * handle/#id/followers, deposited CAW + chevron on the
        * right. Tapping toggles the deposit/withdraw controls
@@ -214,7 +215,7 @@ function NameCard({
             adjustsFontSizeToFit
             minimumFontScale={0.6}
           >
-            {fmtAmount(token.balance)}
+            {fmtCardDisplay(token.balance, 18).text}
             <Text style={styles.rowUnit}> CAW</Text>
           </Text>
           <Text style={S.tiny}>{tr('mine.inName')}</Text>
@@ -257,11 +258,11 @@ function NameCard({
           />
           <View style={[S.row, { marginTop: 10, gap: 10 }]}>
             <Pressable
-              style={[S.darkBtn, { flex: 1 }, busy && S.disabled]}
+              style={[S.bigBtn, { flex: 1, minHeight: 44 }, busy && S.disabled]}
               disabled={busy}
               onPress={() => ask('deposit')}
             >
-              <Text style={S.darkBtnText}>{tr('mine.deposit')}</Text>
+              <Text style={S.bigBtnText}>{tr('mine.deposit')}</Text>
             </Pressable>
             <Pressable
               style={[S.ghostBtn, { flex: 1 }, busy && S.disabled]}
@@ -380,28 +381,28 @@ export default function MyNamesScreen() {
   return (
     <ScrollView
       style={S.screen}
-      contentContainerStyle={S.scrollPad}
+      contentContainerStyle={{ paddingBottom: 32 }}
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
       }
     >
-      <Text style={S.h1}>{tr('mine.title')}</Text>
-      <View style={styles.card}>
+      {/* v0.6.1: the duplicated screen title is gone (the hub
+          back row already names this section); the balance
+          lines sit flat above the list, amounts abbreviated
+          (fmtCardDisplay — no raw 99,929,339.38 strings). */}
+      <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
         <Text style={S.body}>
-          CAW: <Text style={{ fontWeight: '700' }}>{app.qcaw !== null ? fmtAmount(app.qcaw) : '…'}</Text>
+          CAW: <Text style={{ fontWeight: '700' }}>{app.qcaw !== null ? fmtCardDisplay(app.qcaw, 18).text : '…'}</Text>
         </Text>
-        {/* v0.3.2: the big buy button is gone — HuntersSwap now
-            opens from the orange button in the middle of the tab
-            bar. The CAW balance line above stays. */}
+        {app.myTokens.length > 0 ? (
+          <Text style={[S.small, { marginTop: 6 }]}>
+            {tr('mine.summary', {
+              count: String(app.myTokens.length),
+              total: fmtCardDisplay(totalInNames, 18).text,
+            })}
+          </Text>
+        ) : null}
       </View>
-      {app.myTokens.length > 0 ? (
-        <Text style={[S.small, { marginTop: 12 }]}>
-          {tr('mine.summary', {
-            count: String(app.myTokens.length),
-            total: fmtAmount(totalInNames),
-          })}
-        </Text>
-      ) : null}
       {app.myTokens.length === 0 && !app.myTokensReady ? (
         /* Still reading (v0.4.5): an empty list here means the
          * enumeration has not finished — show progress, never
@@ -414,7 +415,7 @@ export default function MyNamesScreen() {
           </Text>
           <View style={{ alignSelf: 'stretch', marginTop: 6 }}>
             {[0, 1, 2].map((i) => (
-              <View key={i} style={[styles.card, styles.skeletonRow]}>
+              <View key={i} style={styles.skeletonRow}>
                 <View style={styles.skeletonCircle} />
                 <View style={{ flex: 1, marginStart: 10, gap: 6 }}>
                   <View style={[styles.skeletonBar, { width: '45%' }]} />
@@ -425,7 +426,7 @@ export default function MyNamesScreen() {
           </View>
         </View>
       ) : app.myTokens.length === 0 ? (
-        <Text style={[S.body, { marginTop: 14 }]}>{tr('mine.none')}</Text>
+        <Text style={[S.body, { marginTop: 14, paddingHorizontal: 16 }]}>{tr('mine.none')}</Text>
       ) : (
         app.myTokens.map((t) => (
           <NameCard
@@ -442,7 +443,7 @@ export default function MyNamesScreen() {
 }
 
 const styles = StyleSheet.create({
-  actingRow: { marginTop: 10, alignItems: 'flex-start' },
+  actingRow: { marginTop: 8, marginBottom: 12, marginStart: 16, alignItems: 'flex-start' },
   actingBadge: {
     backgroundColor: ACCENT,
     color: '#fff',
@@ -454,21 +455,27 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   useBtn: {
-    marginTop: 10,
+    marginTop: 8,
+    marginBottom: 12,
+    marginStart: 16,
+    alignSelf: 'flex-start',
     borderWidth: 1,
     borderColor: ACCENT,
     borderRadius: 999,
-    minHeight: 40,
+    minHeight: 34,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 14,
   },
-  useBtnText: { color: ACCENT, fontSize: 14, fontWeight: '800' },
+  useBtnText: { color: ACCENT, fontSize: 13.5, fontWeight: '800' },
   skeletonRow: {
     flexDirection: 'row',
     alignItems: 'center',
     minHeight: 52,
     paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eff3f4',
   },
   skeletonCircle: {
     width: 40,
@@ -477,26 +484,27 @@ const styles = StyleSheet.create({
     backgroundColor: '#eff3f4',
   },
   skeletonBar: { height: 10, borderRadius: 5, backgroundColor: '#eff3f4' },
-  card: {
-    borderWidth: 1,
-    borderColor: '#eff3f4',
-    borderRadius: 14,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    marginTop: 10,
+  /* Flat X-style rows (v0.6.1): hairline dividers instead of
+   * bordered cards; the row owns its horizontal padding so
+   * the list runs edge to edge. */
+  nameRow: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#eff3f4',
     backgroundColor: '#fff',
   },
   rowHead: {
     flexDirection: 'row',
     alignItems: 'center',
     minHeight: 52,
-    paddingVertical: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
   },
   expanded: {
     borderTopWidth: 1,
     borderTopColor: '#eff3f4',
     paddingTop: 12,
-    paddingBottom: 8,
+    paddingBottom: 10,
+    paddingHorizontal: 16,
     marginTop: 2,
   },
   name: { fontSize: 15, fontWeight: '700', color: '#0f1419' },

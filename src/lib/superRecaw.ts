@@ -1,5 +1,5 @@
 /**
- * SuperRecaw (v0.5.0) — a Recaw with a flashy treatment,
+ * SuperRecaw (v0.5.0) — a Recaw set apart in the feed,
  * paid for by burning exactly 1,000,000 O (QL1) with an
  * "SRC1" trailing-calldata marker naming the ORIGINAL post's
  * cawId (see lib/markedBurns.ts for the shared marked-burn
@@ -13,9 +13,10 @@
  * alone — the retry path cannot build a second recaw. If the
  * recaw itself fails, nothing else runs.
  *
- * Display: a recaw row renders with the flashy treatment
- * (gradient frame + SuperRecaw badge) only when the index
- * holds an SRC1 mark for (original cawId, recawer's owner
+ * Display: a recaw row renders with the gold SuperRecaw
+ * attribution line (flat X-style since v0.6.1; a gradient
+ * frame + badge through v0.6.0) only when the index holds
+ * an SRC1 mark for (original cawId, recawer's owner
  * address) — chain data only, never a local tally.
  */
 import {

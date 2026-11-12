@@ -1,17 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Animated,
   BackHandler,
-  Easing,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
-  useWindowDimensions,
   View,
 } from 'react-native';
-import * as Clipboard from 'expo-clipboard';
 import { StatusBar } from 'expo-status-bar';
 import {
   SafeAreaProvider,
@@ -21,16 +16,15 @@ import {
 
 import { ACCENT } from './src/config';
 import { AppProvider, useApp } from './src/context/AppContext';
-import { LANGS, tr } from './src/i18n';
+import { tr } from './src/i18n';
 import {
   AppLogo,
   Avatar,
-  BalanceGrid,
+  BellIcon,
   HomeIcon,
   PasswordPrompt,
   S,
   SearchIcon,
-  SettingsIcon,
   UserIcon,
 } from './src/components/ui';
 import OnboardingScreen from './src/screens/OnboardingScreen';
@@ -45,42 +39,30 @@ import InboxScreen from './src/screens/InboxScreen';
 import { loadSeen, scanReactions } from './src/lib/inbox';
 import { storeKV } from './src/lib/stores';
 
-function LangToggle() {
-  const { lang, changeLang } = useApp();
-  // Five languages no longer fit as a row of buttons in the header.
-  // One compact button showing the current language; tapping cycles
-  // to the next. The full list lives in Settings.
-  const idx = LANGS.findIndex((l) => l.code === lang);
-  const cur = LANGS[idx >= 0 ? idx : 0];
-  const next = LANGS[(idx + 1) % LANGS.length];
-  return (
-    <Pressable
-      onPress={() => changeLang(next.code)}
-      hitSlop={8}
-      style={({ pressed }) => [styles.langCycle, pressed && { opacity: 0.6 }]}
-    >
-      <Text style={styles.langCycleText}>🌐 {cur.label} ▾</Text>
-    </Pressable>
-  );
-}
-
-function Header({
-  onBrandPress,
-  cardOpen,
-}: {
-  onBrandPress?: () => void;
-  cardOpen?: boolean;
-}) {
-  const { address, myTokens } = useApp();
+/**
+ * The app header (v0.6.1, X-style finish): as spare as X's
+ * own — the active name's avatar at the start (tap → the
+ * Profile hub), a small centered CAW mark, and the reactions
+ * bell at the end, now a vector icon (the emoji bell button
+ * of v0.6.0 and earlier is gone). The unread badge machinery is
+ * the v0.3.4 one, unchanged: the count is exactly what the
+ * inbox will show (loadSeen + scanReactions), refreshed on
+ * mount, when my names change, and after the inbox closes.
+ *
+ * What the pre-v0.6.1 header carried, and where it went:
+ *  - brand block ("CAW Social ▾ / QL1版") + name-card overlay:
+ *    retired. The card's contents all live on the Profile
+ *    hub now — profile summary (tap → the profile), the
+ *    prominent deposited-CAW card, the full balance grid one
+ *    tap deeper (hub → Wallet), the copyable address chip on
+ *    the summary, the inbox entry (hub row + this bell).
+ *  - language cycle button (globe emoji): retired. The full language
+ *    list lives in the hub's Settings section, as it always
+ *    has — Settings → Language.
+ */
+function Header() {
+  const { address, myTokens, actingId, customFor, setTab } = useApp();
   const [inboxOpen, setInboxOpen] = useState(false);
-  /* Unread-reaction bell (v0.3.7): the v0.3.4 Home mini header
-   * duplicated this app header ("CAW Social" twice), so the mini
-   * header is gone and the bell lives HERE, next to the language
-   * selector — always visible at the top, no scrolling. The badge
-   * machinery is unchanged from v0.3.4: the count is exactly what
-   * the inbox will show (loadSeen + scanReactions), refreshed on
-   * mount, when my names change, and after the inbox closes (the
-   * inbox marks everything seen, so the count drops to zero). */
   const [unread, setUnread] = useState(0);
   const badgeBusyRef = useRef(false);
   const refreshBadge = useCallback(async () => {
@@ -112,35 +94,39 @@ function Header({
     wasInboxOpenRef.current = inboxOpen;
   }, [inboxOpen, refreshBadge]);
 
+  const acting =
+    myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
+  const custom = acting ? customFor(acting.id) : undefined;
+
   return (
     <View style={styles.header}>
-      {/* v0.4.5: tapping the brand (logo + title) toggles the name
-       * card under the header. The bell and the language selector
-       * are siblings of this Pressable and keep their own taps. */}
       <Pressable
-        onPress={onBrandPress}
+        onPress={() => setTab('profile')}
+        hitSlop={6}
         style={({ pressed }) => [
-          { flexDirection: 'row', alignItems: 'center', gap: 9 },
+          styles.headerSide,
           pressed && { opacity: 0.7 },
         ]}
         accessibilityRole="button"
+        accessibilityLabel={tr('nav.profile')}
       >
-        {/* The logo artwork itself is the app's real asset,
-         * untouched — the only addition is the small chevron
-         * beside the title text, marking the brand as the
-         * name-card toggle. */}
-        <AppLogo size={34} />
-        <View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Text style={styles.brand}>{tr('app.name')}</Text>
-            <Text style={{ fontSize: 11, color: '#536471', fontWeight: '700' }}>
-              {cardOpen ? '▴' : '▾'}
-            </Text>
+        {acting ? (
+          <Avatar
+            nameId={acting.id}
+            size={32}
+            customUri={custom?.avatarPath}
+          />
+        ) : (
+          <View style={styles.headerAvatarFallback}>
+            <UserIcon size={18} color="#536471" />
           </View>
-          <Text style={S.tiny}>{tr('app.tagline')}</Text>
-        </View>
+        )}
       </Pressable>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+      <View style={styles.headerMark} pointerEvents="none">
+        <AppLogo size={20} />
+        <Text style={styles.headerWord}>CAW</Text>
+      </View>
+      <View style={styles.headerSideEnd}>
         <Pressable
           onPress={() => setInboxOpen(true)}
           hitSlop={8}
@@ -148,9 +134,10 @@ function Header({
             styles.bellBtn,
             pressed && { backgroundColor: '#e3e8ea' },
           ]}
+          accessibilityRole="button"
           accessibilityLabel={tr('inbox.title')}
         >
-          <Text style={{ fontSize: 19 }}>🔔</Text>
+          <BellIcon size={21} color="#0f1419" />
           {unread > 0 ? (
             <View style={styles.badge}>
               <Text style={styles.badgeText}>
@@ -159,7 +146,6 @@ function Header({
             </View>
           ) : null}
         </Pressable>
-        <LangToggle />
       </View>
       <Modal
         visible={inboxOpen}
@@ -168,209 +154,6 @@ function Header({
       >
         <InboxScreen onClose={() => setInboxOpen(false)} />
       </Modal>
-    </View>
-  );
-}
-
-/**
- * The name card (v0.4.5): drops down under the brand header when
- * the brand is tapped. It is an OVERLAY — the feed underneath
- * never moves. Shows the active CAW name the way the Home wallet
- * card does (custom avatar / display name when set, address
- * chip, CAW + QOM balances), a notifications entry (the same
- * inbox as the header bell), and a jump to the profile.
- * Switching the active name deliberately does NOT live here —
- * it belongs to the My Names screen (user decision 2026-11-09).
- * A wallet with no name yet gets the plain state plus the way
- * to the Get-a-name tab.
- */
-function NameCard({ onClose }: { onClose: () => void }) {
-  const app = useApp();
-  const { address, myTokens, actingId, qcaw, qom, f42, cat42, oTok, ket } = app;
-  const acting =
-    myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
-  const custom = acting ? app.customFor(acting.id) : undefined;
-  const [copied, setCopied] = useState(false);
-  /* Notifications entry (v0.4.5 addition): the same inbox the
-   * header bell opens, with the unread count from the same
-   * source (loadSeen + scanReactions). The card stays mounted
-   * behind the inbox modal — closing the card first would take
-   * the modal down with it. */
-  const [unread, setUnread] = useState(0);
-  const [inboxOpen, setInboxOpen] = useState(false);
-  const badgeBusyRef = useRef(false);
-  const refreshBadge = useCallback(async () => {
-    if (!address || myTokens.length === 0) {
-      setUnread(0);
-      return;
-    }
-    if (badgeBusyRef.current) return;
-    badgeBusyRef.current = true;
-    try {
-      const myIds = new Set(myTokens.map((t) => t.id.toString()));
-      const seen = await loadSeen(storeKV, address);
-      const r = await scanReactions(myIds, seen);
-      setUnread(r.items.length);
-    } catch {
-      /* keep the last count; the next refresh retries */
-    } finally {
-      badgeBusyRef.current = false;
-    }
-  }, [address, myTokens]);
-  useEffect(() => {
-    refreshBadge();
-  }, [refreshBadge]);
-  const wasInboxOpenRef = useRef(false);
-  useEffect(() => {
-    if (wasInboxOpenRef.current && !inboxOpen) refreshBadge();
-    wasInboxOpenRef.current = inboxOpen;
-  }, [inboxOpen, refreshBadge]);
-
-  if (!acting) {
-    return (
-      <View>
-        <Text style={S.body}>{tr('mine.none')}</Text>
-        <Pressable
-          style={[S.bigBtn, { marginTop: 12 }]}
-          onPress={() => {
-            onClose();
-            app.openHub('get');
-          }}
-        >
-          <Text style={S.bigBtnText}>{tr('nav.getName')}</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  const displayName = custom?.displayName
-    ? custom.displayName
-    : '@' + acting.username;
-  const chipAddress = address
-    ? address.slice(0, 6) + '…' + address.slice(-4)
-    : '—';
-
-  return (
-    <View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-        <Avatar
-          nameId={acting.id}
-          size={52}
-          customUri={custom?.avatarPath}
-        />
-        <View style={{ flex: 1 }}>
-          {/* X-style order (user, 2026-11-09): the DISPLAY NAME is
-           * the big primary line; the @handle and the name number
-           * share the smaller line under it. */}
-          <Text style={styles.cardName} numberOfLines={1}>
-            {displayName}
-          </Text>
-          <Text style={S.small} numberOfLines={1}>
-            {custom?.displayName ? '@' + acting.username + ' · ' : ''}
-            {'#' + acting.id.toString()}
-          </Text>
-          <Pressable
-            onPress={async () => {
-              if (!address) return;
-              await Clipboard.setStringAsync(address);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 2000);
-            }}
-            style={({ pressed }) => [
-              styles.addrChip,
-              { alignSelf: 'flex-start', marginTop: 5 },
-              pressed && { backgroundColor: '#e3e8ea' },
-            ]}
-            accessibilityRole="button"
-          >
-            <Text style={styles.addrChipText}>
-              {copied ? '✓' : chipAddress + ' 📋'}
-            </Text>
-          </Pressable>
-        </View>
-      </View>
-
-      {/* Balances (v0.4.10): the SAME BalanceGrid as the Home
-       * wallet card — same cells, same order (the grid's own
-       * comment in ui.tsx carries the layout history). The
-       * deposited CAW is acting.balance = cawBalanceOf from
-       * the same enumeration the profile and My Names read —
-       * same source, same freshness. The v0.4.7 unread rule
-       * holds inside the grid: the dash, never a 0. The card
-       * overlay below still caps its height and this content
-       * scrolls inside the card; the header stays outside,
-       * untouched. */}
-      <View style={{ marginTop: 14 }}>
-        <BalanceGrid
-          cells={[
-            { label: tr('home.qcaw'), unit: 'CAW', raw: qcaw },
-            { label: tr('home.qom'), unit: 'QOM', raw: qom },
-            { label: tr('card.inName'), unit: 'CAW', raw: acting.balance },
-            { label: tr('card.f42'), unit: '42', raw: f42 },
-            { label: tr('card.cat42'), unit: 'CAT42', raw: cat42 },
-            {
-              label: 'O',
-              unit: 'O',
-              raw: oTok ? oTok.raw : null,
-              decimals: oTok ? oTok.decimals : 18,
-            },
-            {
-              label: 'KET',
-              unit: 'KET',
-              raw: ket ? ket.raw : null,
-              decimals: ket ? ket.decimals : 18,
-            },
-            null,
-          ]}
-        />
-      </View>
-
-      {/* Notifications (v0.4.5 addition): same destination as
-       * the header bell, badge only when something is unread. */}
-      <Pressable
-        onPress={() => setInboxOpen(true)}
-        style={({ pressed }) => [
-          styles.cardSwitchRow,
-          {
-            marginTop: 12,
-            borderTopWidth: 1,
-            borderTopColor: '#eff3f4',
-            paddingTop: 12,
-          },
-          pressed && { backgroundColor: '#f7f9f9' },
-        ]}
-        accessibilityRole="button"
-        accessibilityLabel={tr('inbox.title')}
-      >
-        <Text style={{ fontSize: 19 }}>🔔</Text>
-        <Text style={[S.body, { flex: 1, fontWeight: '700' }]}>
-          {tr('inbox.title')}
-        </Text>
-        {unread > 0 ? (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>
-              {unread > 99 ? '99+' : String(unread)}
-            </Text>
-          </View>
-        ) : null}
-      </Pressable>
-      <Modal
-        visible={inboxOpen}
-        animationType="slide"
-        onRequestClose={() => setInboxOpen(false)}
-      >
-        <InboxScreen onClose={() => setInboxOpen(false)} />
-      </Modal>
-
-      <Pressable
-        style={[S.bigBtn, { marginTop: 14 }]}
-        onPress={() => {
-          onClose();
-          app.openProfile(acting.username);
-        }}
-      >
-        <Text style={S.bigBtnText}>{tr('home.profile')}</Text>
-      </Pressable>
     </View>
   );
 }
@@ -388,32 +171,9 @@ function Main() {
   // center button — it is an entry on the Profile hub
   // (MeScreen mounts the modal). Nothing about the exchange
   // itself changed.
-  // Name card (v0.4.5): dropped from the brand header. Mounted
-  // only while open or animating shut; navigating anywhere
-  // closes it.
-  const [cardOpen, setCardOpen] = useState(false);
-  const [cardMounted, setCardMounted] = useState(false);
-  const cardAnim = useRef(new Animated.Value(0)).current;
-  /* v0.4.8: five balance frames make the name card taller than
-   * short screens. The content column's measured height caps the
-   * card (its ScrollView then scrolls INSIDE the card — the
-   * header above stays put and tappable). Until the first layout
-   * lands, fall back to a window-height fraction. */
-  const { height: winH } = useWindowDimensions();
-  const [contentH, setContentH] = useState(0);
-  const cardMaxH =
-    (contentH > 0 ? contentH : Math.round(winH * 0.86)) - 10;
-  useEffect(() => {
-    if (cardOpen) setCardMounted(true);
-    Animated.timing(cardAnim, {
-      toValue: cardOpen ? 1 : 0,
-      duration: 180,
-      easing: Easing.out(Easing.ease),
-      useNativeDriver: false,
-    }).start(({ finished }) => {
-      if (finished && !cardOpen) setCardMounted(false);
-    });
-  }, [cardOpen, cardAnim]);
+  // v0.6.1: the name-card overlay is retired with the old
+  // header — everything it showed lives on the Profile hub
+  // (see the Header note above for the mapping).
   const {
     tab,
     setTab,
@@ -428,10 +188,6 @@ function Main() {
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (cardOpen) {
-        setCardOpen(false);
-        return true;
-      }
       if (composeOpen) {
         closeCompose();
         return true;
@@ -447,12 +203,7 @@ function Main() {
       return false;
     });
     return () => sub.remove();
-  }, [cardOpen, composeOpen, profileName, postDetail, closeCompose, closeProfile, closePost]);
-
-  // Navigating anywhere closes the name card (v0.4.5).
-  useEffect(() => {
-    setCardOpen(false);
-  }, [tab, profileName, postDetail, composeOpen]);
+  }, [composeOpen, profileName, postDetail, closeCompose, closeProfile, closePost]);
 
   /* Tabs (v0.6.0, X-style overhaul): exactly three —
    * Home / Search / Profile — ICON-ONLY, like the mock's
@@ -488,77 +239,11 @@ function Main() {
 
   return (
     <SafeAreaView style={S.screen} edges={['top', 'bottom']}>
-      <Header
-        onBrandPress={() => setCardOpen((o) => !o)}
-        cardOpen={cardOpen}
-      />
-      <View
-        style={{ flex: 1 }}
-        onLayout={(e) => setContentH(e.nativeEvent.layout.height)}
-      >
+      <Header />
+      <View style={{ flex: 1 }}>
         {tab === 'home' && <TimelineScreen />}
         {tab === 'search' && <SearchScreen />}
         {tab === 'profile' && <MeScreen />}
-        {cardMounted ? (
-          /* The name-card overlay: mounted INSIDE the content
-           * column, which begins exactly under the header — so
-           * the overlay's top IS the header's bottom edge on
-           * every device, with no measurement involved, and the
-           * card (marginTop in nameCard) hangs below it with a
-           * clear gap. The header lives OUTSIDE this box: the
-           * backdrop can never cover it, the brand stays
-           * tappable while the card is open, and re-tapping it
-           * closes the card (the toggle in Header). The
-           * transparent backdrop takes every outside tap inside
-           * the content area and closes the card; later siblings
-           * (tab bar, compose button) still receive their own
-           * taps — and switching tabs closes the card anyway.
-           * v0.4.5 anchored the overlay to the SafeAreaView with
-           * a measured header height; the safe-area inset offset
-           * the two coordinate systems, so the card crept up over
-           * the header and its backdrop swallowed header taps
-           * (user screenshot, 2026-11-09). The card itself only
-           * fades/slides; nothing underneath moves. */
-          <View style={styles.cardOverlay}>
-            <Pressable
-              style={StyleSheet.absoluteFill}
-              onPress={() => setCardOpen(false)}
-              accessibilityRole="button"
-            />
-            <Animated.View
-              style={[
-                styles.nameCard,
-                {
-                  // v0.4.8: capped at the content column's
-                  // height (minus the card's 10px top margin);
-                  // the ScrollView inside scrolls the card's
-                  // content when five frames don't fit.
-                  maxHeight: cardMaxH,
-                  opacity: cardAnim,
-                  transform: [
-                    {
-                      translateY: cardAnim.interpolate({
-                        inputRange: [0, 1],
-                        // -6 against the card's 10px top margin:
-                        // even mid-slide the card's top edge
-                        // stays below the header's bottom edge.
-                        outputRange: [-6, 0],
-                      }),
-                    },
-                  ],
-                },
-              ]}
-            >
-              <ScrollView
-                style={{ maxHeight: cardMaxH - 32 }}
-                showsVerticalScrollIndicator={false}
-                bounces={false}
-              >
-                <NameCard onClose={() => setCardOpen(false)} />
-              </ScrollView>
-            </Animated.View>
-          </View>
-        ) : null}
       </View>
       {tab === 'home' && !profileName && (
         <Pressable
@@ -663,54 +348,42 @@ const styles = StyleSheet.create({
     borderBottomColor: '#eff3f4',
     backgroundColor: '#fff',
   },
-  brand: { fontSize: 19, fontWeight: '800', color: '#0f1419' },
-  /* Name card (v0.4.5) */
-  cardOverlay: {
-    // Anchored to the content column (see Main), so top: 0 is
-    // the header's bottom edge — never over the header.
+  headerSide: {
+    width: 44,
+    height: 40,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+  },
+  headerSideEnd: {
+    width: 44,
+    height: 40,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  headerAvatarFallback: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#eff3f4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerMark: {
     position: 'absolute',
-    top: 0,
     start: 0,
     end: 0,
+    top: 0,
     bottom: 0,
-  },
-  nameCard: {
-    marginHorizontal: 12,
-    // The visible gap between the header's bottom edge and the
-    // card's top edge (v0.4.6; was 6 in v0.4.5).
-    marginTop: 10,
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#eff3f4',
-    padding: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.16,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 10,
-  },
-  cardName: { fontSize: 18, fontWeight: '800', color: '#0f1419' },
-  addrChip: {
-    backgroundColor: '#f0f3f5',
-    borderRadius: 999,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-  },
-  addrChipText: { fontSize: 12, color: '#536471', fontWeight: '600' },
-  cardSwitchBox: {
-    marginTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#eff3f4',
-    paddingTop: 6,
-  },
-  cardSwitchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingVertical: 7,
-    paddingHorizontal: 4,
-    borderRadius: 10,
+    justifyContent: 'center',
+    gap: 6,
+  },
+  headerWord: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0f1419',
+    letterSpacing: 0.5,
   },
   bellBtn: {
     width: 40,
@@ -718,9 +391,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#eff3f4',
-    backgroundColor: '#f7f9f9',
   },
   badge: {
     position: 'absolute',
@@ -739,8 +409,6 @@ const styles = StyleSheet.create({
     borderColor: '#fff',
   },
   badgeText: { fontSize: 10.5, fontWeight: '800', color: '#fff' },
-  langCycle: { paddingVertical: 6, paddingHorizontal: 8, marginStart: 8 },
-  langCycleText: { fontSize: 13.5, color: '#536471', fontWeight: '600' },
   bottomNav: {
     flexDirection: 'row',
     // v0.3.6: a visible frame for the bar — the old #eff3f4

@@ -13,6 +13,7 @@ import {
   ConfirmSheet,
   NameRow,
   PostCard,
+  RepeatIcon,
   ReplyIcon,
   S,
   TipSheet,
@@ -96,7 +97,7 @@ export default function PostDetailScreen({
 
   /* ---------- SuperLike (v0.4.9; O-burn design v0.5.0) ----------
    * The detail view renders the same PostCard as the feed and
-   * the profile lists, so it offers the same ⭐ flow with the
+   * the profile lists, so it offers the same SuperRecaw flow with the
    * same guards (own-post block, fresh-balance hard stop). One
    * O burn transaction — no debt state. */
   const [slStatus, setSlStatus] = useState<Record<string, string>>({});
@@ -284,7 +285,7 @@ export default function PostDetailScreen({
             )}
             <View style={styles.sectionRow}>
               <View style={[styles.sectionBadge, { backgroundColor: '#17bf63' }]}>
-                <Text style={styles.sectionBadgeText}>🔁</Text>
+                <RepeatIcon size={13} color="#fff" />
               </View>
               <Text style={S.h2}>
                 {tr('detail.sharedBy')} · {shares.length}

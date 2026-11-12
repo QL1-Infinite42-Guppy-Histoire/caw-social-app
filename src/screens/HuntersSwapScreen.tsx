@@ -48,11 +48,10 @@ function DepositAddressRow({ address }: { address: string }) {
   return (
     <View
       style={{
-        borderWidth: 1,
-        borderColor: '#eff3f4',
-        borderRadius: 14,
-        padding: 14,
-        marginTop: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eff3f4',
+        paddingHorizontal: 16,
+        paddingVertical: 14,
       }}
     >
       <Text style={[S.body, { fontWeight: '700' }]}>{tr('hs.depositAddress')}</Text>
@@ -120,14 +119,23 @@ export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) 
           borderBottomColor: HAIRLINE,
         }}
       >
-        <View style={[S.row, { justifyContent: 'space-between', alignItems: 'flex-start' }]}>
-          <View style={{ flex: 1, paddingRight: 8 }}>
-            <Text style={{ fontSize: 25, fontWeight: '800', color: '#0f1419', letterSpacing: 0.2 }}>
-              Hunters<Text style={{ color: ACCENT }}>Exchange</Text>
-            </Text>
-            <Text style={[S.small, { marginTop: 1 }]}>{tr('hs.title')}</Text>
-          </View>
-          <View style={[S.row, { gap: 8, paddingTop: 2 }]}>
+        {/* v0.6.1: the title gets its own full-width line.
+            Squeezed into a flex row beside three pills it was
+            left ~40% of the width and wrapped mid-word
+            ("Exchang/e") on the user's phone. One line,
+            fit-to-width, never a break inside the word; the
+            pills move to their own row under the caption. */}
+        <Text
+          style={{ fontSize: 22, fontWeight: '800', color: '#0f1419', letterSpacing: 0.2 }}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.7}
+        >
+          Hunters<Text style={{ color: ACCENT }}>Exchange</Text>
+        </Text>
+        <Text style={[S.small, { marginTop: 1 }]}>{tr('hs.title')}</Text>
+        <View>
+          <View style={[S.row, { gap: 8, marginTop: 10 }]}>
             <FaucetPillButton />
             <Pressable
               onPress={() => setSendOpen(true)}
@@ -168,10 +176,7 @@ export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) 
        * in-app way. */}
       <ScrollView
         style={S.screen}
-        contentContainerStyle={[
-          S.scrollPad,
-          { paddingBottom: 32 + insets.bottom },
-        ]}
+        contentContainerStyle={{ paddingBottom: 32 + insets.bottom }}
       >
         <DepositAddressRow address={app.address ?? ''} />
         <ExchangeSection />

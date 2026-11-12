@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Avatar, S } from '../components/ui';
+import { Avatar, S, SearchIcon } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
@@ -109,7 +109,9 @@ export default function SearchScreen({ onClose }: { onClose?: () => void }) {
           </Pressable>
         ) : null}
         <View style={styles.inputWrap}>
-          <Text style={styles.mag}>🔍</Text>
+          <View style={styles.mag}>
+          <SearchIcon size={16} color="#536471" />
+        </View>
           <TextInput
             style={styles.input}
             value={query}
@@ -234,7 +236,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     minHeight: 42,
   },
-  mag: { fontSize: 14, marginEnd: 6 },
+  mag: { marginEnd: 6, justifyContent: 'center' },
   input: { flex: 1, fontSize: 15, color: '#0f1419', paddingVertical: 8 },
   clear: { fontSize: 14, color: '#536471', paddingHorizontal: 4 },
   row: {
@@ -254,4 +256,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  /* v0.6.1: the no-query hint sits in the upper area (X keeps
+   * its empty states high), gray, nothing else changed. */
+  hintTop: { paddingTop: 56, alignItems: 'center', paddingHorizontal: 24 },
 });

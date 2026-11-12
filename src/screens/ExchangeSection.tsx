@@ -52,7 +52,7 @@ import {
 } from 'react-native';
 import { Wallet } from 'ethers';
 
-import { S } from '../components/ui';
+import { CheckIcon, S } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr, type StrKey } from '../i18n';
@@ -165,13 +165,15 @@ import {
 } from '../lib/exchange';
 import { EXCHANGE_BYTECODE } from '../lib/exchangeBytecode';
 
+/* v0.6.1 (X finish): a section is a flat block with a
+ * hairline divider — no rounded card border. Sections run
+ * edge to edge (the screen's ScrollView no longer pads). */
 const card: object = {
   backgroundColor: '#fff',
-  borderRadius: 16,
-  padding: 14,
-  marginTop: 12,
-  borderWidth: 1,
-  borderColor: '#e6ebee',
+  paddingHorizontal: 16,
+  paddingVertical: 14,
+  borderBottomWidth: 1,
+  borderBottomColor: '#e6ebee',
 };
 const chipRow: object = { flexDirection: 'row', gap: 8, marginTop: 10 };
 function chip(on: boolean): object {
@@ -246,9 +248,11 @@ const X_ROUTES: Record<XFlowKind, { k: string; label: StrKey }[]> = {
     { k: 'ql1', label: 'hxd.toQl1Qom' },
   ],
 };
+/* v0.6.1: X-style pills — the primary action is a filled
+ * pill, the secondary an outline pill. */
 const flowBtn: object = {
   flex: 1,
-  borderRadius: 12,
+  borderRadius: 999,
   paddingVertical: 12,
   alignItems: 'center',
   backgroundColor: ACCENT,
@@ -256,10 +260,12 @@ const flowBtn: object = {
 const flowBtnText: object = { fontSize: 14.5, fontWeight: '700', color: '#fff' };
 const flowBtnGhost: object = {
   flex: 1,
-  borderRadius: 12,
+  borderRadius: 999,
   paddingVertical: 12,
   alignItems: 'center',
-  backgroundColor: '#eff3f4',
+  backgroundColor: '#fff',
+  borderWidth: 1,
+  borderColor: '#cfd9de',
 };
 const flowBtnGhostText: object = {
   fontSize: 14.5,
@@ -2009,9 +2015,19 @@ export default function ExchangeSection() {
                   i < xflow.step ? 'done' : i === xflow.step ? 'now' : 'todo';
                 return (
                   <View key={s} style={[S.row, { marginTop: 6, gap: 8 }]}>
-                    <Text>
-                      {st === 'done' ? '✅' : st === 'now' ? '▶️' : '・'}
-                    </Text>
+                    {st === 'done' ? (
+                      <CheckIcon size={15} />
+                    ) : (
+                      <Text
+                        style={
+                          st === 'now'
+                            ? { color: ACCENT, fontWeight: '800' }
+                            : undefined
+                        }
+                      >
+                        {st === 'now' ? '▸' : '・'}
+                      </Text>
+                    )}
                     <Text
                       style={[
                         S.body,

@@ -456,6 +456,68 @@ console.log('\n-- structure / reachability --');
       read('src/screens/BookmarksScreen.tsx').includes('findPostByCawId'),
     'the Bookmarks list resolves live and placeholders unresolvable posts honestly',
   );
+
+  /* ---------- 9. v0.6.1 finish: header, flat SuperRecaw,
+   * one record link, one-line action row, hub + screens ---- */
+  const mineSrc = read('src/screens/MyNamesScreen.tsx');
+  const searchSrc = read('src/screens/SearchScreen.tsx');
+  const hsSrc = read('src/screens/HuntersSwapScreen.tsx');
+  const exchSrc = read('src/screens/ExchangeSection.tsx');
+  ok(
+    !appSrc.includes('🔔') && !appSrc.includes('🌐') &&
+      !appSrc.includes('LangToggle') && !appSrc.includes('NameCard') &&
+      !appSrc.includes("tr('app.tagline')"),
+    'header: no emoji bell, no globe cycle button, no brand title block, no name card',
+  );
+  ok(
+    appSrc.includes('BellIcon') && appSrc.includes("setTab('profile')") &&
+      appSrc.includes('headerMark'),
+    'header: avatar tap -> Profile hub, centered CAW mark, vector bell for the inbox',
+  );
+  ok(
+    meSrc.includes("openHub('wallet')") && meSrc.includes("tr('hub.wallet')") &&
+      meSrc.includes("tr('hub.balanceNote')") &&
+      meSrc.includes('fmtAmountCard(acting.balance)') &&
+      meSrc.includes('WalletIcon') && meSrc.includes('SendIcon') &&
+      meSrc.includes('BellIcon') && meSrc.includes('DownloadIcon'),
+    'hub: profile summary + hero deposited-CAW card + icon rows (wallet/mine/get/exchange/send/deposit/bookmarks/inbox/settings)',
+  );
+  ok(
+    !uiSrc.includes('superFrame') && !uiSrc.includes('LinearGradient') &&
+      !uiSrc.includes('⭐'),
+    'SuperRecaw renders FLAT: no gradient frame, no badge, no star emoji in ui.tsx',
+  );
+  ok(
+    (uiSrc.match(/tr\('tl\.viewTx'\)/g) || []).length === 2 &&
+      uiSrc
+        .slice(uiSrc.indexOf('{!nested ? ('), uiSrc.indexOf('{!nested ? (') + 500)
+        .includes("tr('tl.viewTx')"),
+    'exactly ONE record link per post row: two render sites total (plain rows + the recaw row), the plain-row one guarded by !nested so nested rows render none',
+  );
+  ok(
+    /actionRow: \{[^}]*justifyContent: 'space-between'/.test(uiSrc) &&
+      !uiSrc.includes("flexWrap: 'wrap'") &&
+      uiSrc.includes('formatViewCount(Number(likes))') &&
+      uiSrc.includes('formatViewCount(replyCount)') &&
+      uiSrc.includes('formatViewCount(recawCount)'),
+    'action row: single line (space-between, no wrap) with compact counts',
+  );
+  ok(
+    mineSrc.includes('fmtCardDisplay(token.balance') &&
+      !mineSrc.includes('fmtAmount(token.balance)') &&
+      mineSrc.includes('fmtCardDisplay(totalInNames, 18)'),
+    'My names: in-name balances are abbreviated (fmtCardDisplay), never raw decimal strings',
+  );
+  ok(
+    hsSrc.includes('adjustsFontSizeToFit') && hsSrc.includes('numberOfLines={1}') &&
+      exchSrc.includes('borderBottomColor') && !exchSrc.includes('borderRadius: 16'),
+    'Exchange: title on one fit-to-width line; sections are flat hairline blocks',
+  );
+  ok(
+    searchSrc.includes('<SearchIcon') && !searchSrc.includes('🔍') &&
+      searchSrc.includes('hintTop'),
+    'Search: vector icon in the bar (no emoji), hint in the upper area',
+  );
 }
 
 console.log(`\nxui: ${pass} passed, ${fail} failed`);

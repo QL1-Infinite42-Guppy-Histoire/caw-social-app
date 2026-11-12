@@ -274,9 +274,9 @@ try {
   check('v0.4.6->v0.4.10 (hub since v0.6.0): the wallet card renders its balances through ONE BalanceGrid',
     (meSrc.match(/<BalanceGrid/g) || []).length === 1 &&
     /raw: acting \? acting\.balance : null/.test(meSrc));
-  check('v0.4.6->v0.4.10: name card renders its balances through ONE BalanceGrid',
-    (appSrc.match(/<BalanceGrid/g) || []).length === 1 &&
-    /raw: acting\.balance/.test(appSrc));
+  check('v0.4.6->v0.4.10 (v0.6.1): the header name card is RETIRED — App.tsx renders no BalanceGrid and no NameCard; the one grid lives on the hub',
+    (appSrc.match(/<BalanceGrid/g) || []).length === 0 &&
+    !appSrc.includes('NameCard'));
   check('v0.4.6 (hub since v0.6.0): the wallet card has no faucet button (Deposit replaced it) — on either screen',
     !/FaucetButton/.test(tlSrc) && !/faucet\.title/.test(tlSrc) &&
     !/FaucetButton/.test(meSrc) && !/faucet\.title/.test(meSrc));
@@ -296,16 +296,12 @@ try {
     (meSrc.match(/numberOfLines=\{1\}/g) || []).length >= 3);
   check('v0.4.6: name-card overlay is NOT measured/anchored to the SafeAreaView (no headerH)',
     !/headerH/.test(appSrc));
-  check('v0.4.6: card overlay anchors to the content column top (top: 0 below the header)',
-    /cardOverlay: \{\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*position: 'absolute',\s*\n\s*top: 0,/.test(appSrc) ||
-    /cardOverlay: \{[^}]*position: 'absolute',[^}]*top: 0,/.test(appSrc));
-  check('v0.4.6: overlay renders after the tab screens, inside their container (header outside it)',
-    appSrc.indexOf('styles.cardOverlay') > appSrc.indexOf("tab === 'profile'"));
-  check('v0.4.6: header brand tap toggles the card (re-tap closes it while open)',
-    /setCardOpen\(\(o\) => !o\)/.test(appSrc));
-  check('v0.4.6: card keeps a visible gap under the header (marginTop 10, slide -6 max)',
-    /nameCard: \{\s*\n\s*marginHorizontal: 12,\s*\n\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*marginTop: 10,/.test(appSrc) ||
-    /nameCard: \{[^}]*marginTop: 10,/.test(appSrc));
+  check('v0.6.1: the name-card overlay is retired entirely — no overlay/card styles remain in App.tsx',
+    !/cardOverlay/.test(appSrc) && !/nameCard/.test(appSrc) &&
+    !/cardMaxH/.test(appSrc));
+  check('v0.6.1: the card toggle machinery is gone (no setCardOpen / card state in App.tsx)',
+    !/setCardOpen/.test(appSrc) && !/cardMounted/.test(appSrc) &&
+    !/cardAnim/.test(appSrc));
 }
 
 /* ---- v0.4.7 (static + stubbed-fetch behaviour): a failed
@@ -342,9 +338,9 @@ try {
   check('v0.4.7: refreshBalances stores only successful reads (a failure cannot clobber)',
     /if \(b\.qom !== null\) setQom\(b\.qom\)/.test(ctxSrc) &&
     /if \(b\.qcaw !== null\) setQcaw\(b\.qcaw\)/.test(ctxSrc));
-  check('v0.4.7 (grid form, v0.4.10; hub card since v0.6.0): hub + name card QOM cells take the live qom state as raw (null -> dash)',
+  check('v0.4.7 (grid form, v0.4.10; hub wallet detail since v0.6.1): the QOM cell takes the live qom state as raw (null -> dash); App.tsx carries no balance cells',
     /unit: 'QOM', raw: qom/.test(meSrc) &&
-    /unit: 'QOM', raw: qom/.test(appSrc));
+    !/unit: 'QOM'/.test(appSrc));
 
   const realFetch = globalThis.fetch;
   const ADDR = '0x0000000000000000000000000000000000000001';
@@ -438,17 +434,14 @@ try {
   check('v0.4.8 (grid form, v0.4.10; hub card since v0.6.0): hub card [42] + CAT42 cells take live state as raw (null -> dash)',
     /unit: '42', raw: f42/.test(meSrc) &&
     /unit: 'CAT42', raw: cat42/.test(meSrc));
-  check('v0.4.8 (grid form, v0.4.10): name card [42] + CAT42 cells take live state as raw (null -> dash)',
-    /unit: '42', raw: f42/.test(appSrc) &&
-    /unit: 'CAT42', raw: cat42/.test(appSrc));
-  check('v0.4.8: both cards use the shared CAT42 label key',
-    /tr\('card\.cat42'\)/.test(meSrc) && /tr\('card\.cat42'\)/.test(appSrc));
+  check('v0.4.8 (grid form, v0.4.10; v0.6.1): App.tsx carries no [42]/CAT42 cells (name card retired); the hub grid keeps the shared CAT42 label key',
+    !/unit: '42'/.test(appSrc) && !/unit: 'CAT42'/.test(appSrc) &&
+    /tr\('card\.cat42'\)/.test(meSrc));
   check('v0.4.8: new label keys exist in all 20 language dicts',
     (i18nSrc.match(/'card\.cat42'/g) || []).length === 20 &&
     (i18nSrc.match(/'card\.f42'/g) || []).length === 20);
-  check('v0.4.8: name card content scrolls inside a height-capped card',
-    /maxHeight: cardMaxH/.test(appSrc) &&
-    /<ScrollView[^>]*>[\s\S]{0,200}<NameCard/.test(appSrc));
+  check('v0.4.8 (v0.6.1): no height-capped name card remains (the overlay and its inner scroll are retired)',
+    !/cardMaxH/.test(appSrc) && !appSrc.includes('<NameCard'));
 
   /* v0.4.9: the five frames are compacted (user: they ate too
    * much vertical space). Pin the compact metrics inside the
@@ -466,9 +459,9 @@ try {
   check('v0.4.9->v0.4.10: the grid keeps the bordered look + unread dash rule',
     /borderColor: '#d9dee2'/.test(balBlock) &&
     /shown === null \? '—'/.test(uiSrc));
-  check('v0.4.9->v0.4.10: both cards render the grid (one per card); no stacked frames remain',
+  check('v0.4.9->v0.4.10 (v0.6.1): the grid renders in exactly one home (the hub wallet detail); App.tsx has none; no stacked frames remain',
     (meSrc.match(/<BalanceGrid/g) || []).length === 1 &&
-    (appSrc.match(/<BalanceGrid/g) || []).length === 1 &&
+    (appSrc.match(/<BalanceGrid/g) || []).length === 0 &&
     !/<BalanceFrame/.test(tlSrc) && !/<BalanceFrame/.test(meSrc) && !/<BalanceFrame/.test(appSrc));
 
   const realFetch = globalThis.fetch;

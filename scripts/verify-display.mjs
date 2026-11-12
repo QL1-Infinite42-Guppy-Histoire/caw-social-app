@@ -277,7 +277,12 @@ try {
       "tr('card.f42')", "tr('card.cat42')", "label: 'O'", "label: 'KET'",
     ].map((k) => seg.indexOf(k));
   };
-  for (const [name, src] of [['Profile card', tlSrc], ['name card', appSrc]]) {
+  /* v0.6.1: the grid's only home is the hub's wallet detail
+   * (MeScreen › WalletDetail). The header name card — the
+   * second grid through v0.6.0 — is retired; App.tsx must
+   * render NO grid at all. Same cells, same order, verified
+   * at the grid's new home. */
+  for (const [name, src] of [['wallet detail (hub)', tlSrc]]) {
     const idxs = labelIdx(src);
     check(`grid: ${name} renders ONE BalanceGrid, cells in mock order (CAW, QOM, in-name, 42, CAT42, O, KET)`,
       (src.match(/<BalanceGrid/g) || []).length === 1 &&
@@ -287,6 +292,8 @@ try {
     check(`grid: ${name} completes the table with an empty 8th cell`,
       /'KET'[\s\S]{0,300}?\n\s+null,\n\s+\]/.test(src.slice(src.indexOf('<BalanceGrid'), src.indexOf('<BalanceGrid') + 1800)));
   }
+  check('grid: App.tsx renders NO BalanceGrid (the header name card is retired, v0.6.1)',
+    (appSrc.match(/<BalanceGrid/g) || []).length === 0 && !appSrc.includes('NameCard'));
 
   /* --- the B/M abbreviation: pure, boundaries + truncation --- */
   const T = (whole, frac18 = 0n) => BigInt(whole) * 10n ** 18n + frac18;
@@ -428,8 +435,11 @@ try {
       langsBlock.includes(`code: '${l}'`)));
   check('v0.5.0 actions: the tip button sits on the post card action row',
     uiSrc.includes("tr('tl.tip')") && uiSrc.includes('onTip'));
-  check('v0.5.0 actions: the SuperRecaw badge renders on marked recaws',
-    uiSrc.includes("tr('tl.superRecaw')") && uiSrc.includes('superFrame'));
+  check('v0.5.0 actions: the SuperRecaw mark renders on marked recaws (v0.6.1: gold attribution line, FLAT — no gradient frame)',
+    uiSrc.includes("tr('tl.superRecaw')") &&
+    uiSrc.includes('SUPERLIKE_ON') &&
+    !uiSrc.includes('superFrame') &&
+    !uiSrc.includes('LinearGradient'));
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

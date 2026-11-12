@@ -281,11 +281,14 @@ const BYSTANDER = '0x2222222222222222222222222222222222222222';
   const ui = readFileSync(ROOT + '/src/components/ui.tsx', 'utf8');
   ok(
     ui.includes('superRecawCachedFor') && ui.includes('hasSuperRecawFor'),
-    'RecawCard detects the flashy treatment from the chain index',
+    'RecawCard detects the SuperRecaw mark from the chain index',
   );
   ok(
-    ui.includes('superFrame') && ui.includes("tr('tl.superRecaw')"),
-    'RecawCard renders the gradient frame + SuperRecaw badge',
+    !ui.includes('superFrame') &&
+      !ui.includes('LinearGradient') &&
+      ui.includes("tr('tl.superRecaw')") &&
+      ui.includes('SUPERLIKE_ON'),
+    'RecawCard renders FLAT with the gold SuperRecaw attribution line (v0.6.1; the gradient frame + badge are gone)',
   );
   const ctx = readFileSync(ROOT + '/src/context/AppContext.tsx', 'utf8');
   ok(ctx.includes('initSuperRecawStore(storeKV)'), 'AppContext inits the debt store');

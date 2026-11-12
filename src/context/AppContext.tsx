@@ -83,7 +83,7 @@ export type Tab = 'home' | 'search' | 'profile';
 
 /** Sections inside the Profile tab (v0.6.0): the hub itself,
  *  plus the three screens that used to be bottom tabs. */
-export type HubSection = 'main' | 'mine' | 'get' | 'settings';
+export type HubSection = 'main' | 'mine' | 'get' | 'settings' | 'wallet';
 
 export interface WalletSecretLoaded {
   kind: WalletKind;

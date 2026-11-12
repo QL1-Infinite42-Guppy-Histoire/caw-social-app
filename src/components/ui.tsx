@@ -11,9 +11,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Svg, { Circle, Line, Path, Polyline } from 'react-native-svg';
+import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
 import { SvgXml } from 'react-native-svg';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ACCENT, X_GOLD } from '../config';
@@ -320,6 +319,77 @@ export function UserIcon({ size = 22, color = '#536471' }: { size?: number; colo
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
       <Circle cx="12" cy="7" r="4" />
+    </Svg>
+  );
+}
+/** Bell (v0.6.1): the reactions-inbox mark for the X-style
+ *  header and the hub row — vector, replacing the emoji bell
+ *  the header button used through v0.6.0. */
+export function BellIcon({ size = 22, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+      <Path d="M13.73 21a2 2 0 0 1-3.46 0" />
+    </Svg>
+  );
+}
+/** Wallet (v0.6.1): the hub's balance-detail row mark. */
+export function WalletIcon({ size = 22, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" />
+      <Path d="M3 5v14a2 2 0 0 0 2 2h16v-5" />
+      <Path d="M18 12a2 2 0 0 0 0 4h4v-4Z" />
+    </Svg>
+  );
+}
+/** Send (v0.6.1): the paper plane, for the hub's Send row. */
+export function SendIcon({ size = 22, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Line x1="22" y1="2" x2="11" y2="13" />
+      <Path d="M22 2 15 22l-4-9-9-4Z" />
+    </Svg>
+  );
+}
+/** Deposit (v0.6.1): an arrow down into a tray, for the hub's
+ *  Deposit row (the focusMine route into My names). */
+export function DownloadIcon({ size = 22, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <Polyline points="7 10 12 15 17 10" />
+      <Line x1="12" y1="15" x2="12" y2="3" />
+    </Svg>
+  );
+}
+/** Get a name (v0.6.1): user-plus, for the hub's mint row. */
+export function UserPlusIcon({ size = 22, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <Circle cx="8.5" cy="7" r="4" />
+      <Line x1="20" y1="8" x2="20" y2="14" />
+      <Line x1="23" y1="11" x2="17" y2="11" />
+    </Svg>
+  );
+}
+/** Check (v0.6.1): a plain tick for completed flow steps —
+ *  replaces the emoji check in the Exchange step list. */
+export function CheckIcon({ size = 16, color = '#1b7a43' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+      <Polyline points="20 6 9 17 4 12" />
+    </Svg>
+  );
+}
+/** Copy (v0.6.1): two stacked pages, for address copy chips —
+ *  replaces the clipboard emoji. */
+export function CopyIcon({ size = 14, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Rect x="9" y="9" width="13" height="13" rx="2" />
+      <Path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </Svg>
   );
 }
@@ -851,7 +921,7 @@ export interface PostCardProps {
   /** Reply button (v0.4.0): opens the composer targeted at this post. */
   onReply?: (item: TimelineItem) => void;
   /** SuperLike button (v0.4.8; O-burn since v0.5.0).
-   *  Without a handler the ⭐ count still shows when it is > 0. */
+   *  Without a handler the star count still shows when it is > 0. */
   onSuperlike?: (item: TimelineItem) => void;
   /** Tip button (v0.5.0): send CAT42 to the post's author. */
   onTip?: (item: TimelineItem) => void;
@@ -903,7 +973,7 @@ function RecawCard({
   const [original, setOriginal] = useState<TimelineItem | null | undefined>(
     undefined,
   );
-  /* SuperRecaw detection (v0.5.0): the flashy treatment shows
+  /* SuperRecaw detection (v0.5.0): the gold attribution line shows
    * only when the marked-burn index holds an SRC1 burn by THIS
    * recawer's owner for the ORIGINAL post's cawId — chain data
    * only (lib/markedBurns.ts), never a local tally. */
@@ -959,19 +1029,29 @@ function RecawCard({
         onPress={name ? () => onOpenProfile(name) : undefined}
       />
       <View style={{ flex: 1, marginStart: 10 }}>
-        {isSuper ? (
-          <View style={[S.row, { marginBottom: 4 }]}>
-            <View style={postStyles.superBadge}>
-              <Text style={postStyles.superBadgeText}>
-                ⭐ {tr('tl.superRecaw')}
-              </Text>
-            </View>
-          </View>
-        ) : null}
+        {/* Attribution line. A SuperRecaw renders FLAT like
+            every other row (v0.6.1 finish — the v0.5.0 cream
+            card, gradient frame and magenta badge are gone);
+            the burn proof the badge carried is now this line
+            alone: a gold star and gold text naming the recaw
+            a SuperRecaw, in the same slot as the plain recaw
+            line. */}
         <View style={S.row}>
-          <RepeatIcon size={14} color={RECAW_ON} />
-          <Text style={[S.tiny, { marginStart: 5, fontWeight: '700' }]}>
+          {isSuper ? (
+            <StarIcon size={14} color={SUPERLIKE_ON} filled />
+          ) : (
+            <RepeatIcon size={14} color={RECAW_ON} />
+          )}
+          <Text
+            style={[
+              S.tiny,
+              { marginStart: 5, fontWeight: '700' },
+              isSuper && { color: SUPERLIKE_ON },
+            ]}
+            numberOfLines={1}
+          >
             {tr('tl.recawedBy', { name: who })}
+            {isSuper ? ' · ' + tr('tl.superRecaw') : ''}
           </Text>
         </View>
         {original === undefined ? (
@@ -1013,23 +1093,9 @@ function RecawCard({
       </View>
     </>
   );
-  if (isSuper && !nested) {
-    /* The flashy treatment (v0.5.0, per the approved concept):
-     * a gold → pink → purple gradient frame around a warm
-     * tinted card, so a SuperRecaw stands out of the feed at a
-     * glance. Nested rows keep the plain frame — the outer row
-     * carries the treatment. */
-    return (
-      <LinearGradient
-        colors={['#f5a623', '#e84393', '#6c5ce7']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={postStyles.superFrame}
-      >
-        <View style={[postStyles.post, postStyles.superInner]}>{row}</View>
-      </LinearGradient>
-    );
-  }
+  /* SuperRecaws take the same flat row as plain recaws
+   * (v0.6.1): the gold attribution line inside `row` is the
+   * only distinction — no frame, no tint, no badge. */
   return (
     <View style={nested ? postStyles.postNested : postStyles.post}>{row}</View>
   );
@@ -1264,13 +1330,19 @@ function PostCardBase({
         ) : null}
         {/* X-style action row (v0.6.0): icon + count, no word
             labels except Tip — Reply / Recaw / Like / Views /
-            SuperLike (gold star) / Tip / Bookmark, then the
-            compact tx link. Every handler, menu and sheet
-            behind these buttons is the pre-overhaul one; only
-            the buttons moved. Views renders only when the
-            counter is configured AND has answered (lib/views.ts
-            — absent, never a fake 0). */}
-        <View style={[S.row, { marginTop: 8, flexWrap: 'wrap', gap: 14 }]}>
+            SuperLike (gold star) / Tip / Bookmark. Every
+            handler, menu and sheet behind these buttons is
+            the pre-overhaul one; only the buttons moved. Views
+            renders only when the counter is configured AND has
+            answered (lib/views.ts — absent, never a fake 0).
+            v0.6.1 finish: the row NEVER wraps (the v0.6.0
+            flexWrap let it spill to a second line at 360dp) —
+            it is a single space-between line with compact
+            counts (formatViewCount: 285 / 1.2K), and the
+            record link moved OUT of the row to its own line
+            below (exactly one per post — see under the row). */}
+        {item.type === 0 ? (
+        <View style={postStyles.actionRow}>
           {item.type === 0 && (onReply || replyCount > 0) ? (
             <Pressable
               disabled={!onReply}
@@ -1283,7 +1355,7 @@ function PostCardBase({
             >
               <ReplyIcon size={16} color="#536471" />
               <Text style={[S.tiny, { marginStart: 4 }]}>
-                {replyCount > 0 ? replyCount.toString() : ''}
+                {replyCount > 0 ? formatViewCount(replyCount) : ''}
               </Text>
             </Pressable>
           ) : null}
@@ -1306,7 +1378,7 @@ function PostCardBase({
                   recawed && { color: RECAW_ON, fontWeight: '700' },
                 ]}
               >
-                {recawCount > 0 ? recawCount.toString() : ''}
+                {recawCount > 0 ? formatViewCount(recawCount) : ''}
               </Text>
             </Pressable>
           ) : null}
@@ -1330,7 +1402,7 @@ function PostCardBase({
                   liked && { color: LIKE_ON, fontWeight: '700' },
                 ]}
               >
-                {likes !== null ? likes.toString() : liked ? '1' : ''}
+                {likes !== null ? formatViewCount(Number(likes)) : liked ? '1' : ''}
               </Text>
             </Pressable>
           ) : null}
@@ -1368,7 +1440,7 @@ function PostCardBase({
                     : null,
                 ]}
               >
-                {slCount !== null && slCount > 0 ? slCount.toString() : ''}
+                {slCount !== null && slCount > 0 ? formatViewCount(slCount) : ''}
               </Text>
             </Pressable>
           ) : null}
@@ -1408,12 +1480,29 @@ function PostCardBase({
               />
             </Pressable>
           ) : null}
-          <Pressable onPress={() => Linking.openURL(txUrl(item.hash))}>
-            <Text style={[S.tiny, { color: ACCENT }]}>
-              {tr('tl.viewTx')} ↗
-            </Text>
-          </Pressable>
         </View>
+        ) : null}
+        {/* The ONE record link per post (v0.6.1): through
+            v0.6.0 a row could show two — this link inside the
+            action row (the post's own tx) plus the recaw
+            wrapper's link below a nested original. Now the
+            action row carries no link at all; each top-level
+            row renders exactly one, here, in the same spot
+            for plain posts and (via RecawCard's own copy)
+            for recaws. Nested rows render none — the outer
+            row's link is the one. */}
+        {!nested ? (
+          <View style={[S.row, { marginTop: 6 }]}>
+            <Pressable
+              onPress={() => Linking.openURL(txUrl(item.hash))}
+              hitSlop={6}
+            >
+              <Text style={[S.tiny, { color: ACCENT }]}>
+                {tr('tl.viewTx')} ↗
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
         {actionStatus ? (
           <Text style={[S.tiny, { marginTop: 4 }]}>{actionStatus}</Text>
         ) : null}
@@ -1507,35 +1596,29 @@ const postStyles = StyleSheet.create({
   },
   quoteName: { fontSize: 13.5, fontWeight: '700', color: '#0f1419' },
   quoteText: { fontSize: 14, color: '#0f1419', lineHeight: 20, marginTop: 4 },
+  /* The action row (v0.6.1): ONE line, always — space-between
+   * across the content column, no wrap, compact counts. At
+   * 360dp the column is ~274dp wide; seven buttons at these
+   * metrics (16px icon + up to 5 chars of count, Tip's word
+   * label the widest) fit with room to spare. */
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
   // X-style action buttons: a soft pill highlight while pressed.
   actionBtn: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 5,
     paddingVertical: 5,
-    marginStart: -8,
+    marginStart: -5,
     borderRadius: 999,
   },
   actionBtnOn: { backgroundColor: '#f7f9f9' },
-  /* SuperRecaw treatment (v0.5.0): the gradient lives on the
-   * wrapper (LinearGradient), the card inside is warm-tinted
-   * and borderless so the frame reads as one piece. */
-  superFrame: {
-    borderRadius: 18,
-    padding: 3,
-    marginHorizontal: 8,
-    marginVertical: 6,
-  },
-  superInner: {
-    borderBottomWidth: 0,
-    borderRadius: 15,
-    backgroundColor: '#fff7e8',
-  },
-  superBadge: {
-    backgroundColor: '#d6336c',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-  },
-  superBadgeText: { color: '#fff', fontSize: 12, fontWeight: '800' },
+  /* (v0.6.1: the SuperRecaw gradient frame / tinted card /
+   * badge styles were removed with the flat rendering — the
+   * gold attribution line in RecawCard is the whole treatment
+   * now.) */
 });
 
 /* ---------- bottom-sheet style confirm dialog ---------- */

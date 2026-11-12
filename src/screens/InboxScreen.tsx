@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Avatar, S } from '../components/ui';
+import { Avatar, BellIcon, RepeatIcon, S, UserIcon } from '../components/ui';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
@@ -134,7 +134,7 @@ export default function InboxScreen({ onClose }: { onClose: () => void }) {
           ListEmptyComponent={
             <View style={{ paddingHorizontal: 16 }}>
               <View style={S.emptyCard}>
-                <Text style={{ fontSize: 26 }}>🔔</Text>
+                <BellIcon size={26} color="#536471" />
                 <Text style={[S.small, { marginTop: 8, textAlign: 'center' }]}>
                   {tr('inbox.empty')}
                 </Text>
@@ -198,14 +198,17 @@ function ReactionRow({
                 ? '@' + targetName
                 : '#' + (reaction.targetNameId?.toString() ?? ''),
             });
-  const icon =
-    reaction.kind === 1
-      ? '♥'
-      : reaction.kind === 2
-        ? '🔁'
-        : reaction.kind === 3
-          ? '👤'
-          : '👤';
+  /* v0.6.1 icon sweep: the recaw / follow badge glyphs are
+   * vector icons now (the like heart stays a text glyph —
+   * it is a symbol, not an emoji). */
+  const badgeIcon =
+    reaction.kind === 1 ? (
+      <Text style={styles.kindBadgeText}>♥</Text>
+    ) : reaction.kind === 2 ? (
+      <RepeatIcon size={11} color="#fff" />
+    ) : (
+      <UserIcon size={11} color="#fff" />
+    );
   // Kind badge (v0.3.8): a small colored circle on the avatar's
   // corner, X-notification style — like pink, recaw green,
   // follow blue.
@@ -222,7 +225,7 @@ function ReactionRow({
           <Avatar nameId={reaction.actorId} size={40} />
         </Pressable>
         <View style={[styles.kindBadge, { backgroundColor: badgeBg }]}>
-          <Text style={styles.kindBadgeText}>{icon}</Text>
+          {badgeIcon}
         </View>
       </View>
       <View style={{ flex: 1, marginStart: 10 }}>

@@ -19,6 +19,7 @@ import {
   LoadMoreFooter,
   PostCard,
   S,
+  StarIcon,
   TipSheet,
   useNameLabel,
 } from '../components/ui';
@@ -1011,10 +1012,13 @@ export default function ProfileScreen({
                 }
               }}
             >
-              <Text style={S.bigBtnText}>
-                ⭐ {tr('tl.superRecaw')}（
-                {fmtAmountCardDec(MARKED_BURN_PRICE_RAW, 18)} O）
-              </Text>
+              <View style={[S.row, { alignItems: 'center', gap: 6 }]}>
+                <StarIcon size={16} color="#fff" filled />
+                <Text style={S.bigBtnText}>
+                  {tr('tl.superRecaw')}（
+                  {fmtAmountCardDec(MARKED_BURN_PRICE_RAW, 18)} O）
+                </Text>
+              </View>
             </Pressable>
             <View style={{ height: 10 }} />
             <Pressable
