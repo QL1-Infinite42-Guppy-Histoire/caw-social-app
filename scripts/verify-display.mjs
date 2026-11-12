@@ -250,7 +250,10 @@ try {
 
 /* ---------- 7. (v0.4.10) the balance grid ---------- */
 {
-  const tlSrc = readFileSync(ROOT + 'src/screens/TimelineScreen.tsx', 'utf8');
+  // v0.6.0: the card that sat atop Home through v0.5.1 moved
+  // to the Profile hub (MeScreen) in the X-style overhaul —
+  // same cells, same order, verified at its new home.
+  const tlSrc = readFileSync(ROOT + 'src/screens/MeScreen.tsx', 'utf8');
   const appSrc = readFileSync(ROOT + 'App.tsx', 'utf8');
   const cfgSrc = readFileSync(ROOT + 'src/config.ts', 'utf8');
   const ctxSrc = readFileSync(ROOT + 'src/context/AppContext.tsx', 'utf8');
@@ -274,7 +277,7 @@ try {
       "tr('card.f42')", "tr('card.cat42')", "label: 'O'", "label: 'KET'",
     ].map((k) => seg.indexOf(k));
   };
-  for (const [name, src] of [['Home card', tlSrc], ['name card', appSrc]]) {
+  for (const [name, src] of [['Profile card', tlSrc], ['name card', appSrc]]) {
     const idxs = labelIdx(src);
     check(`grid: ${name} renders ONE BalanceGrid, cells in mock order (CAW, QOM, in-name, 42, CAT42, O, KET)`,
       (src.match(/<BalanceGrid/g) || []).length === 1 &&

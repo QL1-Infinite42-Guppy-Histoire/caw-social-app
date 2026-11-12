@@ -886,6 +886,41 @@ export const knownQuotesOf = (cawId: string): RefChild[] =>
 export const knownReplyCount = (cawId: string): number =>
   refChildren(cawId, 'reply').length;
 
+/* ---------- recaw count index (v0.6.0) ----------
+ * Plain recaws (type 2) carry the ORIGINAL post's cawId, and
+ * there is no contract getter for their count (unlike likes,
+ * which CawActions answers directly). The X-style row shows
+ * a recaw count, so — with exactly the reply index's honest
+ * semantics — this counts the DISTINCT recawers the feed
+ * reads have indexed SO FAR, keyed by the original's cawId.
+ * It can undercount until the pages carrying older recaws
+ * have been walked (fetchPostReactions remains the complete
+ * count, used by the post detail); it never invents one. */
+const recawIndex = new Map<string, Set<string>>();
+
+/** Index one action's recaw, when it is one. Called for
+ *  every decoded action by the page reader below. */
+export function indexRecaw(item: TimelineItem): void {
+  if (item.type !== 2) return;
+  const key = (item.cawId || '').toLowerCase();
+  if (!key) return;
+  let senders = recawIndex.get(key);
+  if (!senders) {
+    senders = new Set();
+    recawIndex.set(key, senders);
+  }
+  senders.add(item.senderId.toString());
+}
+
+/** Recaw count from what has been indexed so far (rows display). */
+export const knownRecawCount = (cawId: string): number =>
+  recawIndex.get((cawId || '').toLowerCase())?.size ?? 0;
+
+/** Drop the recaw index (tests). */
+export function resetRecawIndexForTest(): void {
+  recawIndex.clear();
+}
+
 /** Drop the reference index (tests). */
 export function resetRefIndexForTest(): void {
   refIndex.clear();
@@ -955,6 +990,9 @@ async function fetchActionPageUncached(
       if (a.type === 0) {
         postIndex.set(a.cawId.toLowerCase(), item);
         indexPostRef(item);
+      }
+      if (a.type === 2) {
+        indexRecaw(item);
       }
       if (actionObserver) {
         try {

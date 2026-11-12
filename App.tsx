@@ -36,13 +36,11 @@ import {
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import UnlockScreen from './src/screens/UnlockScreen';
 import TimelineScreen from './src/screens/TimelineScreen';
-import GetNameScreen from './src/screens/GetNameScreen';
-import MyNamesScreen from './src/screens/MyNamesScreen';
-import SettingsScreen from './src/screens/SettingsScreen';
+import MeScreen from './src/screens/MeScreen';
+import SearchScreen from './src/screens/SearchScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ComposeScreen from './src/screens/ComposeScreen';
 import PostDetailScreen from './src/screens/PostDetailScreen';
-import { HuntersSwapModal } from './src/screens/HuntersSwapScreen';
 import InboxScreen from './src/screens/InboxScreen';
 import { loadSeen, scanReactions } from './src/lib/inbox';
 import { storeKV } from './src/lib/stores';
@@ -236,7 +234,7 @@ function NameCard({ onClose }: { onClose: () => void }) {
           style={[S.bigBtn, { marginTop: 12 }]}
           onPress={() => {
             onClose();
-            app.setTab('get');
+            app.openHub('get');
           }}
         >
           <Text style={S.bigBtnText}>{tr('nav.getName')}</Text>
@@ -378,17 +376,18 @@ function NameCard({ onClose }: { onClose: () => void }) {
 }
 
 // Height of the bottom tab bar below: navItem paddingVertical
-// 9+9 plus the 22px icon line and the ~19px label line (15px
-// labels since v0.4.5, icons added v0.4.6), plus the 1px top
-// border. Only the compose FAB offset consumes this number.
-const TAB_BAR_HEIGHT = 62;
+// 10+10 plus the 22px icon line, plus the 1px top border —
+// v0.6.0 made the X-style bar icon-only (no label line). Only
+// the compose FAB offset consumes this number.
+const TAB_BAR_HEIGHT = 44;
 
 function Main() {
   const app = useApp();
   const insets = useSafeAreaInsets();
-  // HuntersSwap opens from the tab bar's center action button. It is
-  // an ACTION, not a tab: opening/closing it never changes `tab`.
-  const [hsOpen, setHsOpen] = React.useState(false);
+  // v0.6.0: HuntersExchange no longer opens from a tab-bar
+  // center button — it is an entry on the Profile hub
+  // (MeScreen mounts the modal). Nothing about the exchange
+  // itself changed.
   // Name card (v0.4.5): dropped from the brand header. Mounted
   // only while open or animating shut; navigating anywhere
   // closes it.
@@ -433,10 +432,6 @@ function Main() {
         setCardOpen(false);
         return true;
       }
-      if (hsOpen) {
-        setHsOpen(false);
-        return true;
-      }
       if (composeOpen) {
         closeCompose();
         return true;
@@ -452,28 +447,32 @@ function Main() {
       return false;
     });
     return () => sub.remove();
-  }, [cardOpen, hsOpen, composeOpen, profileName, postDetail, closeCompose, closeProfile, closePost]);
+  }, [cardOpen, composeOpen, profileName, postDetail, closeCompose, closeProfile, closePost]);
 
   // Navigating anywhere closes the name card (v0.4.5).
   useEffect(() => {
     setCardOpen(false);
-  }, [tab, profileName, postDetail, composeOpen, hsOpen]);
+  }, [tab, profileName, postDetail, composeOpen]);
 
-  /* Tab icons (v0.4.6): an icon over every label — the v0.4.5
-   * bar was labels-only and the user asked where the marks
-   * (house, magnifier, person, gear) had gone. The icons are
-   * this app's feather-style vectors, so they render the same
-   * on every phone; they take the label's colour (gray idle,
-   * accent on the active tab). */
+  /* Tabs (v0.6.0, X-style overhaul): exactly three —
+   * Home / Search / Profile — ICON-ONLY, like the mock's
+   * minimal bar. The labels survive as accessibility labels
+   * (screen readers still announce them). Everything that
+   * lived on the removed tabs (Get a name, My names,
+   * Settings, the wallet card, HuntersExchange) is reachable
+   * from the Profile hub screen; the reachability map is in
+   * the v0.6.0 release notes and pinned by
+   * scripts/verify-xui.mjs. No DM tab, no Notifications tab
+   * (the stretch derivation did not verify complete — see
+   * the release report). */
   const tabs: {
     key: typeof tab;
     label: string;
     Icon: React.ComponentType<{ size?: number; color?: string }>;
   }[] = [
     { key: 'home', label: tr('nav.home'), Icon: HomeIcon },
-    { key: 'get', label: tr('nav.getName'), Icon: SearchIcon },
-    { key: 'mine', label: tr('nav.myNames'), Icon: UserIcon },
-    { key: 'settings', label: tr('nav.settings'), Icon: SettingsIcon },
+    { key: 'search', label: tr('nav.search'), Icon: SearchIcon },
+    { key: 'profile', label: tr('nav.profile'), Icon: UserIcon },
   ];
   const renderTab = (t: (typeof tabs)[number]) => (
     <Pressable
@@ -484,18 +483,6 @@ function Main() {
       accessibilityLabel={t.label}
     >
       <t.Icon color={tab === t.key ? ACCENT : '#536471'} />
-      <Text
-        numberOfLines={1}
-        adjustsFontSizeToFit
-        minimumFontScale={0.6}
-        style={[
-          styles.navLabel,
-          { marginTop: 2 },
-          tab === t.key && styles.navLabelOn,
-        ]}
-      >
-        {t.label}
-      </Text>
     </Pressable>
   );
 
@@ -510,9 +497,8 @@ function Main() {
         onLayout={(e) => setContentH(e.nativeEvent.layout.height)}
       >
         {tab === 'home' && <TimelineScreen />}
-        {tab === 'get' && <GetNameScreen />}
-        {tab === 'mine' && <MyNamesScreen />}
-        {tab === 'settings' && <SettingsScreen />}
+        {tab === 'search' && <SearchScreen />}
+        {tab === 'profile' && <MeScreen />}
         {cardMounted ? (
           /* The name-card overlay: mounted INSIDE the content
            * column, which begins exactly under the header — so
@@ -588,29 +574,10 @@ function Main() {
           ]}
           onPress={() => openCompose()}
         >
-          <Text style={styles.fabText}>✎</Text>
+          <Text style={styles.fabText}>+</Text>
         </Pressable>
       )}
-      <View style={styles.bottomNav}>
-        {tabs.slice(0, 2).map(renderTab)}
-        {/* Center action (v0.3.2): a raised orange circle that opens
-            HuntersSwap. It only opens the modal — the selected tab
-            underneath does not change. The circle rises ABOVE the
-            bar (negative margin), so it never collides with the
-            Android system navigation below the bar. */}
-        <View style={styles.navItemCenter}>
-          <Pressable
-            accessibilityLabel={tr('hs.trade')}
-            accessibilityRole="button"
-            style={({ pressed }) => [styles.tradeBtn, pressed && { opacity: 0.75 }]}
-            onPress={() => setHsOpen(true)}
-          >
-            <Text style={styles.tradeBtnText}>⇄</Text>
-          </Pressable>
-        </View>
-        {tabs.slice(2).map(renderTab)}
-      </View>
-      <HuntersSwapModal visible={hsOpen} onClose={() => setHsOpen(false)} />
+      <View style={styles.bottomNav}>{tabs.map(renderTab)}</View>
 
       <Modal
         visible={!!profileName}
@@ -793,56 +760,17 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -2 },
     zIndex: 10,
   },
-  // v0.4.5: the bar grew — labels 12px -> 15px and taller items,
-  // so every tab is a comfortable >=48dp tap target. v0.4.6:
-  // an icon line joins the label line (22px icon + 2px gap +
-  // ~19px label + 9+9 padding = ~62px total, TAB_BAR_HEIGHT).
-  // The bottom safe-area inset is still the SafeAreaView's job
-  // (edges), so gesture-nav and 3-button-nav devices get
-  // exactly one inset, as before — nothing here adds bottom
-  // padding of its own.
-  navItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 9 },
-  // The center slot is narrower than the label slots so the four
-  // labels get the room; the 62px circle still fits inside it on
-  // standard-width phones and never overlaps a label.
-  navItemCenter: { flex: 0.8, alignItems: 'center', justifyContent: 'center', paddingVertical: 9 },
-  navLabel: {
-    fontSize: 15,
-    color: '#536471',
-    fontWeight: '600',
-    textAlign: 'center',
-    width: '100%',
-    paddingHorizontal: 2,
-  },
-  navLabelOn: { color: ACCENT, fontWeight: '800' },
-  tradeBtn: {
-    // Absolutely positioned inside its (normal-height) tab slot, so
-    // the bar keeps its usual height (TAB_BAR_HEIGHT stays valid
-    // and the compose FAB offset follows it) while the circle
-    // floats above the bar: top -25 -> spans y -25..37 of the bar,
-    // never reaching the system navigation underneath.
-    position: 'absolute',
-    top: -25,
-    // Physical left/marginLeft on purpose: the math (50% - half
-    // the width) centers the circle in BOTH layout directions,
-    // so the center tab button stays exactly centered under RTL.
-    left: '50%',
-    marginLeft: -31,
-    width: 62,
-    height: 62,
-    borderRadius: 31,
-    backgroundColor: ACCENT,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: '#fff',
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOpacity: 0.22,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  tradeBtnText: { color: '#fff', fontSize: 27, lineHeight: 30, fontWeight: '800' },
+  // v0.6.0: the bar is icon-only (22px icon + 10+10 padding +
+  // the 1px top border = TAB_BAR_HEIGHT 44). The bottom
+  // safe-area inset is still the SafeAreaView's job (edges),
+  // so gesture-nav and 3-button-nav devices get exactly one
+  // inset, as before — nothing here adds bottom padding of
+  // its own.
+  navItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 10 },
+  // v0.6.0: the label styles and the raised center trade
+  // button styles left with the features they styled (labels
+  // are accessibility-only now; HuntersExchange opens from
+  // the Profile hub).
   fab: {
     position: 'absolute',
     // Logical end (v0.3.9 RTL): bottom-right in LTR, bottom-left

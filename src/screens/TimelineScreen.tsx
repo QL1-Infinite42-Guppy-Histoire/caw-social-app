@@ -10,16 +10,10 @@ import {
   View,
 } from 'react-native';
 
-import * as Clipboard from 'expo-clipboard';
-
 import {
   AppLogo,
-  Avatar,
-  BalanceGrid,
   ConfirmSheet,
-  HAIRLINE,
   LoadMoreFooter,
-  MONO,
   PostCard,
   S,
   TipSheet,
@@ -54,8 +48,6 @@ import {
   buildFollowIndex,
   refinedFollowListsOf,
 } from '../lib/followIndex';
-import SearchScreen from './SearchScreen';
-import SendScreen from './SendScreen';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type PendingAction = { kind: 1 | 2; item: TimelineItem };
@@ -83,8 +75,9 @@ export default function TimelineScreen() {
     () => feedCache?.next ?? null,
   );
   const [loading, setLoading] = useState(!feedCache);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [sendOpen, setSendOpen] = useState(false);
+  /* v0.6.0: the Search and Send modals that used to hang off
+   * this screen are gone — Search is a bottom tab now, and
+   * Send is an entry on the Profile hub (MeScreen). */
   /* "Following" feed (v0.2.0): posts + shares by the names my
    * acting name follows, filtered from the same public feed. */
   const [mode, setMode] = useState<'latest' | 'following'>('latest');
@@ -587,233 +580,40 @@ export default function TimelineScreen() {
     [app, tipItem],
   );
 
-  /* ---------- wallet card identity + address chip (v0.3.4) ---------- */
-  const actingCustom = acting ? app.customFor(acting.id) : undefined;
-  const displayName = acting
-    ? actingCustom?.displayName
-      ? actingCustom.displayName
-      : '@' + acting.username
-    : '—';
-  const subName =
-    acting && actingCustom?.displayName ? '@' + acting.username : null;
-  const chipAddress = address
-    ? address.slice(0, 6) + '…' + address.slice(-4)
-    : '—';
-  const [addrCopied, setAddrCopied] = useState(false);
-  const copyAddr = useCallback(async () => {
-    if (!address) return;
-    await Clipboard.setStringAsync(address);
-    setAddrCopied(true);
-    setTimeout(() => setAddrCopied(false), 2000);
-  }, [address]);
-
+  /* ---------- header (v0.6.0) ----------
+   * X-style: the Home header is ONLY the Latest / Following
+   * segment row (blue underline on the active segment). The
+   * wallet card that used to sit here — identity, balances,
+   * Profile / Send / Deposit buttons — moved to the Profile
+   * hub (MeScreen), and the search pill is gone because
+   * Search is a tab now. Nothing was removed from the app:
+   * the reachability map lives in the v0.6.0 release notes
+   * and is pinned by scripts/verify-xui.mjs. */
   const header = (
-    <View>
-      <View style={styles.walletCard}>
-        {/* v0.4.5: the card's display area (identity + balances)
-         * opens my own profile. The button row below is a
-         * sibling, NOT part of this Pressable, and the address
-         * chip inside keeps its own copy action — nested
-         * Pressables answer their own taps, so nothing steals
-         * from anything. */}
-        <Pressable
-          onPress={
-            acting ? () => app.openProfile(acting.username) : undefined
-          }
-          style={({ pressed }) => [pressed && { opacity: 0.8 }]}
-          accessibilityRole="button"
+    <View style={styles.segRow}>
+      <Pressable
+        style={[styles.segBtn, mode === 'latest' && styles.segBtnOn]}
+        onPress={() => setMode('latest')}
+      >
+        <Text
+          style={[styles.segText, mode === 'latest' && styles.segTextOn]}
         >
-        <View style={[S.row, { alignItems: 'center', gap: 10 }]}>
-          {acting ? (
-            <Avatar
-              nameId={acting.id}
-              size={42}
-              customUri={actingCustom?.avatarPath}
-            />
-          ) : null}
-          <View style={{ flex: 1 }}>
-            <Text
-              style={[S.body, { fontWeight: '800' }]}
-              numberOfLines={1}
-            >
-              {displayName}
-            </Text>
-            {subName ? (
-              <Text style={S.small} numberOfLines={1}>
-                {subName}
-              </Text>
-            ) : null}
-          </View>
-          <Pressable
-            style={({ pressed }) => [
-              styles.chip,
-              pressed && { backgroundColor: '#e3e8ea' },
-            ]}
-            onPress={copyAddr}
-            accessibilityLabel={tr('hs.depositAddress')}
-          >
-            <Text style={styles.chipText}>
-              {addrCopied ? tr('hs.addressCopied') : chipAddress}
-            </Text>
-          </Pressable>
-        </View>
-        {/* Balances (v0.4.10): the two-column BalanceGrid —
-         * the same component, cells and order as the name
-         * card. History: v0.4.5's squeezed row -> v0.4.6's
-         * full-width frames (five by v0.4.8, compacted in
-         * v0.4.9) -> this grid, which fits SEVEN balances in
-         * less height than the five frames took. The grid
-         * formats each cell itself (fmtCardDisplay: B/M
-         * abbreviation for big figures, tap for the exact
-         * number). The deposited CAW is the active name's
-         * in-name balance (cawBalanceOf, carried on the token
-         * from the same enumeration); no name yet -> the
-         * honest dash. Every balance follows the v0.4.7 rule
-         * exactly: unread/failed reads render the dash,
-         * never a numeric 0. v0.4.10's additions: O
-         * (Childhoods End — read on QL1, the chain its
-         * contract lives on) and KET (42 Chain), each at the
-         * decimals its contract reports. CAT42's caption now
-         * says it is the tip currency (user direction
-         * 2026-11-10); SuperLike itself is unchanged. */}
-        <View style={{ marginTop: 12 }}>
-          <BalanceGrid
-            cells={[
-              { label: tr('home.qcaw'), unit: 'CAW', raw: qcaw },
-              { label: tr('home.qom'), unit: 'QOM', raw: qom },
-              {
-                label: tr('card.inName'),
-                unit: 'CAW',
-                raw: acting ? acting.balance : null,
-              },
-              { label: tr('card.f42'), unit: '42', raw: f42 },
-              { label: tr('card.cat42'), unit: 'CAT42', raw: cat42 },
-              {
-                label: 'O',
-                unit: 'O',
-                raw: oTok ? oTok.raw : null,
-                decimals: oTok ? oTok.decimals : 18,
-              },
-              {
-                label: 'KET',
-                unit: 'KET',
-                raw: ket ? ket.raw : null,
-                decimals: ket ? ket.decimals : 18,
-              },
-              null,
-            ]}
-          />
-        </View>
-        </Pressable>
-        <View style={[S.row, { gap: 10, marginTop: 12 }]}>
-          {/* v0.4.5 (spec change): the profile jump is a VISIBLE
-           * button — the main path to my page, so a beginner sees
-           * the tappable place instead of having to discover the
-           * card-body tap above. Same button shape/size as its
-           * neighbours (44dp target, clear 10px gaps), with an
-           * accent label so it reads as navigation, not an action
-           * on the money.
-           * v0.4.6: the third button is DEPOSIT, not the faucet
-           * (user decision, 2026-11-09) — it lands on the My
-           * names screen with the active name's deposit controls
-           * already open (the existing deposit flow, reached via
-           * focusMine). With no name yet there is nothing to
-           * deposit into, so it routes to Get-a-name instead —
-           * the same answer the name card's no-name state gives.
-           * The faucet itself is untouched and stays reachable
-           * from the HuntersDEX gas guidance.
-           * All three labels are numberOfLines=1 with
-           * shrink-to-fit: the v0.4.5 faucet button's label
-           * collapsed and split character-by-character
-           * vertically on device; three IDENTICAL ghost-button
-           * structures leave no room for that failure mode. */}
-          <Pressable
-            style={[S.ghostBtn, { flex: 1 }]}
-            onPress={
-              acting ? () => app.openProfile(acting.username) : undefined
-            }
-            accessibilityRole="button"
-          >
-            <Text
-              style={[S.ghostBtnText, { color: ACCENT, fontWeight: '800' }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.6}
-            >
-              {tr('home.profile')}
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[S.ghostBtn, { flex: 1 }]}
-            onPress={() => setSendOpen(true)}
-            accessibilityRole="button"
-          >
-            <Text
-              style={S.ghostBtnText}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.6}
-            >
-              {tr('send.title')}
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[S.ghostBtn, { flex: 1 }]}
-            onPress={
-              acting
-                ? () => app.focusMine(acting.id)
-                : () => app.setTab('get')
-            }
-            accessibilityRole="button"
-          >
-            <Text
-              style={S.ghostBtnText}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.6}
-            >
-              {tr('home.deposit')}
-            </Text>
-          </Pressable>
-        </View>
-      </View>
-      <View style={styles.searchRow}>
-        <Pressable
-          style={({ pressed }) => [
-            styles.searchPill,
-            { flex: 1 },
-            pressed && { backgroundColor: '#e3e8ea' },
+          {tr('tl.tabLatest')}
+        </Text>
+      </Pressable>
+      <Pressable
+        style={[styles.segBtn, mode === 'following' && styles.segBtnOn]}
+        onPress={() => setMode('following')}
+      >
+        <Text
+          style={[
+            styles.segText,
+            mode === 'following' && styles.segTextOn,
           ]}
-          onPress={() => setSearchOpen(true)}
         >
-          <Text style={styles.searchPillText}>🔍 {tr('search.ph')}</Text>
-        </Pressable>
-      </View>
-      <View style={styles.segRow}>
-        <Pressable
-          style={[styles.segBtn, mode === 'latest' && styles.segBtnOn]}
-          onPress={() => setMode('latest')}
-        >
-          <Text
-            style={[styles.segText, mode === 'latest' && styles.segTextOn]}
-          >
-            {tr('tl.tabLatest')}
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.segBtn, mode === 'following' && styles.segBtnOn]}
-          onPress={() => setMode('following')}
-        >
-          <Text
-            style={[
-              styles.segText,
-              mode === 'following' && styles.segTextOn,
-            ]}
-          >
-            {tr('tl.tabFollowing')}
-          </Text>
-        </Pressable>
-      </View>
+          {tr('tl.tabFollowing')}
+        </Text>
+      </Pressable>
     </View>
   );
 
@@ -883,6 +683,8 @@ export default function TimelineScreen() {
             onReply={openReplyCb}
             onSuperlike={handleSuperlike}
             onTip={handleTip}
+            onBookmark={app.toggleBookmark}
+            isBookmarked={app.isBookmarked}
             actionStatus={statusByHash[item.hash]}
             busy={!!busyByHash[item.hash]}
             liked={app.hasMyAction(1, item)}
@@ -1084,41 +886,14 @@ export default function TimelineScreen() {
           </View>
         </View>
       </Modal>
-      <Modal
-        visible={searchOpen}
-        animationType="slide"
-        onRequestClose={() => setSearchOpen(false)}
-      >
-        <SearchScreen onClose={() => setSearchOpen(false)} />
-      </Modal>
-      <Modal
-        visible={sendOpen}
-        animationType="slide"
-        onRequestClose={() => setSendOpen(false)}
-      >
-        <SendScreen onClose={() => setSendOpen(false)} />
-      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  /* Wallet card: one clean card — identity + copyable address
-     chip on top, then the balances as full-width bordered
-     grid (shared BalanceGrid, v0.4.10) and the button row. */
-  chip: {
-    backgroundColor: '#eff3f4',
-    borderRadius: 999,
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-  },
-  chipText: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#0f1419',
-    fontFamily: MONO,
-  },
-  searchRow: { paddingHorizontal: 16, paddingTop: 12 },
+  /* v0.6.0: the wallet-card styles (chip / walletCard) and the
+     search pill moved out with the card — the card lives in
+     MeScreen now, with its own copies of these styles. */
   segRow: {
     flexDirection: 'row',
     borderBottomWidth: 1,
@@ -1135,28 +910,6 @@ const styles = StyleSheet.create({
   segBtnOn: { borderBottomColor: ACCENT },
   segText: { fontSize: 14.5, color: '#536471', fontWeight: '600' },
   segTextOn: { color: '#0f1419', fontWeight: '800' },
-  searchPill: {
-    backgroundColor: '#eff3f4',
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  searchPillText: { fontSize: 14.5, color: '#536471' },
-  walletCard: {
-    marginHorizontal: 12,
-    marginTop: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderWidth: 1,
-    borderColor: HAIRLINE,
-    borderRadius: 16,
-    backgroundColor: '#fff',
-    shadowColor: '#0f1419',
-    shadowOpacity: 0.07,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   /* Recaw choice sheet (v0.4.0) — same bottom-sheet language as
    * the shared ConfirmSheet. */

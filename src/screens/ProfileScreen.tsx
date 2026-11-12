@@ -846,6 +846,8 @@ export default function ProfileScreen({
             onAction={handleAction}
             onSuperlike={handleSuperlike}
             onTip={handleTip}
+            onBookmark={app.toggleBookmark}
+            isBookmarked={app.isBookmarked}
             onOpenPost={(it) => app.openPost(it)}
             onReply={(it) => app.openCompose({ kind: 'reply', post: it })}
             actionStatus={statusByHash[item.hash]}

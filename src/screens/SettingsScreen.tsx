@@ -194,6 +194,11 @@ export default function SettingsScreen() {
       <Text style={[S.h2, { marginTop: 26 }]}>{tr('settings.about')}</Text>
       <View style={S.cardBox}>
         <Text style={S.body}>{tr('settings.aboutBody')}</Text>
+        {/* View counts honesty (v0.6.0): the counts are an
+            app-side aggregation, never on-chain — stated here
+            in every language, whether or not the counter is
+            currently configured. */}
+        <Text style={[S.body, { marginTop: 10 }]}>{tr('views.note')}</Text>
         <Text style={[S.tiny, { marginTop: 12 }]}>
           CAW Social v{APP_VERSION}
         </Text>

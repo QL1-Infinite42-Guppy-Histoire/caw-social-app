@@ -45,7 +45,13 @@ import {
 import type { MyActionKind } from '../lib/myActions';
 import type { ProfileCustom } from '../lib/profileCustom';
 import { applyLayoutDirection } from '../lib/rtl';
-import { myActionStore, profileCustomStore, storeKV } from '../lib/stores';
+import {
+  bookmarkStore,
+  myActionStore,
+  profileCustomStore,
+  storeKV,
+} from '../lib/stores';
+import { initViews } from '../lib/views';
 import {
   AUTO_LOCK_MS,
   autoLockDue,
@@ -67,7 +73,17 @@ import {
   type WalletPublicInfo,
 } from '../lib/walletStore';
 
-export type Tab = 'home' | 'get' | 'mine' | 'settings';
+/**
+ * Bottom tabs (v0.6.0, X-style): Home / Search / Profile.
+ * Everything the pre-overhaul tabs carried (My names, Get a
+ * name, Settings) lives one level down, as sections of the
+ * Profile tab — see HubSection below.
+ */
+export type Tab = 'home' | 'search' | 'profile';
+
+/** Sections inside the Profile tab (v0.6.0): the hub itself,
+ *  plus the three screens that used to be bottom tabs. */
+export type HubSection = 'main' | 'mine' | 'get' | 'settings';
 
 export interface WalletSecretLoaded {
   kind: WalletKind;
@@ -143,6 +159,14 @@ export interface AppContextValue {
   /* navigation */
   tab: Tab;
   setTab: (t: Tab) => void;
+  /** The Profile tab's current section (v0.6.0). */
+  hubSection: HubSection;
+  /** Jump to the Profile tab at a given section — the one
+   *  route every former tab destination now takes. */
+  openHub: (section: HubSection) => void;
+  /* bookmarks (v0.6.0): on-device saved posts, per wallet */
+  isBookmarked: (item: TimelineItem) => boolean;
+  toggleBookmark: (item: TimelineItem) => Promise<void>;
   /** One-shot hand-off to the My names screen (v0.4.6): the id
    *  whose deposit/withdraw controls should open expanded.
    *  Set by focusMine, consumed (and cleared) by MyNamesScreen
@@ -213,6 +237,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     myTokensRef.current = myTokens;
   }, [myTokens]);
   const [tab, setTab] = useState<Tab>('home');
+  const [hubSection, setHubSection] = useState<HubSection>('main');
   const [mineFocusId, setMineFocusId] = useState<bigint | null>(null);
   const [profileName, setProfileName] = useState<string | null>(null);
   const [postDetail, setPostDetail] = useState<TimelineItem | null>(null);
@@ -234,6 +259,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const bump = () => setStoreTick((t) => t + 1);
     const off1 = myActionStore.subscribe(bump);
     const off2 = profileCustomStore.subscribe(bump);
+    const off3 = bookmarkStore.subscribe(bump);
     setActionObserver((a) => myActionStore.observe(a));
     profileCustomStore.init(storeKV).catch(() => {});
     initNameDirectory(storeKV);
@@ -246,12 +272,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => {
       off1();
       off2();
+      off3();
       setActionObserver(null);
     };
   }, []);
 
   useEffect(() => {
-    if (address) myActionStore.init(storeKV, address).catch(() => {});
+    if (address) {
+      myActionStore.init(storeKV, address).catch(() => {});
+      bookmarkStore.init(storeKV, address).catch(() => {});
+      // The view counter's device state (token + hit record)
+      // is wallet-independent, but the same boot point serves.
+      initViews(storeKV);
+    }
     // A new wallet's list is "not read yet" until its own fresh
     // enumeration completes (v0.4.5).
     setMyTokensReady(false);
@@ -577,6 +610,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMyTokens([]);
     setActingId(null);
     setMineFocusId(null);
+    setHubSection('main');
     setProfileName(null);
     setPostDetail(null);
     setComposeOpen(false);
@@ -656,6 +690,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     secretRef.current = null;
     addressRef.current = null;
     myActionStore.reset();
+    bookmarkStore.reset();
     setHasWallet(false);
     setAddress(null);
     setWallets([]);
@@ -670,15 +705,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMineFocusId(null);
     setLocked(false);
     setTab('home');
+    setHubSection('main');
     setProfileName(null);
     setPostDetail(null);
     setComposeOpen(false);
     setComposeTarget(null);
   }, []);
 
-  const focusMine = useCallback((id: bigint) => {
-    setMineFocusId(id);
-    setTab('mine');
+  const openHub = useCallback((section: HubSection) => {
+    setHubSection(section);
+    setTab('profile');
+  }, []);
+
+  const focusMine = useCallback(
+    (id: bigint) => {
+      setMineFocusId(id);
+      // v0.6.0: My names is a Profile-tab section now, not a
+      // bottom tab — the focus hand-off lands there.
+      openHub('mine');
+    },
+    [openHub],
+  );
+
+  const isBookmarked = useCallback(
+    (item: TimelineItem): boolean => bookmarkStore.has(item.cawId),
+    [],
+  );
+  const toggleBookmark = useCallback(async (item: TimelineItem) => {
+    await bookmarkStore.toggle(item.cawId);
   }, []);
   const clearMineFocus = useCallback(() => setMineFocusId(null), []);
 
@@ -737,6 +791,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshWalletState,
     tab,
     setTab,
+    hubSection,
+    openHub,
+    isBookmarked,
+    toggleBookmark,
     mineFocusId,
     focusMine,
     clearMineFocus,

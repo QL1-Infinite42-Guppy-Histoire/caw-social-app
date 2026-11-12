@@ -37,6 +37,17 @@ export const CAW_ACTIONS = '0x95c2AFEc2dE8b09323Cdc7E40Bcce42C3C49E496';
  * on the user's domain purchase (pending, 2026-11-10).
  */
 export const EXCHANGE_SERVER_URL = '';
+
+/**
+ * Post view counter base URL (v0.6.0). EMPTY until the views
+ * Worker (worker/views/ in this repo) is deployed and its
+ * URL is filled in here — the same activation pattern as the
+ * order book above. While empty, post rows render NO views
+ * element at all: view counts are an app-side aggregation
+ * (they are not, and cannot be, on-chain), and the app never
+ * shows a number it did not actually get from the counter.
+ */
+export const VIEWS_COUNTER_URL = '';
 export const MINTER = '0xFC2f8743E3b09a6c973B114c3a082433e974eD9f';
 export const QCAW = '0xd2140E16aDf37194036865E90BbCA1139b739d0D';
 /** CAT42 on 42 Chain (18 decimals) — the SuperLike currency.
@@ -85,5 +96,27 @@ export const SEL = {
   withdraw: '0x43387983',
 } as const;
 
-/** Brand accent (same orange as the web version). */
-export const ACCENT = '#e8590c';
+/**
+ * Brand accent. v0.6.0 (X-style overhaul): the accent is now
+ * X blue — the same single constant drives every existing
+ * accent usage (buttons, links, the active tab), so the whole
+ * app picks up the new accent without per-screen restyles.
+ * (Before v0.6.0 this was the web version's orange, #e8590c.)
+ */
+export const ACCENT = '#1D9BF0';
+
+/* X-style design tokens (v0.6.0). The palette the X overhaul
+ * is built from: white light surface / pure-black dark
+ * surface, hairline dividers, near-black ink, one secondary
+ * gray, the blue accent above, and a gold reserved for the
+ * SuperLike star — never for anything else. The app ships a
+ * light UI today (no theme switcher exists), so the dark
+ * surface is defined here for the token set's completeness;
+ * screens read the light values through components/ui.tsx. */
+export const X_BLUE = '#1D9BF0';
+export const X_GOLD = '#FFAC33';
+export const X_INK = '#0F1419';
+export const X_SECONDARY = '#536471';
+export const X_HAIRLINE = '#EFF3F4';
+export const X_BG_LIGHT = '#FFFFFF';
+export const X_BG_DARK = '#000000';

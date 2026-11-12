@@ -54,6 +54,7 @@ scripts/.build-feed/
 scripts/.build-i18n/
 scripts/.build-reactions/
 scripts/.build-sellbridge/
+scripts/.build-xui/
 
 # local env / keys
 .env

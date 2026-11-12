@@ -1,0 +1,16 @@
+# CAW post view counter (v0.6.0).
+# Deploy steps are the operator's (their Cloudflare account):
+#   cd worker/views
+#   wrangler kv namespace create VIEWS_KV   (fill the id below)
+#   wrangler deploy
+# Then put the deployed workers.dev URL into
+# src/config.ts VIEWS_COUNTER_URL and rebuild the app.
+# Until that build ships, the app renders no view counts at
+# all — by design (see src/lib/views.ts).
+name = "caw-views-counter"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+[[kv_namespaces]]
+binding = "VIEWS_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

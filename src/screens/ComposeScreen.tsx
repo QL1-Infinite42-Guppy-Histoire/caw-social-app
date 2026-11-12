@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Keyboard,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -22,7 +23,8 @@ import {
   invalidateFeedHead,
   resolveName,
 } from '../lib/cawApi';
-import { textBytes, type CawAction } from '../lib/cawCore';
+import { fmtAmountCard, textBytes, type CawAction } from '../lib/cawCore';
+import { composeCostRaw } from '../lib/actionCosts';
 import { clearDraft, loadDraft, saveDraft } from '../lib/drafts';
 import { noteOwnPost } from '../lib/feedSync';
 import {
@@ -61,6 +63,7 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
 
   const [text, setText] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState('');
   const [statusOk, setStatusOk] = useState(false);
@@ -142,6 +145,10 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
   const bytes = textBytes(trimmed) + overhead;
   const remaining = 420 - bytes;
   const canPost = !!acting && trimmed.length > 0 && bytes <= 420 && !sending;
+  /* Cost-line kind (v0.6.0): a plain composer posts; a
+   * targeted one replies or quotes — all three are the same
+   * type-0 post on-chain at the same price (actionCosts). */
+  const costKind = target ? target.kind : 'post';
 
   const doPost = async () => {
     if (!acting || !app.address) {
@@ -211,16 +218,24 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
       style={[S.screen, { paddingTop: insets.top }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
     >
+      {/* X-style header (v0.6.0): ✕ closes at the left, the
+          blue Post pill at the right. The pill opens the SAME
+          confirmation sheet the old bottom button did — the
+          reply/quote/plain titles live on that sheet now, so
+          no context is lost. No image/GIF/poll/location
+          buttons anywhere: media attach is a separate phase
+          and this screen ships no dead buttons. */}
       <View style={styles.headerRow}>
-        <Text style={S.h1}>
-          {target
-            ? target.kind === 'reply'
-              ? tr('compose.replyTitle')
-              : tr('compose.quoteTitle')
-            : tr('compose.title')}
-        </Text>
-        <Pressable onPress={onClose} hitSlop={8}>
-          <Text style={styles.closeText}>{tr('common.close')}</Text>
+        <Pressable onPress={onClose} hitSlop={10} accessibilityRole="button">
+          <Text style={styles.closeX}>✕</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.postPill, !canPost && S.disabled]}
+          disabled={!canPost}
+          onPress={() => setConfirmOpen(true)}
+          accessibilityRole="button"
+        >
+          <Text style={styles.postPillText}>{tr('compose.post')}</Text>
         </Pressable>
       </View>
 
@@ -254,59 +269,40 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
                 />
               </View>
             ) : null}
-            {myTokens.length > 1 ? (
-              <>
-                <Text style={S.small}>{tr('compose.postAs')}</Text>
-                <ScrollView
-                  style={styles.chipScroll}
-                  contentContainerStyle={styles.chipRow}
-                  nestedScrollEnabled
-                  showsVerticalScrollIndicator
+            {/* Name-switch chip (v0.6.0): ONE chip showing the
+                acting name (@name ▾). Tapping it (when the
+                wallet holds more than one name) opens the
+                picker below; switching goes through the same
+                chooseActing the old chip grid used, and the
+                cost line under the input follows the newly
+                active name's deposited balance immediately.
+                The old always-visible chip grid is gone — it
+                pushed the input down for many-name wallets,
+                which is exactly the always-on clutter the
+                overhaul removes. */}
+            <View style={[S.row, { alignItems: 'center', gap: 8 }]}>
+              <Text style={S.small}>{tr('compose.postAs')}:</Text>
+              {myTokens.length > 1 ? (
+                <Pressable
+                  onPress={() => setPickerOpen(true)}
+                  style={({ pressed }) => [
+                    styles.nameChip,
+                    pressed && { backgroundColor: '#e8f5fe' },
+                  ]}
+                  accessibilityRole="button"
                 >
-                  {myTokens.map((t) => {
-                    const selected = acting.id === t.id;
-                    const c = app.customFor(t.id);
-                    return (
-                      <Pressable
-                        key={t.id.toString()}
-                        onPress={() => chooseActing(t.id)}
-                        style={[styles.chip, selected && styles.chipOn]}
-                      >
-                        <Text
-                          style={[
-                            S.chipText,
-                            selected && styles.chipTextOn,
-                          ]}
-                        >
-                          {c && c.displayName
-                            ? c.displayName
-                            : '@' + t.username}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-              </>
-            ) : (
-              <View style={S.row}>
-                <Avatar
-                  nameId={acting.id}
-                  size={28}
-                  customUri={
-                    app.customFor(acting.id)
-                      ? app.customFor(acting.id)!.avatarPath
-                      : undefined
-                  }
-                />
-                <Text style={[S.small, { marginStart: 8 }]}>
-                  {tr('compose.postAs')}:{' '}
-                  {app.customFor(acting.id) &&
-                  app.customFor(acting.id)!.displayName
-                    ? app.customFor(acting.id)!.displayName
-                    : '@' + acting.username}
-                </Text>
-              </View>
-            )}
+                  <Text style={styles.nameChipText}>
+                    @{acting.username} ▾
+                  </Text>
+                </Pressable>
+              ) : (
+                <View style={styles.nameChip}>
+                  <Text style={styles.nameChipText}>
+                    @{acting.username}
+                  </Text>
+                </View>
+              )}
+            </View>
 
             {/* X-style composer: the posting name's avatar sits at
                 the left of the text field. */}
@@ -331,6 +327,24 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
                 placeholderTextColor="#536471"
               />
             </View>
+            {/* Cost line (v0.6.0): what this post costs and
+                what the ACTIVE name holds — the two numbers a
+                poster needs at the moment of posting, and
+                nothing else. Reply and quote posts are plain
+                posts carrying a reference marker, so their
+                on-chain cost is the same 5,000 CAW
+                (lib/actionCosts.ts); the balance half reads
+                the acting token directly, so it updates the
+                moment the chip above switches names. */}
+            <Text style={[S.tiny, { marginTop: 8 }]}>
+              {tr('compose.cost', {
+                cost: fmtAmountCard(composeCostRaw(costKind)),
+              })}
+              {'  '}
+              {tr('compose.costFrom', {
+                balance: fmtAmountCard(acting.balance),
+              })}
+            </Text>
             <View
               style={[
                 S.row,
@@ -374,16 +388,67 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
               </Text>
             ) : null}
 
-            <Pressable
-              style={[S.bigBtn, { marginTop: 18 }, !canPost && S.disabled]}
-              disabled={!canPost}
-              onPress={() => setConfirmOpen(true)}
-            >
-              <Text style={S.bigBtnText}>{tr('compose.post')}</Text>
-            </Pressable>
           </>
         )}
       </ScrollView>
+
+      {/* Name picker (v0.6.0): the chip's sheet — avatar,
+          @name and the name's deposited CAW balance per row.
+          Picking a row switches via chooseActing and closes;
+          the cost line above re-reads the new acting name. */}
+      <Modal
+        visible={pickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPickerOpen(false)}
+      >
+        <Pressable
+          style={styles.pickerBackdrop}
+          onPress={() => setPickerOpen(false)}
+        >
+          <View style={styles.pickerSheet}>
+            <Text style={[S.small, { marginBottom: 6 }]}>
+              {tr('compose.postAs')}
+            </Text>
+            <ScrollView style={{ maxHeight: 320 }}>
+              {myTokens.map((t) => {
+                const c = app.customFor(t.id);
+                return (
+                  <Pressable
+                    key={t.id.toString()}
+                    onPress={() => {
+                      chooseActing(t.id);
+                      setPickerOpen(false);
+                    }}
+                    style={({ pressed }) => [
+                      styles.pickerRow,
+                      pressed && { backgroundColor: '#f7f9f9' },
+                    ]}
+                    accessibilityRole="button"
+                  >
+                    <Avatar
+                      nameId={t.id}
+                      size={36}
+                      customUri={c ? c.avatarPath : undefined}
+                    />
+                    <View style={{ flex: 1, marginStart: 10 }}>
+                      <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f1419' }}>
+                        {c && c.displayName ? c.displayName : '@' + t.username}
+                      </Text>
+                      <Text style={S.tiny}>
+                        @{t.username} · {fmtAmountCard(t.balance)} CAW
+                      </Text>
+                    </View>
+                    {acting && acting.id === t.id ? (
+                      <Text style={{ color: ACCENT, fontWeight: '800' }}>✓</Text>
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </Pressable>
+      </Modal>
 
       <ConfirmSheet
         visible={confirmOpen}
@@ -419,29 +484,42 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#eff3f4',
   },
-  closeText: { fontSize: 15, color: ACCENT, fontWeight: '600' },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  // The name picker gets a capped viewport (about 3 rows of chips)
-  // with its own scrolling, so an account holding many names (30+)
-  // can never push the text input off the visible area — the input
-  // always wins the space. (v0.1.4 fix)
-  chipScroll: {
-    maxHeight: 118,
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: '#eff3f4',
-    borderRadius: 10,
-    padding: 8,
+  closeX: { fontSize: 19, color: '#0f1419', fontWeight: '400' },
+  // The blue Post pill in the header (v0.6.0) — X's composer
+  // affordance, wired to the same confirmation sheet.
+  postPill: {
+    backgroundColor: ACCENT,
+    borderRadius: 999,
+    paddingHorizontal: 18,
+    paddingVertical: 7,
   },
-  chip: {
+  postPillText: { color: '#fff', fontSize: 14.5, fontWeight: '700' },
+  // The single name-switch chip (v0.6.0).
+  nameChip: {
     borderWidth: 1,
     borderColor: '#cfd9de',
     borderRadius: 999,
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 5,
     backgroundColor: '#fff',
   },
-  chipOn: { borderColor: ACCENT, backgroundColor: '#fff7f2' },
-  chipTextOn: { color: ACCENT, fontWeight: '700' },
+  nameChipText: { fontSize: 13.5, color: ACCENT, fontWeight: '700' },
+  pickerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  pickerSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    padding: 16,
+    paddingBottom: 26,
+  },
+  pickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 9,
+  },
   input: { minHeight: 140, textAlignVertical: 'top', fontSize: 16 },
 });

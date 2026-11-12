@@ -277,8 +277,8 @@ const PW = await import(OUT + '/lib/pwVerifier.js');
 {
   const appJson = JSON.parse(read('/app.json'));
   ok(
-    appJson.expo.version === '0.5.1' && appJson.expo.android.versionCode === 39,
-    'release: versionName 0.5.1, versionCode 39',
+    appJson.expo.version === '0.6.0' && appJson.expo.android.versionCode === 40,
+    'release: versionName 0.6.0, versionCode 40 (the F1/F2/F4/F5 fixes ride along from v0.5.1)',
   );
 }
 

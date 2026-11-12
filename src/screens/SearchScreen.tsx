@@ -32,7 +32,13 @@ import {
  * full read is still running) and afterwards only ever fetches
  * newly minted names.
  */
-export default function SearchScreen({ onClose }: { onClose: () => void }) {
+/**
+ * Search (v0.6.0): lives BOTH as a bottom tab (no onClose —
+ * no back button, no top inset of its own, the app shell
+ * already safe-areas it) and inside a Modal (onClose given —
+ * the original back-row behaviour). Same screen, same data.
+ */
+export default function SearchScreen({ onClose }: { onClose?: () => void }) {
   const app = useApp();
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
@@ -95,11 +101,13 @@ export default function SearchScreen({ onClose }: { onClose: () => void }) {
   const loading = progress.total > progress.done;
 
   return (
-    <View style={[S.screen, { paddingTop: insets.top }]}>
+    <View style={[S.screen, onClose ? { paddingTop: insets.top } : null]}>
       <View style={styles.topRow}>
-        <Pressable onPress={onClose} hitSlop={8}>
-          <Text style={styles.backText}>{backArrow()} {tr('common.back')}</Text>
-        </Pressable>
+        {onClose ? (
+          <Pressable onPress={onClose} hitSlop={8}>
+            <Text style={styles.backText}>{backArrow()} {tr('common.back')}</Text>
+          </Pressable>
+        ) : null}
         <View style={styles.inputWrap}>
           <Text style={styles.mag}>🔍</Text>
           <TextInput
@@ -111,7 +119,11 @@ export default function SearchScreen({ onClose }: { onClose: () => void }) {
             autoCapitalize="none"
             autoCorrect={false}
             autoComplete="off"
-            autoFocus
+            // Modal use keeps the old pop-the-keyboard entry;
+            // as a TAB the screen mounts on every visit, so
+            // autofocus would ambush the user with a keyboard
+            // each time they merely pass through Search.
+            autoFocus={!!onClose}
             returnKeyType="search"
           />
           {query ? (
@@ -163,7 +175,7 @@ export default function SearchScreen({ onClose }: { onClose: () => void }) {
                 pressed && { backgroundColor: '#f7f9f9' },
               ]}
               onPress={() => {
-                onClose();
+                if (onClose) onClose();
                 app.openProfile(item.name);
               }}
             >

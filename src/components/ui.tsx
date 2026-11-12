@@ -16,11 +16,12 @@ import { SvgXml } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ACCENT } from '../config';
+import { ACCENT, X_GOLD } from '../config';
 import { LOCALES, isLang, tr } from '../i18n';
 import {
   avatarFor,
   findPostByCawId,
+  knownRecawCount,
   knownReplyCount,
   likesCount,
   nameOwner,
@@ -51,6 +52,13 @@ import {
   svgFromImageUri,
 } from '../lib/cawCore';
 import { displayTextOf, parsePostText } from '../lib/postRef';
+import {
+  VIEWS_ENABLED,
+  formatViewCount,
+  registerView,
+  subscribeViews,
+  viewCountCached,
+} from '../lib/views';
 import type { TimelineItem } from '../lib/cawApi';
 import type { ProfileCustom } from '../lib/profileCustom';
 
@@ -226,7 +234,7 @@ export function StarIcon({ size = 18, color = '#536471', filled = false }: { siz
 /** Tip coin (v0.5.0): a gold CAT42 coin — a filled circle with
  *  a "C" arc cut in the idle colour, so it reads as money next
  *  to the outline action icons. */
-export function TipIcon({ size = 18, color = '#f5a623' }: { size?: number; color?: string }) {
+export function TipIcon({ size = 18, color = X_GOLD }: { size?: number; color?: string }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">
       <Circle cx={12} cy={12} r={10} fill={color} />
@@ -254,6 +262,28 @@ export function RepeatIcon({ size = 18, color = '#536471' }: { size?: number; co
       <Path d="M3 11V9a4 4 0 0 1 4-4h14" />
       <Polyline points="7 23 3 19 7 15" />
       <Path d="M21 13v2a4 4 0 0 1-4 4H3" />
+    </Svg>
+  );
+}
+/** Bookmark (v0.6.0): the feather bookmark outline, filled in
+ *  the accent when the post is saved — X's exact treatment. */
+export function BookmarkIcon({ size = 18, color = '#536471', filled = false }: { size?: number; color?: string; filled?: boolean }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={filled ? color : 'none'} stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+    </Svg>
+  );
+}
+/** Views (v0.6.0): X's bar-chart impressions glyph. Rendered
+ *  ONLY when the view counter is configured and has answered
+ *  for the post — see lib/views.ts (absent, never a fake 0). */
+export function ViewsIcon({ size = 18, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M3 3v18h18" />
+      <Path d="M8 17v-6" />
+      <Path d="M13 17V7" />
+      <Path d="M18 17v-9" />
     </Svg>
   );
 }
@@ -561,6 +591,23 @@ export function useNameLabel(id: bigint): string {
   return name ? '@' + name : tr('tl.unknownName') + id.toString();
 }
 
+/**
+ * X-style relative time for post rows (v0.6.0): "12s", "2m",
+ * "5h", "3d" — the compact units the approved mock shows,
+ * identical in every language (as on X itself in most
+ * locales). A week and older falls back to the absolute
+ * localised date (formatTime), so an old post never shows a
+ * silly "214d".
+ */
+export function formatRelativeTime(tsSec: number, lang: string): string {
+  const diff = Math.max(0, Math.floor(Date.now() / 1000) - tsSec);
+  if (diff < 60) return diff + 's';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h';
+  if (diff < 7 * 86400) return Math.floor(diff / 86400) + 'd';
+  return formatTime(tsSec, lang);
+}
+
 export function formatTime(tsSec: number, lang: string): string {
   try {
     return new Date(tsSec * 1000).toLocaleString(
@@ -626,8 +673,10 @@ export function LoadMoreFooter({
 
 const LIKE_ON = '#e0245e';
 const RECAW_ON = '#00ba7c';
-/** SuperLike gold (v0.4.8) — distinct from like pink / recaw green. */
-const SUPERLIKE_ON = '#f5a623';
+/** SuperLike gold — distinct from like pink / recaw green.
+ *  v0.6.0: the X gold token (#FFAC33 family), reserved for
+ *  the SuperLike star and the tip coin, nothing else. */
+const SUPERLIKE_ON = X_GOLD;
 
 /** The original post a like / share points at, shown as a quote box. */
 function TargetPostQuote({
@@ -806,6 +855,12 @@ export interface PostCardProps {
   onSuperlike?: (item: TimelineItem) => void;
   /** Tip button (v0.5.0): send CAT42 to the post's author. */
   onTip?: (item: TimelineItem) => void;
+  /** Bookmark toggle (v0.6.0): on-device saved posts. The
+   *  state is asked per item (a function, not a flag) so a
+   *  recaw's nested original reports its OWN state, not the
+   *  recaw row's. Without a handler no toggle renders. */
+  onBookmark?: (item: TimelineItem) => void;
+  isBookmarked?: (item: TimelineItem) => boolean;
   actionStatus?: string;
   busy?: boolean;
   /** This wallet already liked this post (remembered on the device). */
@@ -836,6 +891,8 @@ function RecawCard({
   onReply,
   onSuperlike,
   onTip,
+  onBookmark,
+  isBookmarked,
   actionStatus,
   busy,
   liked,
@@ -935,6 +992,8 @@ function RecawCard({
             onReply={onReply}
             onSuperlike={onSuperlike}
             onTip={onTip}
+            onBookmark={onBookmark}
+            isBookmarked={isBookmarked}
             busy={busy}
             liked={liked}
             recawed={recawed}
@@ -985,6 +1044,8 @@ function PostCardBase({
   onReply,
   onSuperlike,
   onTip,
+  onBookmark,
+  isBookmarked,
   actionStatus,
   busy,
   liked,
@@ -1052,6 +1113,45 @@ function PostCardBase({
       unsub();
     };
   }, [item]);
+  /* Recaw count (v0.6.0): the same "indexed so far" semantics
+   * as the reply count (knownRecawCount in cawApi.ts) — the
+   * row snapshot plus my own recaw flip below. The detail
+   * screen's reaction list stays the complete count. */
+  const [recawCount, setRecawCount] = useState(0);
+  useEffect(() => {
+    if (item.type === 0) setRecawCount(knownRecawCount(item.cawId));
+  }, [item]);
+  const prevRecawed = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (prevRecawed.current === null) {
+      prevRecawed.current = !!recawed;
+      return;
+    }
+    if (!!recawed !== prevRecawed.current) {
+      prevRecawed.current = !!recawed;
+      setRecawCount((c) => Math.max(0, c + (recawed ? 1 : -1)));
+    }
+  }, [recawed]);
+  /* View count (v0.6.0): only when the counter endpoint is
+   * configured (lib/views.ts) — the row registers its own
+   * view as it renders and shows the count once the counter
+   * has answered. With no endpoint this is all inert and the
+   * action row renders no views element at all. */
+  const [viewCount, setViewCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!VIEWS_ENABLED || item.type !== 0) return;
+    let live = true;
+    registerView(item.cawId);
+    setViewCount(viewCountCached(item.cawId));
+    const unsub = subscribeViews(() => {
+      if (live) setViewCount(viewCountCached(item.cawId));
+    });
+    return () => {
+      live = false;
+      unsub();
+    };
+  }, [item]);
+  const bookmarked = isBookmarked ? isBookmarked(item) : false;
   // Keep the shown like count in step with my own like: +1 the moment
   // it lights up (the chain read above was taken before my like), back
   // down if the like is undone. On a fresh mount nothing changes — the
@@ -1082,8 +1182,9 @@ function PostCardBase({
   const targetLabel = targetName
     ? '@' + targetName
     : tr('tl.unknownName') + item.receiverId.toString();
-  const showLikes =
-    item.type === 0 && ((likes !== null && likes > 0n) || liked);
+  /* (v0.6.0: the likes count now lives inside the Like button
+   * in the action row below — X style — so there is no
+   * separate count chip anymore.) */
   /* A plain Recaw renders as its own X-style row (header + the
    * original post as the body) — see RecawCard above. */
   if (item.type === 2) {
@@ -1097,6 +1198,8 @@ function PostCardBase({
         onReply={onReply}
         onSuperlike={onSuperlike}
         onTip={onTip}
+        onBookmark={onBookmark}
+        isBookmarked={isBookmarked}
         actionStatus={actionStatus}
         busy={busy}
         liked={liked}
@@ -1121,16 +1224,19 @@ function PostCardBase({
         {ctxTpl && item.receiverId > 0n ? (
           <Text style={S.tiny}>{ctxTpl.replace('{name}', targetLabel)}</Text>
         ) : null}
-        <View style={S.row}>
-          <Pressable onPress={name ? () => onOpenProfile(name) : undefined}>
-            <Text style={postStyles.name}>{displayName || who}</Text>
-          </Pressable>
-          {displayName ? <Text style={S.tiny}>{'  ' + who}</Text> : null}
-          <Text style={S.tiny}>
-            {'  ·  '}
-            {formatTime(item.ts, lang)}
+        {/* X-style header (v0.6.0): the display name stands
+            alone on line 1; line 2 is @handle · relative time
+            (compact 2m / 5h, falling back to the full date for
+            posts a week old or more). */}
+        <Pressable onPress={name ? () => onOpenProfile(name) : undefined}>
+          <Text style={postStyles.name} numberOfLines={1}>
+            {displayName || who}
           </Text>
-        </View>
+        </Pressable>
+        <Text style={S.tiny} numberOfLines={1}>
+          {displayName ? who + '  ·  ' : ''}
+          {formatRelativeTime(item.ts, lang)}
+        </Text>
         {parsed?.ref?.kind === 'reply' && replyToName ? (
           <Text style={S.tiny}>
             {tr('tl.replyTo', { name: '@' + replyToName })}
@@ -1156,61 +1262,15 @@ function PostCardBase({
         {item.type === 1 ? (
           <TargetPostQuote item={item} lang={lang} onOpenProfile={onOpenProfile} />
         ) : null}
+        {/* X-style action row (v0.6.0): icon + count, no word
+            labels except Tip — Reply / Recaw / Like / Views /
+            SuperLike (gold star) / Tip / Bookmark, then the
+            compact tx link. Every handler, menu and sheet
+            behind these buttons is the pre-overhaul one; only
+            the buttons moved. Views renders only when the
+            counter is configured AND has answered (lib/views.ts
+            — absent, never a fake 0). */}
         <View style={[S.row, { marginTop: 8, flexWrap: 'wrap', gap: 14 }]}>
-          {showLikes ? (
-            <View style={S.row}>
-              <HeartIcon size={15} color={liked ? LIKE_ON : '#536471'} filled={!!liked} />
-              <Text style={[S.tiny, { marginStart: 4 }]}>
-                {(likes !== null ? likes : liked ? 1n : 0n).toString()}
-              </Text>
-            </View>
-          ) : null}
-          {item.type === 0 && onAction ? (
-            <>
-              <Pressable
-                disabled={busy}
-                onPress={() => onAction(1, item)}
-                style={({ pressed }) => [
-                  S.row,
-                  postStyles.actionBtn,
-                  busy && S.disabled,
-                  pressed && postStyles.actionBtnOn,
-                ]}
-              >
-                <HeartIcon size={16} color={liked ? LIKE_ON : '#536471'} filled={!!liked} />
-                <Text
-                  style={[
-                    S.tiny,
-                    { marginStart: 4 },
-                    liked && { color: LIKE_ON, fontWeight: '700' },
-                  ]}
-                >
-                  {tr('tl.like')}
-                </Text>
-              </Pressable>
-              <Pressable
-                disabled={busy}
-                onPress={() => onAction(2, item)}
-                style={({ pressed }) => [
-                  S.row,
-                  postStyles.actionBtn,
-                  busy && S.disabled,
-                  pressed && postStyles.actionBtnOn,
-                ]}
-              >
-                <RepeatIcon size={16} color={recawed ? RECAW_ON : '#536471'} />
-                <Text
-                  style={[
-                    S.tiny,
-                    { marginStart: 4 },
-                    recawed && { color: RECAW_ON, fontWeight: '700' },
-                  ]}
-                >
-                  {tr('tl.recaw')}
-                </Text>
-              </Pressable>
-            </>
-          ) : null}
           {item.type === 0 && (onReply || replyCount > 0) ? (
             <Pressable
               disabled={!onReply}
@@ -1223,9 +1283,64 @@ function PostCardBase({
             >
               <ReplyIcon size={16} color="#536471" />
               <Text style={[S.tiny, { marginStart: 4 }]}>
-                {replyCount > 0 ? replyCount.toString() : tr('tl.reply')}
+                {replyCount > 0 ? replyCount.toString() : ''}
               </Text>
             </Pressable>
+          ) : null}
+          {item.type === 0 && (onAction || recawCount > 0) ? (
+            <Pressable
+              disabled={!onAction || busy}
+              onPress={onAction ? () => onAction(2, item) : undefined}
+              style={({ pressed }) => [
+                S.row,
+                postStyles.actionBtn,
+                busy && S.disabled,
+                pressed && postStyles.actionBtnOn,
+              ]}
+            >
+              <RepeatIcon size={16} color={recawed ? RECAW_ON : '#536471'} />
+              <Text
+                style={[
+                  S.tiny,
+                  { marginStart: 4 },
+                  recawed && { color: RECAW_ON, fontWeight: '700' },
+                ]}
+              >
+                {recawCount > 0 ? recawCount.toString() : ''}
+              </Text>
+            </Pressable>
+          ) : null}
+          {item.type === 0 &&
+          (onAction || (likes !== null && likes > 0n) || liked) ? (
+            <Pressable
+              disabled={!onAction || busy}
+              onPress={onAction ? () => onAction(1, item) : undefined}
+              style={({ pressed }) => [
+                S.row,
+                postStyles.actionBtn,
+                busy && S.disabled,
+                pressed && postStyles.actionBtnOn,
+              ]}
+            >
+              <HeartIcon size={16} color={liked ? LIKE_ON : '#536471'} filled={!!liked} />
+              <Text
+                style={[
+                  S.tiny,
+                  { marginStart: 4 },
+                  liked && { color: LIKE_ON, fontWeight: '700' },
+                ]}
+              >
+                {likes !== null ? likes.toString() : liked ? '1' : ''}
+              </Text>
+            </Pressable>
+          ) : null}
+          {item.type === 0 && VIEWS_ENABLED && viewCount !== null ? (
+            <View style={S.row}>
+              <ViewsIcon size={16} color="#536471" />
+              <Text style={[S.tiny, { marginStart: 4 }]}>
+                {formatViewCount(viewCount)}
+              </Text>
+            </View>
           ) : null}
           {item.type === 0 &&
           (onSuperlike || (slCount !== null && slCount > 0)) ? (
@@ -1253,9 +1368,7 @@ function PostCardBase({
                     : null,
                 ]}
               >
-                {slCount !== null && slCount > 0
-                  ? slCount.toString()
-                  : tr('tl.superlike')}
+                {slCount !== null && slCount > 0 ? slCount.toString() : ''}
               </Text>
             </Pressable>
           ) : null}
@@ -1274,6 +1387,25 @@ function PostCardBase({
               <Text style={[S.tiny, { marginStart: 4 }]}>
                 {tr('tl.tip')}
               </Text>
+            </Pressable>
+          ) : null}
+          {item.type === 0 && onBookmark ? (
+            <Pressable
+              disabled={busy}
+              onPress={() => onBookmark(item)}
+              accessibilityLabel={bookmarked ? tr('bm.remove') : tr('bm.add')}
+              style={({ pressed }) => [
+                S.row,
+                postStyles.actionBtn,
+                busy && S.disabled,
+                pressed && postStyles.actionBtnOn,
+              ]}
+            >
+              <BookmarkIcon
+                size={16}
+                color={bookmarked ? ACCENT : '#536471'}
+                filled={bookmarked}
+              />
             </Pressable>
           ) : null}
           <Pressable onPress={() => Linking.openURL(txUrl(item.hash))}>

@@ -229,6 +229,8 @@ export default function PostDetailScreen({
           onReply={(it) => app.openCompose({ kind: 'reply', post: it })}
           onSuperlike={handleSuperlike}
           onTip={handleTip}
+          onBookmark={app.toggleBookmark}
+          isBookmarked={app.isBookmarked}
           actionStatus={slStatus[post.hash]}
           busy={!!slBusyHash[post.hash]}
           liked={app.hasMyAction(1, post)}
@@ -330,6 +332,8 @@ export default function PostDetailScreen({
                   }
                   onSuperlike={handleSuperlike}
                   onTip={handleTip}
+          onBookmark={app.toggleBookmark}
+          isBookmarked={app.isBookmarked}
                   actionStatus={slStatus[r.hash]}
                   busy={!!slBusyHash[r.hash]}
                   liked={app.hasMyAction(1, r)}

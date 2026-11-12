@@ -254,6 +254,10 @@ try {
 {
   const ROOT = new URL('..', import.meta.url).pathname;
   const tlSrc = readFileSync(ROOT + 'src/screens/TimelineScreen.tsx', 'utf8');
+  // v0.6.0: the Home card moved to the Profile hub — the
+  // card checks below read it at its new home (MeScreen),
+  // at the same strength.
+  const meSrc = readFileSync(ROOT + 'src/screens/MeScreen.tsx', 'utf8');
   const appSrc = readFileSync(ROOT + 'App.tsx', 'utf8');
   const uiSrc = readFileSync(ROOT + 'src/components/ui.tsx', 'utf8');
   const mineSrc = readFileSync(ROOT + 'src/screens/MyNamesScreen.tsx', 'utf8');
@@ -267,35 +271,36 @@ try {
   check('v0.4.6->v0.4.10: the shared balance component exists (bordered table)',
     /export function BalanceGrid/.test(uiSrc) &&
     /borderColor: '#d9dee2'/.test(uiSrc) && /borderRadius: 12/.test(uiSrc));
-  check('v0.4.6->v0.4.10: Home card renders its balances through ONE BalanceGrid',
-    (tlSrc.match(/<BalanceGrid/g) || []).length === 1 &&
-    /raw: acting \? acting\.balance : null/.test(tlSrc));
+  check('v0.4.6->v0.4.10 (hub since v0.6.0): the wallet card renders its balances through ONE BalanceGrid',
+    (meSrc.match(/<BalanceGrid/g) || []).length === 1 &&
+    /raw: acting \? acting\.balance : null/.test(meSrc));
   check('v0.4.6->v0.4.10: name card renders its balances through ONE BalanceGrid',
     (appSrc.match(/<BalanceGrid/g) || []).length === 1 &&
     /raw: acting\.balance/.test(appSrc));
-  check('v0.4.6: Home card has no faucet button (Deposit replaced it)',
-    !/FaucetButton/.test(tlSrc) && !/faucet\.title/.test(tlSrc));
-  check('v0.4.6: Home Deposit button is wired (focusMine with a name, Get-a-name without)',
-    /tr\('home\.deposit'\)/.test(tlSrc) &&
-    /app\.focusMine\(acting\.id\)/.test(tlSrc) &&
-    /app\.setTab\('get'\)/.test(tlSrc));
+  check('v0.4.6 (hub since v0.6.0): the wallet card has no faucet button (Deposit replaced it) — on either screen',
+    !/FaucetButton/.test(tlSrc) && !/faucet\.title/.test(tlSrc) &&
+    !/FaucetButton/.test(meSrc) && !/faucet\.title/.test(meSrc));
+  check('v0.4.6 (hub route since v0.6.0): Deposit button is wired (focusMine with a name, Get-a-name hub section without)',
+    /tr\('home\.deposit'\)/.test(meSrc) &&
+    /app\.focusMine\(acting\.id\)/.test(meSrc) &&
+    /openHub\('get'\)/.test(meSrc));
   check('v0.4.6: focus hand-off round-trips (context exposes it, My names consumes it)',
     /focusMine/.test(ctxSrc) && /mineFocusId/.test(ctxSrc) &&
     /app\.mineFocusId/.test(mineSrc) && /app\.clearMineFocus\(\)/.test(mineSrc));
-  check('v0.4.6: every tab carries an icon (home/search/user/settings vectors)',
+  check('v0.4.6 (tabs since v0.6.0): every tab carries an icon (home/search/profile vectors; the settings vector still exists)',
     /Icon: HomeIcon/.test(appSrc) && /Icon: SearchIcon/.test(appSrc) &&
-    /Icon: UserIcon/.test(appSrc) && /Icon: SettingsIcon/.test(appSrc) &&
+    /Icon: UserIcon/.test(appSrc) &&
     /export function HomeIcon/.test(uiSrc) &&
     /export function SettingsIcon/.test(uiSrc));
-  check('v0.4.6: Home card button labels are single-line shrink-to-fit (no vertical split)',
-    (tlSrc.match(/numberOfLines=\{1\}/g) || []).length >= 3);
+  check('v0.4.6 (hub since v0.6.0): wallet card button labels are single-line shrink-to-fit (no vertical split)',
+    (meSrc.match(/numberOfLines=\{1\}/g) || []).length >= 3);
   check('v0.4.6: name-card overlay is NOT measured/anchored to the SafeAreaView (no headerH)',
     !/headerH/.test(appSrc));
   check('v0.4.6: card overlay anchors to the content column top (top: 0 below the header)',
     /cardOverlay: \{\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*position: 'absolute',\s*\n\s*top: 0,/.test(appSrc) ||
     /cardOverlay: \{[^}]*position: 'absolute',[^}]*top: 0,/.test(appSrc));
   check('v0.4.6: overlay renders after the tab screens, inside their container (header outside it)',
-    appSrc.indexOf('styles.cardOverlay') > appSrc.indexOf("tab === 'settings'"));
+    appSrc.indexOf('styles.cardOverlay') > appSrc.indexOf("tab === 'profile'"));
   check('v0.4.6: header brand tap toggles the card (re-tap closes it while open)',
     /setCardOpen\(\(o\) => !o\)/.test(appSrc));
   check('v0.4.6: card keeps a visible gap under the header (marginTop 10, slide -6 max)',
@@ -314,6 +319,7 @@ try {
   const apiSrc = readFileSync(ROOT + 'src/lib/cawApi.ts', 'utf8');
   const ctxSrc = readFileSync(ROOT + 'src/context/AppContext.tsx', 'utf8');
   const tlSrc = readFileSync(ROOT + 'src/screens/TimelineScreen.tsx', 'utf8');
+  const meSrc = readFileSync(ROOT + 'src/screens/MeScreen.tsx', 'utf8');
   const appSrc = readFileSync(ROOT + 'App.tsx', 'utf8');
 
   // v0.5.1 (F2): walletBalances is now an in-flight dedupe
@@ -336,8 +342,8 @@ try {
   check('v0.4.7: refreshBalances stores only successful reads (a failure cannot clobber)',
     /if \(b\.qom !== null\) setQom\(b\.qom\)/.test(ctxSrc) &&
     /if \(b\.qcaw !== null\) setQcaw\(b\.qcaw\)/.test(ctxSrc));
-  check('v0.4.7 (grid form, v0.4.10): Home + name card QOM cells take the live qom state as raw (null -> dash)',
-    /unit: 'QOM', raw: qom/.test(tlSrc) &&
+  check('v0.4.7 (grid form, v0.4.10; hub card since v0.6.0): hub + name card QOM cells take the live qom state as raw (null -> dash)',
+    /unit: 'QOM', raw: qom/.test(meSrc) &&
     /unit: 'QOM', raw: qom/.test(appSrc));
 
   const realFetch = globalThis.fetch;
@@ -404,6 +410,7 @@ try {
   const cfgSrc = readFileSync(ROOT + 'src/config.ts', 'utf8');
   const ctxSrc = readFileSync(ROOT + 'src/context/AppContext.tsx', 'utf8');
   const tlSrc = readFileSync(ROOT + 'src/screens/TimelineScreen.tsx', 'utf8');
+  const meSrc = readFileSync(ROOT + 'src/screens/MeScreen.tsx', 'utf8');
   const appSrc = readFileSync(ROOT + 'App.tsx', 'utf8');
   const i18nSrc = readFileSync(ROOT + 'src/i18n.ts', 'utf8');
   const uiSrc = readFileSync(ROOT + 'src/components/ui.tsx', 'utf8');
@@ -428,14 +435,14 @@ try {
   check('v0.4.8: refreshBalances stores the 42 Chain reads only on success',
     /if \(b\.f42 !== null\) setF42\(b\.f42\)/.test(ctxSrc) &&
     /if \(b\.cat42 !== null\) setCat42\(b\.cat42\)/.test(ctxSrc));
-  check('v0.4.8 (grid form, v0.4.10): Home card [42] + CAT42 cells take live state as raw (null -> dash)',
-    /unit: '42', raw: f42/.test(tlSrc) &&
-    /unit: 'CAT42', raw: cat42/.test(tlSrc));
+  check('v0.4.8 (grid form, v0.4.10; hub card since v0.6.0): hub card [42] + CAT42 cells take live state as raw (null -> dash)',
+    /unit: '42', raw: f42/.test(meSrc) &&
+    /unit: 'CAT42', raw: cat42/.test(meSrc));
   check('v0.4.8 (grid form, v0.4.10): name card [42] + CAT42 cells take live state as raw (null -> dash)',
     /unit: '42', raw: f42/.test(appSrc) &&
     /unit: 'CAT42', raw: cat42/.test(appSrc));
   check('v0.4.8: both cards use the shared CAT42 label key',
-    /tr\('card\.cat42'\)/.test(tlSrc) && /tr\('card\.cat42'\)/.test(appSrc));
+    /tr\('card\.cat42'\)/.test(meSrc) && /tr\('card\.cat42'\)/.test(appSrc));
   check('v0.4.8: new label keys exist in all 20 language dicts',
     (i18nSrc.match(/'card\.cat42'/g) || []).length === 20 &&
     (i18nSrc.match(/'card\.f42'/g) || []).length === 20);
@@ -460,9 +467,9 @@ try {
     /borderColor: '#d9dee2'/.test(balBlock) &&
     /shown === null \? '—'/.test(uiSrc));
   check('v0.4.9->v0.4.10: both cards render the grid (one per card); no stacked frames remain',
-    (tlSrc.match(/<BalanceGrid/g) || []).length === 1 &&
+    (meSrc.match(/<BalanceGrid/g) || []).length === 1 &&
     (appSrc.match(/<BalanceGrid/g) || []).length === 1 &&
-    !/<BalanceFrame/.test(tlSrc) && !/<BalanceFrame/.test(appSrc));
+    !/<BalanceFrame/.test(tlSrc) && !/<BalanceFrame/.test(meSrc) && !/<BalanceFrame/.test(appSrc));
 
   const realFetch = globalThis.fetch;
   const ADDR = '0x0000000000000000000000000000000000000001';

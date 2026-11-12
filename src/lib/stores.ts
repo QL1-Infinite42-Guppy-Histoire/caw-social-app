@@ -6,6 +6,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { AddressBookStore } from './addressBook';
+import { BookmarkStore } from './bookmarks';
 import { XFlowStore } from './exchangeFlows';
 import { HuntersFlowStore } from './flows';
 import { MyActionStore, type KVStorage } from './myActions';
@@ -17,6 +18,8 @@ export const storeKV: KVStorage = {
 };
 
 export const myActionStore = new MyActionStore();
+/** Saved posts (v0.6.0), per wallet address like myActionStore. */
+export const bookmarkStore = new BookmarkStore();
 export const profileCustomStore = new ProfileCustomStore();
 export const huntersFlowStore = new HuntersFlowStore();
 export const huntersSellFlowStore = new HuntersFlowStore(
