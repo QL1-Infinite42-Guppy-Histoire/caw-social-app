@@ -38,30 +38,122 @@ import PostDetailScreen from './src/screens/PostDetailScreen';
 import InboxScreen from './src/screens/InboxScreen';
 import { loadSeen, scanReactions } from './src/lib/inbox';
 import { storeKV } from './src/lib/stores';
+import Drawer from './src/components/Drawer';
 
 /**
- * The app header (v0.6.1, X-style finish): as spare as X's
- * own — the active name's avatar at the start (tap → the
- * Profile hub), a small centered CAW mark, and the reactions
- * bell at the end, now a vector icon (the emoji bell button
- * of v0.6.0 and earlier is gone). The unread badge machinery is
- * the v0.3.4 one, unchanged: the count is exactly what the
- * inbox will show (loadSeen + scanReactions), refreshed on
- * mount, when my names change, and after the inbox closes.
+ * The app header (v0.6.1 X-style finish; v0.6.2 below): as
+ * spare as X's own — the active name's avatar at the start,
+ * a small centered CAW mark, and a balanced empty spacer at
+ * the end.
+ *
+ * v0.6.2 changes:
+ *  - Tapping the avatar now opens the X-style DRAWER
+ *    (components/Drawer.tsx), the app's menu home — X's
+ *    pattern. Through v0.6.1 it jumped to the Profile hub;
+ *    the hub home is retired and its contents live in the
+ *    drawer (see Drawer.tsx for the mapping).
+ *  - The reactions bell moved from here into the bottom tab
+ *    bar (immediately before the Profile tab) — same inbox,
+ *    same unread badge machinery, which now lives in Main
+ *    next to the bar it renders on. Nothing replaces the
+ *    bell here; the end spacer keeps the centered mark
+ *    centered.
  *
  * What the pre-v0.6.1 header carried, and where it went:
- *  - brand block ("CAW Social ▾ / QL1版") + name-card overlay:
- *    retired. The card's contents all live on the Profile
- *    hub now — profile summary (tap → the profile), the
- *    prominent deposited-CAW card, the full balance grid one
- *    tap deeper (hub → Wallet), the copyable address chip on
- *    the summary, the inbox entry (hub row + this bell).
- *  - language cycle button (globe emoji): retired. The full language
- *    list lives in the hub's Settings section, as it always
- *    has — Settings → Language.
+ *  - brand block ("CAW Social ▾ / QL1版") + name-card
+ *    overlay: retired in v0.6.1. The card's contents live on
+ *    in the drawer summary, the wallet screen (hub → Wallet
+ *    before v0.6.2; the drawer's wallet row now), and the
+ *    own profile page.
+ *  - language cycle button (globe emoji): retired in
+ *    v0.6.1. The full language list lives in Settings →
+ *    Language, as it always has.
  */
-function Header() {
-  const { address, myTokens, actingId, customFor, setTab } = useApp();
+function Header({ onAvatarPress }: { onAvatarPress: () => void }) {
+  const { myTokens, actingId, customFor } = useApp();
+
+  const acting =
+    myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
+  const custom = acting ? customFor(acting.id) : undefined;
+
+  return (
+    <View style={styles.header}>
+      <Pressable
+        onPress={onAvatarPress}
+        hitSlop={6}
+        style={({ pressed }) => [
+          styles.headerSide,
+          pressed && { opacity: 0.7 },
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel={tr('nav.profile')}
+      >
+        {acting ? (
+          <Avatar
+            nameId={acting.id}
+            size={32}
+            customUri={custom?.avatarPath}
+          />
+        ) : (
+          <View style={styles.headerAvatarFallback}>
+            <UserIcon size={18} color="#536471" />
+          </View>
+        )}
+      </Pressable>
+      <View style={styles.headerMark} pointerEvents="none">
+        <AppLogo size={20} />
+        <Text style={styles.headerWord}>CAW</Text>
+      </View>
+      <View style={styles.headerSideEnd} />
+    </View>
+  );
+}
+
+// Height of the bottom tab bar below: navItem paddingVertical
+// 10+10 plus the 22px icon line, plus the 1px top border —
+// v0.6.0 made the X-style bar icon-only (no label line). Only
+// the compose FAB offset consumes this number.
+const TAB_BAR_HEIGHT = 44;
+
+function Main() {
+  const app = useApp();
+  const insets = useSafeAreaInsets();
+  // v0.6.0: HuntersExchange lost its tab-bar center button
+  // and opened from the Profile hub. v0.6.2: the hub home is
+  // retired — the exchange opens from a drawer row (the
+  // Drawer mounts the modal). Nothing about the exchange
+  // itself changed at either step.
+  const {
+    tab,
+    setTab,
+    profileName,
+    closeProfile,
+    composeOpen,
+    openCompose,
+    closeCompose,
+    postDetail,
+    closePost,
+    address,
+    myTokens,
+    actingId,
+    hubSection,
+    openHub,
+  } = app;
+
+  const acting =
+    myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
+
+  /* The drawer (v0.6.2): the header avatar opens it, from
+   * every tab; Android back closes it first. */
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  /* The reactions inbox and its unread badge. v0.6.2: the
+   * bell moved from the header into the tab bar; the badge
+   * machinery is the v0.3.4 one, unchanged — the count is
+   * exactly what the inbox will show (loadSeen +
+   * scanReactions), refreshed on mount, when my names
+   * change, and after the inbox closes. The drawer's inbox
+   * row opens this same inbox. */
   const [inboxOpen, setInboxOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const badgeBusyRef = useRef(false);
@@ -94,100 +186,12 @@ function Header() {
     wasInboxOpenRef.current = inboxOpen;
   }, [inboxOpen, refreshBadge]);
 
-  const acting =
-    myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
-  const custom = acting ? customFor(acting.id) : undefined;
-
-  return (
-    <View style={styles.header}>
-      <Pressable
-        onPress={() => setTab('profile')}
-        hitSlop={6}
-        style={({ pressed }) => [
-          styles.headerSide,
-          pressed && { opacity: 0.7 },
-        ]}
-        accessibilityRole="button"
-        accessibilityLabel={tr('nav.profile')}
-      >
-        {acting ? (
-          <Avatar
-            nameId={acting.id}
-            size={32}
-            customUri={custom?.avatarPath}
-          />
-        ) : (
-          <View style={styles.headerAvatarFallback}>
-            <UserIcon size={18} color="#536471" />
-          </View>
-        )}
-      </Pressable>
-      <View style={styles.headerMark} pointerEvents="none">
-        <AppLogo size={20} />
-        <Text style={styles.headerWord}>CAW</Text>
-      </View>
-      <View style={styles.headerSideEnd}>
-        <Pressable
-          onPress={() => setInboxOpen(true)}
-          hitSlop={8}
-          style={({ pressed }) => [
-            styles.bellBtn,
-            pressed && { backgroundColor: '#e3e8ea' },
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel={tr('inbox.title')}
-        >
-          <BellIcon size={21} color="#0f1419" />
-          {unread > 0 ? (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>
-                {unread > 99 ? '99+' : String(unread)}
-              </Text>
-            </View>
-          ) : null}
-        </Pressable>
-      </View>
-      <Modal
-        visible={inboxOpen}
-        animationType="slide"
-        onRequestClose={() => setInboxOpen(false)}
-      >
-        <InboxScreen onClose={() => setInboxOpen(false)} />
-      </Modal>
-    </View>
-  );
-}
-
-// Height of the bottom tab bar below: navItem paddingVertical
-// 10+10 plus the 22px icon line, plus the 1px top border —
-// v0.6.0 made the X-style bar icon-only (no label line). Only
-// the compose FAB offset consumes this number.
-const TAB_BAR_HEIGHT = 44;
-
-function Main() {
-  const app = useApp();
-  const insets = useSafeAreaInsets();
-  // v0.6.0: HuntersExchange no longer opens from a tab-bar
-  // center button — it is an entry on the Profile hub
-  // (MeScreen mounts the modal). Nothing about the exchange
-  // itself changed.
-  // v0.6.1: the name-card overlay is retired with the old
-  // header — everything it showed lives on the Profile hub
-  // (see the Header note above for the mapping).
-  const {
-    tab,
-    setTab,
-    profileName,
-    closeProfile,
-    composeOpen,
-    openCompose,
-    closeCompose,
-    postDetail,
-    closePost,
-  } = app;
-
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (drawerOpen) {
+        setDrawerOpen(false);
+        return true;
+      }
       if (composeOpen) {
         closeCompose();
         return true;
@@ -203,19 +207,32 @@ function Main() {
       return false;
     });
     return () => sub.remove();
-  }, [composeOpen, profileName, postDetail, closeCompose, closeProfile, closePost]);
+  }, [
+    drawerOpen,
+    composeOpen,
+    profileName,
+    postDetail,
+    closeCompose,
+    closeProfile,
+    closePost,
+  ]);
 
-  /* Tabs (v0.6.0, X-style overhaul): exactly three —
+  /* Tabs (v0.6.0, X-style overhaul): three CONTENT tabs —
    * Home / Search / Profile — ICON-ONLY, like the mock's
    * minimal bar. The labels survive as accessibility labels
-   * (screen readers still announce them). Everything that
-   * lived on the removed tabs (Get a name, My names,
-   * Settings, the wallet card, HuntersExchange) is reachable
-   * from the Profile hub screen; the reachability map is in
-   * the v0.6.0 release notes and pinned by
-   * scripts/verify-xui.mjs. No DM tab, no Notifications tab
-   * (the stretch derivation did not verify complete — see
-   * the release report). */
+   * (screen readers still announce them).
+   *
+   * v0.6.2: the bar shows FOUR entries — the reactions bell
+   * sits between Search and Profile. It is an ACTION (opens
+   * the inbox modal), not a fourth tab: the tab state
+   * machine below is still exactly the three keys. And the
+   * Profile tab's content changed: it opens the user's OWN
+   * profile page directly (X-like); while a section is open
+   * (a drawer row jumped there via openHub), the section
+   * host (MeScreen) takes the tab's place, and its Back
+   * returns to the profile page. No DM tab, no separate
+   * Notifications SCREEN (the v0.6.0 stretch derivation did
+   * not verify complete; the inbox is a modal, as ever). */
   const tabs: {
     key: typeof tab;
     label: string;
@@ -236,14 +253,33 @@ function Main() {
       <t.Icon color={tab === t.key ? ACCENT : '#536471'} />
     </Pressable>
   );
+  const [homeTab, searchTab, profileTab] = tabs;
 
   return (
     <SafeAreaView style={S.screen} edges={['top', 'bottom']}>
-      <Header />
+      <Header onAvatarPress={() => setDrawerOpen(true)} />
       <View style={{ flex: 1 }}>
         {tab === 'home' && <TimelineScreen />}
         {tab === 'search' && <SearchScreen />}
-        {tab === 'profile' && <MeScreen />}
+        {tab === 'profile' && hubSection !== 'main' && <MeScreen />}
+        {tab === 'profile' &&
+          hubSection === 'main' &&
+          (acting ? (
+            <ProfileScreen
+              username={acting.username}
+              onBack={() => setTab('home')}
+            />
+          ) : (
+            <View style={styles.noNameWrap}>
+              <Text style={S.body}>{tr('mine.none')}</Text>
+              <Pressable
+                style={[S.bigBtn, { marginTop: 12 }]}
+                onPress={() => openHub('get')}
+              >
+                <Text style={S.bigBtnText}>{tr('nav.getName')}</Text>
+              </Pressable>
+            </View>
+          ))}
       </View>
       {tab === 'home' && !profileName && (
         <Pressable
@@ -262,8 +298,36 @@ function Main() {
           <Text style={styles.fabText}>+</Text>
         </Pressable>
       )}
-      <View style={styles.bottomNav}>{tabs.map(renderTab)}</View>
+      <View style={styles.bottomNav}>
+        {renderTab(homeTab)}
+        {renderTab(searchTab)}
+        <Pressable
+          style={styles.navItem}
+          onPress={() => setInboxOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel={tr('inbox.title')}
+        >
+          <View style={styles.bellWrap}>
+            <BellIcon size={22} color="#536471" />
+            {unread > 0 ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>
+                  {unread > 99 ? '99+' : String(unread)}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        </Pressable>
+        {renderTab(profileTab)}
+      </View>
 
+      <Modal
+        visible={inboxOpen}
+        animationType="slide"
+        onRequestClose={() => setInboxOpen(false)}
+      >
+        <InboxScreen onClose={() => setInboxOpen(false)} />
+      </Modal>
       <Modal
         visible={!!profileName}
         animationType="slide"
@@ -289,6 +353,11 @@ function Main() {
       >
         <ComposeScreen onClose={closeCompose} />
       </Modal>
+      <Drawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        onOpenInbox={() => setInboxOpen(true)}
+      />
     </SafeAreaView>
   );
 }
@@ -385,13 +454,10 @@ const styles = StyleSheet.create({
     color: '#0f1419',
     letterSpacing: 0.5,
   },
-  bellBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  // v0.6.2: the tab-bar bell's icon box — the badge positions
+  // against it exactly as it did against the header button.
+  bellWrap: { alignItems: 'center', justifyContent: 'center' },
+  noNameWrap: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
   badge: {
     position: 'absolute',
     top: -5,

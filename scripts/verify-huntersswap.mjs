@@ -7,7 +7,8 @@
  * split search only >= $50, quote-only mode for above-balance
  * amounts, and the exchange entry point (source checks —
  * the v0.3.2 tab-bar center button through v0.5.1, the
- * Profile hub entry since the v0.6.0 overhaul).
+ * Profile hub entry in v0.6.0–v0.6.1, a drawer row since
+ * v0.6.2).
  *
  * BUY:  $100 / $500 from BSC and $100 from Ethereum -> qCAW
  *       end-to-end via the ported aggregator engine; split must
@@ -304,14 +305,20 @@ for (const usd of [100, 500]) {
   // UI structure is asserted at source level (RN cannot run here).
   // v0.3.2–v0.5.1: a tab-bar center ACTION opened HuntersSwap
   // without ever calling setTab. v0.6.0 (X-style overhaul): the
-  // center button is gone; the SAME modal opens from a labelled
-  // entry on the Profile hub (MeScreen), which also never
-  // switches tabs to do it. The invariant — the exchange is an
-  // overlay, reachable, and opening it is not a tab switch —
-  // is what these checks pin, at the entry's new home.
+  // center button is gone; the SAME modal opened from a labelled
+  // entry on the Profile hub (MeScreen). v0.6.2: the hub home is
+  // retired; the SAME modal opens from a drawer row (Drawer.tsx
+  // mounts it), which also never switches tabs to do it. The
+  // invariant — the exchange is an overlay, reachable, and
+  // opening it is not a tab switch — is what these checks pin,
+  // at the entry's new home.
   const appSrc = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
   const meSrc = readFileSync(
     new URL('../src/screens/MeScreen.tsx', import.meta.url),
+    'utf8',
+  );
+  const drawerSrc = readFileSync(
+    new URL('../src/components/Drawer.tsx', import.meta.url),
     'utf8',
   );
   const mineSrc = readFileSync(
@@ -321,9 +328,10 @@ for (const usd of [100, 500]) {
   check('(e) tab bar: exactly 3 tabs (home/search/profile), no center trade action',
     (appSrc.match(/key: '(home|search|profile)'/g) || []).length === 3 &&
       !appSrc.includes('<HuntersSwapModal') &&
-      meSrc.includes('<HuntersSwapModal visible={hsOpen}'));
-  check('(e) hub entry opens HuntersSwap and never switches tabs',
-    meSrc.includes('onPress={() => setHsOpen(true)}') &&
+      drawerSrc.includes('<HuntersSwapModal visible={hsOpen}'));
+  check('(e) drawer entry opens HuntersSwap and never switches tabs',
+    drawerSrc.includes('setHsOpen(true)') &&
+      !drawerSrc.includes('setTab(') &&
       !meSrc.includes('setTab('));
   check('(e) MyNames: big buy button removed, CAW balance line kept',
     !mineSrc.includes("tr('hs.buy')") && mineSrc.includes('CAW:') && !mineSrc.includes('qCAW'));

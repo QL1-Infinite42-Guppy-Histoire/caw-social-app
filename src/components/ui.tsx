@@ -402,111 +402,83 @@ export function SettingsIcon({ size = 22, color = '#536471' }: { size?: number; 
   );
 }
 
-/* ---------- balance grid (v0.4.10) ---------- */
+/* ---------- balance list (v0.6.2; grid v0.4.10–v0.6.1) ---------- */
 /**
- * The balances as a two-column grid with shared hairline
- * borders — an Excel-like table (user request, 2026-11-10;
- * mock approved the same day). It replaces the stacked
- * full-width frames of v0.4.6–v0.4.9: seven balances now take
- * less vertical room than five frames did. The Home wallet
- * card and the header name card render this same component
- * with the same cells in the same order.
+ * The balances as a vertical asset list — MetaMask's token
+ * list form, which replaced the two-column BalanceGrid on
+ * the wallet screen in v0.6.2 (the grid's only home was that
+ * screen). Same discipline as the grid carried:
  *
- * A cell is { label, unit, raw, decimals }: `raw` is the
+ * A row is { label, unit, raw, decimals }: `raw` is the
  * unscaled on-chain amount and null keeps the honest dash of
  * the v0.4.7 rule (unread / no name yet), never a numeric 0.
  * The amount text comes from fmtCardDisplay (cawCore): big
  * balances are abbreviated "x.xxB" / "x.xxM" (truncated,
  * never rounded), the rest use the card format at the
- * token's own decimals. Tapping a cell swaps its amount for
+ * token's own decimals. Tapping a row swaps its amount for
  * the EXACT full figure (fmtExactDec); tapping it again — or
- * tapping another cell — swaps back / moves over. A null
- * entry in the array renders an empty cell, completing the
- * grid. The hint line under the table says the tap rule in
- * the current language (card.tapHint).
+ * tapping another row — swaps back / moves over. The hint
+ * line under the list says the tap rule in the current
+ * language (card.tapHint). No prices and no fiat totals are
+ * shown anywhere: the app has no price source it trusts, so
+ * MetaMask's total-balance figure is deliberately absent.
  */
-export interface BalanceCellData {
+export interface BalanceRowData {
   label: string;
   unit: string;
   raw: bigint | null;
   decimals?: number;
 }
 
-export function BalanceGrid({
-  cells,
-}: {
-  cells: (BalanceCellData | null)[];
-}) {
+export function BalanceList({ rows }: { rows: BalanceRowData[] }) {
   const [open, setOpen] = useState<number | null>(null);
-  const list = cells.length % 2 === 1 ? [...cells, null] : cells;
-  const rows: (BalanceCellData | null)[][] = [];
-  for (let i = 0; i < list.length; i += 2) {
-    rows.push([list[i], list[i + 1]]);
-  }
   return (
     <View>
-      <View style={balanceStyles.grid}>
-        {rows.map((row, r) => (
-          <View key={r} style={balanceStyles.row}>
-            {row.map((cell, c) => {
-              const idx = r * 2 + c;
-              // The outer box owns the right/bottom edges; cells
-              // only draw the hairlines BETWEEN cells.
-              const edges = {
-                borderRightWidth: c === 1 ? 0 : 1,
-                borderBottomWidth: r === rows.length - 1 ? 0 : 1,
-              };
-              if (!cell) {
-                return (
-                  <View key={c} style={[balanceStyles.cell, edges]} />
-                );
+      <View style={balanceStyles.list}>
+        {rows.map((row, idx) => {
+          const dec = row.decimals ?? 18;
+          const shown =
+            row.raw === null
+              ? null
+              : open === idx
+                ? fmtExactDec(row.raw, dec)
+                : fmtCardDisplay(row.raw, dec).text;
+          return (
+            <Pressable
+              key={idx}
+              style={({ pressed }) => [
+                balanceStyles.row,
+                idx === rows.length - 1 && balanceStyles.rowLast,
+                pressed && { backgroundColor: '#f7f9f9' },
+              ]}
+              onPress={() =>
+                row.raw !== null &&
+                setOpen((o) => (o === idx ? null : idx))
               }
-              const dec = cell.decimals ?? 18;
-              const shown =
-                cell.raw === null
-                  ? null
-                  : open === idx
-                    ? fmtExactDec(cell.raw, dec)
-                    : fmtCardDisplay(cell.raw, dec).text;
-              return (
-                <Pressable
-                  key={c}
-                  style={({ pressed }) => [
-                    balanceStyles.cell,
-                    edges,
-                    balanceStyles.cellBtn,
-                    pressed && { backgroundColor: '#f7f9f9' },
-                  ]}
-                  onPress={() =>
-                    cell.raw !== null &&
-                    setOpen((o) => (o === idx ? null : idx))
-                  }
-                  accessibilityRole="button"
-                >
-                  <Text
-                    style={balanceStyles.label}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.7}
-                  >
-                    {cell.label}
-                  </Text>
-                  <Text
-                    style={balanceStyles.amount}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.4}
-                  >
-                    {shown === null ? '—' : shown}
-                    {shown === null ? null : (
-                      <Text style={balanceStyles.unit}> {cell.unit}</Text>
-                    )}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ))}
+              accessibilityRole="button"
+            >
+              <Text
+                style={balanceStyles.label}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                {row.label}
+              </Text>
+              <Text
+                style={balanceStyles.amount}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.4}
+              >
+                {shown === null ? '—' : shown}
+                {shown === null ? null : (
+                  <Text style={balanceStyles.unit}> {row.unit}</Text>
+                )}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
       <Text style={balanceStyles.hint}>{tr('card.tapHint')}</Text>
     </View>
@@ -514,34 +486,33 @@ export function BalanceGrid({
 }
 
 const balanceStyles = StyleSheet.create({
-  /* The shared borders are drawn by the table itself: the
-   * outer box carries the border and radius, rows and cells
-   * meet on single hairlines (right / bottom) instead of each
-   * cell owning a full frame. Type sizes keep the compact
-   * v0.4.9 metrics (amount 17, label/unit 11.5). */
-  grid: {
+  /* The list keeps the grid's bordered-table look (outer box
+   * border #d9dee2, radius 12) and its amount metrics (amount
+   * 17, unit 11.5); rows are full-width with a hairline
+   * between them and list air (paddingVertical 11). */
+  list: {
     borderWidth: 1,
     borderColor: '#d9dee2',
     borderRadius: 12,
     backgroundColor: '#fff',
     overflow: 'hidden',
   },
-  row: { flexDirection: 'row' },
-  cell: {
-    flex: 1,
-    borderRightWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: '#d9dee2',
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
     paddingHorizontal: 12,
-    paddingVertical: 5,
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eff3f4',
   },
-  cellBtn: { justifyContent: 'center' },
-  label: { fontSize: 11.5, color: '#536471', fontWeight: '600' },
+  rowLast: { borderBottomWidth: 0 },
+  label: { flex: 1, fontSize: 14, color: '#0f1419', fontWeight: '600' },
   amount: {
     fontSize: 17,
     fontWeight: '800',
     color: '#0f1419',
-    marginTop: 1,
     fontVariant: ['tabular-nums'],
   },
   unit: { fontSize: 11.5, fontWeight: '600', color: '#536471' },

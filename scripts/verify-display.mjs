@@ -38,7 +38,7 @@
  *      is ABSENT here (by design — it lives only on their
  *      phone), never faked.
  *   7. (v0.4.10) the balance GRID on both cards: one shared
- *      BalanceGrid per card, cells in the approved mock order
+ *      BalanceList on the wallet screen, rows in the approved order
  *      (wallet CAW, QOM, in-name CAW, [42], CAT42, O, KET,
  *      empty); the B/M abbreviation (truncated, never rounded,
  *      boundaries pinned); the exact figure behind a tap; the
@@ -248,11 +248,15 @@ try {
   }
 }
 
-/* ---------- 7. (v0.4.10) the balance grid ---------- */
+/* ---------- 7. (v0.4.10) the balance grid -> (v0.6.2) list ---------- */
 {
   // v0.6.0: the card that sat atop Home through v0.5.1 moved
-  // to the Profile hub (MeScreen) in the X-style overhaul —
-  // same cells, same order, verified at its new home.
+  // to the Profile hub (MeScreen) in the X-style overhaul.
+  // v0.6.2: the hub home is retired; the balances live on the
+  // WALLET SCREEN (the 'wallet' section) as a vertical asset
+  // LIST (BalanceList) in MetaMask's form — same seven
+  // balances, same order, same raw sources, same tap-for-
+  // exact, verified at their new home.
   const tlSrc = readFileSync(ROOT + 'src/screens/MeScreen.tsx', 'utf8');
   const appSrc = readFileSync(ROOT + 'App.tsx', 'utf8');
   const cfgSrc = readFileSync(ROOT + 'src/config.ts', 'utf8');
@@ -260,40 +264,47 @@ try {
   const i18nSrc = readFileSync(ROOT + 'src/i18n.ts', 'utf8');
   const apiSrc = readFileSync(ROOT + 'src/lib/cawApi.ts', 'utf8');
 
-  check('grid: ui.tsx exports BalanceGrid with tap-to-exact wiring (fmtExactDec + open state + hint)',
-    /export function BalanceGrid/.test(uiSrc) &&
-    /fmtExactDec\(cell\.raw, dec\)/.test(uiSrc) &&
+  check('list: ui.tsx exports BalanceList with tap-to-exact wiring (fmtExactDec + open state + hint)',
+    /export function BalanceList/.test(uiSrc) &&
+    /fmtExactDec\(row\.raw, dec\)/.test(uiSrc) &&
     /setOpen/.test(uiSrc) && /tr\('card\.tapHint'\)/.test(uiSrc));
-  check('grid: cells show fmtCardDisplay (B/M abbreviation applied inside the grid)',
-    /fmtCardDisplay\(cell\.raw, dec\)/.test(uiSrc));
+  check('list: rows show fmtCardDisplay (B/M abbreviation applied inside the list)',
+    /fmtCardDisplay\(row\.raw, dec\)/.test(uiSrc));
+  check('list: the grid is retired (no BalanceGrid component left in ui.tsx)',
+    !/export function BalanceGrid/.test(uiSrc) &&
+    !uiSrc.includes('BalanceCellData'));
 
-  // Cell order pinned by the label sequence inside each card's
-  // own <BalanceGrid cells={[ ... ]}> block (the approved mock).
+  // Row order pinned by the label sequence inside the wallet
+  // screen's own <BalanceList rows={[ ... ]}> block.
   const labelIdx = (src) => {
-    const at = src.indexOf('<BalanceGrid');
+    const at = src.indexOf('<BalanceList');
     const seg = src.slice(at, at + 1800);
     return [
       "tr('home.qcaw')", "tr('home.qom')", "tr('card.inName')",
       "tr('card.f42')", "tr('card.cat42')", "label: 'O'", "label: 'KET'",
     ].map((k) => seg.indexOf(k));
   };
-  /* v0.6.1: the grid's only home is the hub's wallet detail
-   * (MeScreen › WalletDetail). The header name card — the
-   * second grid through v0.6.0 — is retired; App.tsx must
-   * render NO grid at all. Same cells, same order, verified
-   * at the grid's new home. */
-  for (const [name, src] of [['wallet detail (hub)', tlSrc]]) {
+  /* v0.6.2: the list's only home is the wallet screen
+   * (MeScreen › WalletDetail). App.tsx renders NO balance
+   * component at all. Same balances, same order, verified at
+   * the list's home. */
+  for (const [name, src] of [['wallet screen', tlSrc]]) {
     const idxs = labelIdx(src);
-    check(`grid: ${name} renders ONE BalanceGrid, cells in mock order (CAW, QOM, in-name, 42, CAT42, O, KET)`,
-      (src.match(/<BalanceGrid/g) || []).length === 1 &&
+    check(`list: ${name} renders ONE BalanceList, rows in order (CAW, QOM, in-name, 42, CAT42, O, KET)`,
+      (src.match(/<BalanceList/g) || []).length === 1 &&
       idxs.every((v) => v >= 0) &&
       idxs.every((v, i) => i === 0 || v > idxs[i - 1]),
       'idx=' + idxs.join(','));
-    check(`grid: ${name} completes the table with an empty 8th cell`,
-      /'KET'[\s\S]{0,300}?\n\s+null,\n\s+\]/.test(src.slice(src.indexOf('<BalanceGrid'), src.indexOf('<BalanceGrid') + 1800)));
+    const at = src.indexOf('<BalanceList');
+    const seg = src.slice(at, src.indexOf(']}', at));
+    check(`list: ${name} has exactly seven rows (the grid's empty 8th cell is gone)`,
+      (seg.match(/label:/g) || []).length === 7 &&
+      !/\n\s*null,/.test(seg));
   }
-  check('grid: App.tsx renders NO BalanceGrid (the header name card is retired, v0.6.1)',
-    (appSrc.match(/<BalanceGrid/g) || []).length === 0 && !appSrc.includes('NameCard'));
+  check('list: App.tsx renders NO BalanceList and NO BalanceGrid (the header name card is retired)',
+    (appSrc.match(/<BalanceList/g) || []).length === 0 &&
+    (appSrc.match(/<BalanceGrid/g) || []).length === 0 &&
+    !appSrc.includes('NameCard'));
 
   /* --- the B/M abbreviation: pure, boundaries + truncation --- */
   const T = (whole, frac18 = 0n) => BigInt(whole) * 10n ** 18n + frac18;

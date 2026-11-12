@@ -14,109 +14,56 @@ import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
 import {
   Avatar,
-  BalanceGrid,
-  BellIcon,
-  BookmarkIcon,
+  BalanceList,
   DownloadIcon,
-  HAIRLINE,
   MONO,
-  RepeatIcon,
   S,
   SendIcon,
-  SettingsIcon,
-  TipIcon,
-  UserIcon,
-  UserPlusIcon,
-  WalletIcon,
 } from '../components/ui';
-import { fmtAmountCard } from '../lib/cawCore';
 import { backArrow } from '../lib/rtl';
 import MyNamesScreen from './MyNamesScreen';
 import GetNameScreen from './GetNameScreen';
 import SettingsScreen from './SettingsScreen';
 import SendScreen from './SendScreen';
-import InboxScreen from './InboxScreen';
-import BookmarksScreen from './BookmarksScreen';
-import { HuntersSwapModal } from './HuntersSwapScreen';
 
 /**
- * The wallet detail (hub 'wallet' section): the full
- * BalanceGrid — the same cells in the same order as the old
- * Home card and the v0.6.0 hub card (wallet CAW | QOM /
- * in-name CAW | [42] / CAT42 | O / KET | —), tap-for-exact,
- * and the v0.4.7 rule inside the grid (unread renders the
- * dash, never a numeric 0). One tap from the hub's summary;
- * the deposited-CAW cell takes the acting name's balance.
+ * The wallet screen (hub 'wallet' section), redesigned in
+ * v0.6.2 in MetaMask's layout (user instruction, 2026-11-13):
+ *
+ *  1. PROFILE SECTION at the top — the acting name's avatar,
+ *     display name, "@handle · #id" and the copyable address
+ *     chip, the same content the retired hub's summary
+ *     carried. The whole section is tappable and opens the
+ *     user's OWN profile page (the same openProfile route
+ *     the hub summary tap used). No name yet: the honest
+ *     prompt + the Get-a-name entry, as the hub had.
+ *  2. ACTION BUTTONS — Send and Deposit, the app's primary
+ *     (X-blue) treatment, opening the EXACT flows the retired
+ *     hub rows opened: Send → the SendScreen modal; Deposit
+ *     → focusMine(acting.id) (My names, deposit controls
+ *     expanded). The hub's Send/Deposit menu rows are GONE
+ *     (confirmed user instruction, 2026-11-13): the flows
+ *     live here now, consolidated. Deposit keeps the hub
+ *     row's precondition exactly — it renders only when an
+ *     acting name exists (with no name there is nothing to
+ *     deposit into, and the section above offers Get-a-name
+ *     instead). The address chip in (1) covers receive/copy,
+ *     as it did on the hub.
+ *  3. ASSET LIST — the seven balances as a vertical list
+ *     (BalanceList), same order and same raw sources as the
+ *     grid it replaces: wallet CAW / QOM (fees) / in-name
+ *     CAW (the acting name's deposited balance) / [42] /
+ *     CAT42 (tips) / O / KET. Unread stays the dash, real
+ *     zero stays 0; tapping an amount toggles the exact
+ *     figure; no prices, no fiat totals (no trusted price
+ *     source exists, so none is invented).
  */
 function WalletDetail() {
   const app = useApp();
-  const { actingId, myTokens, qom, qcaw, f42, cat42, oTok, ket } = app;
-  const acting =
-    myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
-  return (
-    <ScrollView
-      style={{ flex: 1 }}
-      contentContainerStyle={{ padding: 16, paddingBottom: 28 }}
-    >
-      <BalanceGrid
-        cells={[
-          { label: tr('home.qcaw'), unit: 'CAW', raw: qcaw },
-          { label: tr('home.qom'), unit: 'QOM', raw: qom },
-          {
-            label: tr('card.inName'),
-            unit: 'CAW',
-            raw: acting ? acting.balance : null,
-          },
-          { label: tr('card.f42'), unit: '42', raw: f42 },
-          { label: tr('card.cat42'), unit: 'CAT42', raw: cat42 },
-          {
-            label: 'O',
-            unit: 'O',
-            raw: oTok ? oTok.raw : null,
-            decimals: oTok ? oTok.decimals : 18,
-          },
-          {
-            label: 'KET',
-            unit: 'KET',
-            raw: ket ? ket.raw : null,
-            decimals: ket ? ket.decimals : 18,
-          },
-          null,
-        ]}
-      />
-    </ScrollView>
-  );
-}
-
-/**
- * The Profile tab — the hub that keeps EVERYTHING the old
- * tab bar and the old app header reached, reachable.
- *
- * v0.6.1 finish (concept images ②/⑦): the top of 'main' is
- * no longer the dense balance-grid card. It is a profile
- * summary (avatar, display name, @handle · #id, the copyable
- * address chip — tap the summary for the profile), ONE
- * prominent balance card (the active name's deposited CAW,
- * big, with the fees caption; tap → the wallet detail), and
- * icon rows for every destination. The full BalanceGrid —
- * same cells, same order, tap-for-exact — lives one tap
- * deeper in the 'wallet' section (WalletDetail below);
- * nothing was deleted, it moved.
- *
- * Sections: 'mine' / 'get' / 'settings' / 'wallet' render
- * under a back row. Send, HuntersExchange, Bookmarks and the
- * reactions inbox open as the same modals they always were.
- * The reachability map is pinned by scripts/verify-xui.mjs.
- */
-export default function MeScreen() {
-  const app = useApp();
-  const { hubSection, openHub, actingId, myTokens, address } = app;
+  const { actingId, myTokens, address, qom, qcaw, f42, cat42, oTok, ket } =
+    app;
   const [sendOpen, setSendOpen] = useState(false);
-  const [hsOpen, setHsOpen] = useState(false);
-  const [inboxOpen, setInboxOpen] = useState(false);
-  const [bookmarksOpen, setBookmarksOpen] = useState(false);
   const [addrCopied, setAddrCopied] = useState(false);
-
   const acting =
     myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
   const actingCustom = acting ? app.customFor(acting.id) : undefined;
@@ -140,40 +87,13 @@ export default function MeScreen() {
     setTimeout(() => setAddrCopied(false), 2000);
   }, [address]);
 
-  if (hubSection !== 'main') {
-    return (
-      <View style={S.screen}>
-        <View style={styles.backRow}>
-          <Pressable onPress={() => openHub('main')} hitSlop={8}>
-            <Text style={styles.backText}>
-              {backArrow()} {tr('common.back')}
-            </Text>
-          </Pressable>
-          <Text style={styles.backTitle}>
-            {hubSection === 'mine'
-              ? tr('nav.myNames')
-              : hubSection === 'get'
-                ? tr('nav.getName')
-                : hubSection === 'wallet'
-                  ? tr('hub.wallet')
-                  : tr('nav.settings')}
-          </Text>
-        </View>
-        {hubSection === 'mine' && <MyNamesScreen />}
-        {hubSection === 'get' && <GetNameScreen />}
-        {hubSection === 'settings' && <SettingsScreen />}
-        {hubSection === 'wallet' && <WalletDetail />}
-      </View>
-    );
-  }
-
   return (
-    <View style={S.screen}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 28 }}>
-        {/* Profile summary — the hub's identity row. Tapping
-            it opens the acting name's profile (the route the
-            old card's Profile button took); the address chip
-            keeps its copy behaviour. */}
+    <View style={{ flex: 1 }}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: 28 }}
+      >
+        {/* (1) Profile section — tap for the own profile. */}
         {acting ? (
           <Pressable
             onPress={() => app.openProfile(acting.username)}
@@ -213,100 +133,73 @@ export default function MeScreen() {
             <Text style={S.body}>{tr('mine.none')}</Text>
             <Pressable
               style={[S.bigBtn, { marginTop: 12 }]}
-              onPress={() => openHub('get')}
+              onPress={() => app.openHub('get')}
             >
               <Text style={S.bigBtnText}>{tr('nav.getName')}</Text>
             </Pressable>
           </View>
         )}
 
-        {/* The ONE prominent balance (concept image ②): the
-            active name's deposited CAW — the balance posts
-            and actions draw their fees from — big, with its
-            caption. Every other balance is one tap away in
-            the wallet detail (the row right below, or tap
-            this card). Unread stays the honest dash via the
-            grid; here a name always has its enumerated
-            balance, so the figure is the real one. */}
-        {acting ? (
+        {/* (2) Actions — Send / Deposit (MetaMask-style row of
+            primary buttons; the hub rows' flows, verbatim). */}
+        <View style={styles.actionRow}>
           <Pressable
             style={({ pressed }) => [
-              styles.heroCard,
+              styles.actionBtn,
               pressed && { opacity: 0.85 },
             ]}
-            onPress={() => openHub('wallet')}
+            onPress={() => setSendOpen(true)}
             accessibilityRole="button"
           >
-            <View style={[S.row, { alignItems: 'center', gap: 8 }]}>
-              <TipIcon size={22} />
-              <Text style={S.small}>{tr('card.inName')}</Text>
-            </View>
-            <Text
-              style={styles.heroAmount}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.5}
-            >
-              {fmtAmountCard(acting.balance)}
-              <Text style={styles.heroUnit}> CAW</Text>
-            </Text>
-            <Text style={[S.tiny, { marginTop: 4 }]}>
-              {tr('hub.balanceNote')}
+            <SendIcon size={19} color="#fff" />
+            <Text style={styles.actionBtnText} numberOfLines={1}>
+              {tr('send.title')}
             </Text>
           </Pressable>
-        ) : null}
-
-        {/* Entries — everything the removed tabs and the old
-            header held, one icon row each (concept image ⑦). */}
-        <View style={styles.entryGroup}>
-          <EntryRow
-            icon={<WalletIcon size={20} color="#0f1419" />}
-            label={tr('hub.wallet')}
-            onPress={() => openHub('wallet')}
-          />
-          <EntryRow
-            icon={<UserIcon size={20} color="#0f1419" />}
-            label={tr('nav.myNames')}
-            onPress={() => openHub('mine')}
-          />
-          <EntryRow
-            icon={<UserPlusIcon size={20} color="#0f1419" />}
-            label={tr('nav.getName')}
-            onPress={() => openHub('get')}
-          />
-          <EntryRow
-            icon={<RepeatIcon size={20} color="#0f1419" />}
-            label="HuntersExchange"
-            caption={tr('hs.title')}
-            onPress={() => setHsOpen(true)}
-          />
-          <EntryRow
-            icon={<SendIcon size={20} color="#0f1419" />}
-            label={tr('send.title')}
-            onPress={() => setSendOpen(true)}
-          />
           {acting ? (
-            <EntryRow
-              icon={<DownloadIcon size={20} color="#0f1419" />}
-              label={tr('home.deposit')}
+            <Pressable
+              style={({ pressed }) => [
+                styles.actionBtn,
+                pressed && { opacity: 0.85 },
+              ]}
               onPress={() => app.focusMine(acting.id)}
-            />
+              accessibilityRole="button"
+            >
+              <DownloadIcon size={19} color="#fff" />
+              <Text style={styles.actionBtnText} numberOfLines={1}>
+                {tr('home.deposit')}
+              </Text>
+            </Pressable>
           ) : null}
-          <EntryRow
-            icon={<BookmarkIcon size={20} color="#0f1419" />}
-            label={tr('bm.title')}
-            onPress={() => setBookmarksOpen(true)}
-          />
-          <EntryRow
-            icon={<BellIcon size={20} color="#0f1419" />}
-            label={tr('inbox.title')}
-            onPress={() => setInboxOpen(true)}
-          />
-          <EntryRow
-            icon={<SettingsIcon size={20} color="#0f1419" />}
-            label={tr('nav.settings')}
-            onPress={() => openHub('settings')}
-            last
+        </View>
+
+        {/* (3) Asset list — the seven balances, grid order,
+            grid sources, as rows. */}
+        <View style={{ paddingHorizontal: 16, marginTop: 20 }}>
+          <BalanceList
+            rows={[
+              { label: tr('home.qcaw'), unit: 'CAW', raw: qcaw },
+              { label: tr('home.qom'), unit: 'QOM', raw: qom },
+              {
+                label: tr('card.inName'),
+                unit: 'CAW',
+                raw: acting ? acting.balance : null,
+              },
+              { label: tr('card.f42'), unit: '42', raw: f42 },
+              { label: tr('card.cat42'), unit: 'CAT42', raw: cat42 },
+              {
+                label: 'O',
+                unit: 'O',
+                raw: oTok ? oTok.raw : null,
+                decimals: oTok ? oTok.decimals : 18,
+              },
+              {
+                label: 'KET',
+                unit: 'KET',
+                raw: ket ? ket.raw : null,
+                decimals: ket ? ket.decimals : 18,
+              },
+            ]}
           />
         </View>
       </ScrollView>
@@ -318,57 +211,66 @@ export default function MeScreen() {
       >
         <SendScreen onClose={() => setSendOpen(false)} />
       </Modal>
-      <HuntersSwapModal visible={hsOpen} onClose={() => setHsOpen(false)} />
-      <Modal
-        visible={inboxOpen}
-        animationType="slide"
-        onRequestClose={() => setInboxOpen(false)}
-      >
-        <InboxScreen onClose={() => setInboxOpen(false)} />
-      </Modal>
-      <Modal
-        visible={bookmarksOpen}
-        animationType="slide"
-        onRequestClose={() => setBookmarksOpen(false)}
-      >
-        <BookmarksScreen onClose={() => setBookmarksOpen(false)} />
-      </Modal>
     </View>
   );
 }
 
-function EntryRow({
-  icon,
-  label,
-  caption,
-  onPress,
-  last,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  caption?: string;
-  onPress: () => void;
-  last?: boolean;
-}) {
+/**
+ * The hub SECTIONS host (v0.6.2). Through v0.6.1 this screen
+ * was the Profile tab itself, with a hub home ('main': the
+ * profile summary, the hero deposited-CAW card, the entry
+ * rows) above the sections. The X-style drawer (components/
+ * Drawer.tsx) replaced the hub home as the app's menu
+ * surface, and the Profile tab now opens the user's own
+ * profile page directly — so what remains here is exactly
+ * the section host: a back row (← 戻る + the section title,
+ * the pattern every section has always used) over My names /
+ * Get a name / Settings / the wallet screen. App renders
+ * this only while a section is open (hubSection !== 'main');
+ * 'main' means "no section open" and never mounts it. Back
+ * (openHub('main')) lands on the own-profile tab.
+ *
+ * The destinations the retired hub home held, and their new
+ * homes (pinned by scripts/verify-xui.mjs): profile summary →
+ * the drawer summary + the wallet screen's profile section;
+ * hero deposited-CAW card → the 名前の中の CAW row of the
+ * wallet asset list; entry rows → the drawer rows (same
+ * destinations); Send/Deposit rows → the wallet screen's
+ * action buttons (the flows themselves unchanged).
+ */
+export default function MeScreen() {
+  const app = useApp();
+  const { hubSection, openHub } = app;
+
+  if (hubSection === 'main') {
+    // App never mounts the host in this state; render nothing
+    // rather than resurrect the retired hub home.
+    return <View style={S.screen} />;
+  }
+
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      style={({ pressed }) => [
-        styles.entryRow,
-        !last && styles.entryRowLine,
-        pressed && { backgroundColor: '#f7f9f9' },
-      ]}
-    >
-      <View style={styles.entryIcon}>{icon}</View>
-      <View style={{ flex: 1, marginStart: 12 }}>
-        <Text style={styles.entryLabel} numberOfLines={1}>
-          {label}
+    <View style={S.screen}>
+      <View style={styles.backRow}>
+        <Pressable onPress={() => openHub('main')} hitSlop={8}>
+          <Text style={styles.backText}>
+            {backArrow()} {tr('common.back')}
+          </Text>
+        </Pressable>
+        <Text style={styles.backTitle}>
+          {hubSection === 'mine'
+            ? tr('nav.myNames')
+            : hubSection === 'get'
+              ? tr('nav.getName')
+              : hubSection === 'wallet'
+                ? tr('hub.wallet')
+                : tr('nav.settings')}
         </Text>
-        {caption ? <Text style={S.tiny}>{caption}</Text> : null}
       </View>
-      <Text style={styles.entryChevron}>›</Text>
-    </Pressable>
+      {hubSection === 'mine' && <MyNamesScreen />}
+      {hubSection === 'get' && <GetNameScreen />}
+      {hubSection === 'settings' && <SettingsScreen />}
+      {hubSection === 'wallet' && <WalletDetail />}
+    </View>
   );
 }
 
@@ -405,53 +307,21 @@ const styles = StyleSheet.create({
     color: '#0f1419',
     fontFamily: MONO,
   },
-  heroCard: {
-    marginHorizontal: 12,
-    marginTop: 14,
+  actionRow: {
+    flexDirection: 'row',
+    gap: 12,
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderWidth: 1,
-    borderColor: HAIRLINE,
-    borderRadius: 16,
-    backgroundColor: '#fff',
-    shadowColor: '#0f1419',
-    shadowOpacity: 0.07,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  heroAmount: {
-    fontSize: 27,
-    fontWeight: '800',
-    color: '#0f1419',
-    marginTop: 8,
-    fontVariant: ['tabular-nums'],
-  },
-  heroUnit: { fontSize: 14, fontWeight: '700', color: '#536471' },
-  entryGroup: {
     marginTop: 18,
-    borderTopWidth: 1,
-    borderTopColor: '#eff3f4',
-    backgroundColor: '#fff',
   },
-  entryRow: {
+  actionBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: ACCENT,
+    borderRadius: 999,
     paddingVertical: 12,
   },
-  entryRowLine: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#eff3f4',
-  },
-  entryIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#eff3f4',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  entryLabel: { fontSize: 15.5, fontWeight: '600', color: '#0f1419' },
-  entryChevron: { fontSize: 20, color: '#536471', marginStart: 8 },
+  actionBtnText: { fontSize: 15.5, fontWeight: '700', color: '#fff' },
 });

@@ -30,6 +30,20 @@
  *     SuperLike < Tip < Bookmark); accent = X blue; the
  *     SuperLike star = gold; the Settings About carries the
  *     views-aggregation note in the source language.
+ *
+ * v0.6.2 additions (same section 4 + section 9): the tab bar
+ * carries the reactions bell as an ACTION between Search
+ * and Profile (header bell gone; badge + inbox wiring
+ * unchanged); the header avatar opens the X-style DRAWER
+ * (84% panel + scrim, Animated-only, RTL start-anchored),
+ * which replaced the hub home as the menu surface — every
+ * hub row's destination is a drawer row's destination; the
+ * Profile tab opens the user's OWN profile page (the
+ * section host renders only while a section is open); the
+ * wallet screen is MetaMask-shaped (profile section -> own
+ * profile, Send/Deposit action buttons wired to the same
+ * flows, the seven balances as an asset list); Send/Deposit
+ * have no hub/drawer rows left.
  */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
@@ -295,6 +309,7 @@ console.log('\n-- structure / reachability --');
 {
   const appSrc = read('App.tsx');
   const meSrc = read('src/screens/MeScreen.tsx');
+  const drawerSrc = read('src/components/Drawer.tsx');
   const uiSrc = read('src/components/ui.tsx');
   const tlSrc = read('src/screens/TimelineScreen.tsx');
   const composeSrc = read('src/screens/ComposeScreen.tsx');
@@ -316,9 +331,48 @@ console.log('\n-- structure / reachability --');
   );
   ok(
     appSrc.includes("{tab === 'search' && <SearchScreen />}") &&
-      appSrc.includes("{tab === 'profile' && <MeScreen />}"),
-    'Search renders as a tab (no onClose) and Profile renders the hub',
+      appSrc.includes("{tab === 'profile' && hubSection !== 'main' && <MeScreen />}") &&
+      appSrc.includes('username={acting.username}') &&
+      appSrc.includes("onBack={() => setTab('home')}"),
+    'Search renders as a tab (no onClose); Profile renders the section host only while a section is open, else the OWN profile page (v0.6.2)',
   );
+  /* v0.6.2: the bell is a tab-bar ACTION between Search and
+   * Profile; the header carries no bell at all. */
+  {
+    const nav = appSrc.slice(appSrc.indexOf('styles.bottomNav'));
+    const order = [
+      'renderTab(homeTab)',
+      'renderTab(searchTab)',
+      'BellIcon',
+      'renderTab(profileTab)',
+    ].map((n) => nav.indexOf(n));
+    ok(
+      order.every((v) => v >= 0) &&
+        order.every((v, i) => i === 0 || v > order[i - 1]),
+      'tab bar order: Home / Search / Bell / Profile (bell immediately left of Profile)',
+    );
+  }
+  ok(
+    appSrc.includes('onPress={() => setInboxOpen(true)}') &&
+      appSrc.includes("accessibilityLabel={tr('inbox.title')}") &&
+      appSrc.includes('styles.bellWrap') &&
+      appSrc.includes("unread > 99 ? '99+'") &&
+      appSrc.includes('loadSeen(storeKV, address)') &&
+      appSrc.includes('scanReactions(myIds, seen)'),
+    'bell tab opens the same inbox, with the same unread badge (loadSeen + scanReactions machinery intact)',
+  );
+  {
+    const header = appSrc.slice(
+      appSrc.indexOf('function Header('),
+      appSrc.indexOf('const TAB_BAR_HEIGHT'),
+    );
+    ok(
+      !header.includes('BellIcon') && !header.includes('setInboxOpen') &&
+        header.includes('onAvatarPress') &&
+        appSrc.includes('onAvatarPress={() => setDrawerOpen(true)}'),
+      'header: NO bell (moved to the tab bar); avatar tap opens the drawer',
+    );
+  }
   const tabBlock = appSrc.slice(
     appSrc.indexOf('const renderTab'),
     appSrc.indexOf('const renderTab') + 500,
@@ -337,24 +391,55 @@ console.log('\n-- structure / reachability --');
     'the tab-bar center trade button is gone from App',
   );
 
-  // Reachability: every section/entry the hub must hold.
+  // Reachability (v0.6.2): every destination the retired hub
+  // home held, at its new home — the section host (MeScreen),
+  // the drawer, and App's modals. Nothing became unreachable.
   for (const [needle, label] of [
     ['<MyNamesScreen />', 'My names section'],
     ['<GetNameScreen />', 'Get a name section'],
     ['<SettingsScreen />', 'Settings section'],
-    ['<SendScreen', 'Send modal'],
-    ['<InboxScreen', 'reactions inbox modal'],
-    ['<BookmarksScreen', 'Bookmarks modal'],
-    ['<HuntersSwapModal', 'HuntersExchange modal'],
-    ['<BalanceGrid', 'the wallet balance grid'],
-    ["openHub('mine')", 'My names entry'],
-    ["openHub('get')", 'Get a name entry'],
-    ["openHub('settings')", 'Settings entry'],
-    ['app.focusMine(acting.id)', 'Deposit button keeps the focusMine route'],
-    ["app.openProfile(acting.username)", 'Profile button keeps the openProfile route'],
+    ['<BalanceList', 'the wallet asset list'],
+    ['<SendScreen', 'Send modal (from the wallet screen)'],
+    ["openHub('main')", 'section back returns to the profile page'],
+    ['app.focusMine(acting.id)', 'wallet Deposit button keeps the focusMine route'],
+    ['app.openProfile(acting.username)', 'wallet profile section keeps the openProfile route'],
   ]) {
-    ok(meSrc.includes(needle), 'hub reaches: ' + label);
+    ok(meSrc.includes(needle), 'section host reaches: ' + label);
   }
+  for (const [needle, label] of [
+    ["app.openHub('wallet')", 'Wallet row -> wallet section'],
+    ["app.openHub('mine')", 'My names row'],
+    ["app.openHub('get')", 'Get a name row'],
+    ["app.openHub('settings')", 'Settings row'],
+    ['app.openProfile(acting.username)', 'Profile row + summary -> own profile page'],
+    ['onOpenInbox', 'Inbox row -> the same inbox as the bell tab'],
+    ['<HuntersSwapModal', 'HuntersExchange modal'],
+    ['<BookmarksScreen', 'Bookmarks modal'],
+  ]) {
+    ok(drawerSrc.includes(needle), 'drawer reaches: ' + label);
+  }
+  ok(
+    appSrc.includes('<Drawer') && appSrc.includes('<InboxScreen'),
+    'app reaches: the drawer is mounted and the inbox modal lives in Main (bell tab + drawer row)',
+  );
+  ok(
+    meSrc.includes('Clipboard.setStringAsync') &&
+      meSrc.includes("tr('send.title')") &&
+      meSrc.includes("tr('home.deposit')") &&
+      meSrc.includes('setSendOpen(true)'),
+    'wallet screen: profile section with the copyable address chip + Send/Deposit action buttons (MetaMask layout)',
+  );
+  ok(
+    !meSrc.includes('EntryRow') && !meSrc.includes('heroCard') &&
+      !meSrc.includes("tr('hub.balanceNote')"),
+    'the hub home is retired: no entry rows and no hero card remain in MeScreen',
+  );
+  ok(
+    !drawerSrc.includes("tr('send.title')") &&
+      !drawerSrc.includes("tr('home.deposit')") &&
+      !drawerSrc.includes('focusMine'),
+    'Send/Deposit have NO drawer rows (consolidated into the wallet screen only)',
+  );
   {
     const cellOrder = [
       "tr('home.qcaw')",
@@ -366,7 +451,7 @@ console.log('\n-- structure / reachability --');
     ok(
       cellOrder.every((v) => v >= 0) &&
         cellOrder.every((v, i) => i === 0 || v > cellOrder[i - 1]),
-      'hub card keeps the Home balance cells and their order',
+      'wallet asset list keeps the balance rows and their order',
     );
   }
   // No stale navigation to removed tabs anywhere in the app.
@@ -457,8 +542,9 @@ console.log('\n-- structure / reachability --');
     'the Bookmarks list resolves live and placeholders unresolvable posts honestly',
   );
 
-  /* ---------- 9. v0.6.1 finish: header, flat SuperRecaw,
-   * one record link, one-line action row, hub + screens ---- */
+  /* ---------- 9. v0.6.1 finish + v0.6.2: header, drawer,
+   * flat SuperRecaw, one record link, one-line action row,
+   * screens ---- */
   const mineSrc = read('src/screens/MyNamesScreen.tsx');
   const searchSrc = read('src/screens/SearchScreen.tsx');
   const hsSrc = read('src/screens/HuntersSwapScreen.tsx');
@@ -470,17 +556,48 @@ console.log('\n-- structure / reachability --');
     'header: no emoji bell, no globe cycle button, no brand title block, no name card',
   );
   ok(
-    appSrc.includes('BellIcon') && appSrc.includes("setTab('profile')") &&
-      appSrc.includes('headerMark'),
-    'header: avatar tap -> Profile hub, centered CAW mark, vector bell for the inbox',
+    appSrc.includes('headerMark') &&
+      appSrc.includes('onAvatarPress={() => setDrawerOpen(true)}') &&
+      !appSrc
+        .slice(
+          appSrc.indexOf('function Header('),
+          appSrc.indexOf('const TAB_BAR_HEIGHT'),
+        )
+        .includes('BellIcon'),
+    'header (v0.6.2): avatar tap opens the drawer, centered CAW mark, NO bell in the header',
+  );
+  /* v0.6.2: the drawer — form, summary, and rows. */
+  ok(
+    drawerSrc.includes('0.84') &&
+      drawerSrc.includes('rgba(15, 20, 25') &&
+      drawerSrc.includes('Animated.timing') &&
+      drawerSrc.includes('useNativeDriver: true') &&
+      drawerSrc.includes('I18nManager.isRTL') &&
+      drawerSrc.includes('onPress={onClose}'),
+    'drawer form: ~84% panel + tappable scrim, Animated-only slide, RTL start anchoring',
   );
   ok(
-    meSrc.includes("openHub('wallet')") && meSrc.includes("tr('hub.wallet')") &&
-      meSrc.includes("tr('hub.balanceNote')") &&
-      meSrc.includes('fmtAmountCard(acting.balance)') &&
-      meSrc.includes('WalletIcon') && meSrc.includes('SendIcon') &&
-      meSrc.includes('BellIcon') && meSrc.includes('DownloadIcon'),
-    'hub: profile summary + hero deposited-CAW card + icon rows (wallet/mine/get/exchange/send/deposit/bookmarks/inbox/settings)',
+    drawerSrc.includes('followerCount(id)') &&
+      drawerSrc.includes('followListsOf(id)') &&
+      drawerSrc.includes('subscribeFollowIndex') &&
+      drawerSrc.includes("tr('followlist.following')") &&
+      drawerSrc.includes("tr('followlist.followers')") &&
+      drawerSrc.includes("? String(following) : '—'") &&
+      drawerSrc.includes("? followers.toString() : '—'"),
+    'drawer summary: follow counts from ProfileScreen sources (chain followerCount + follow index), dash while unread, never invented',
+  );
+  ok(
+    drawerSrc.includes("tr('nav.profile')") &&
+      drawerSrc.includes("tr('hub.wallet')") &&
+      drawerSrc.includes("tr('nav.myNames')") &&
+      drawerSrc.includes("tr('nav.getName')") &&
+      drawerSrc.includes('HuntersExchange') &&
+      drawerSrc.includes("tr('bm.title')") &&
+      drawerSrc.includes("tr('inbox.title')") &&
+      drawerSrc.includes("tr('nav.settings')") &&
+      drawerSrc.includes('WalletIcon') && drawerSrc.includes('BellIcon') &&
+      drawerSrc.includes('SettingsIcon'),
+    'drawer rows: profile / wallet / my names / get a name / exchange / bookmarks / inbox, then settings low',
   );
   ok(
     !uiSrc.includes('superFrame') && !uiSrc.includes('LinearGradient') &&

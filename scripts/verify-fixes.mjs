@@ -268,19 +268,20 @@ try {
    * bordered-table look and the one-shared-component rule
    * carry over — the grid's own wiring is pinned in
    * verify-display §7). */
-  check('v0.4.6->v0.4.10: the shared balance component exists (bordered table)',
-    /export function BalanceGrid/.test(uiSrc) &&
+  check('v0.4.6->v0.4.10 (list since v0.6.2): the shared balance component exists (bordered table/list)',
+    /export function BalanceList/.test(uiSrc) &&
     /borderColor: '#d9dee2'/.test(uiSrc) && /borderRadius: 12/.test(uiSrc));
-  check('v0.4.6->v0.4.10 (hub since v0.6.0): the wallet card renders its balances through ONE BalanceGrid',
-    (meSrc.match(/<BalanceGrid/g) || []).length === 1 &&
+  check('v0.4.6->v0.4.10 (wallet screen since v0.6.2): the wallet screen renders its balances through ONE BalanceList',
+    (meSrc.match(/<BalanceList/g) || []).length === 1 &&
     /raw: acting \? acting\.balance : null/.test(meSrc));
-  check('v0.4.6->v0.4.10 (v0.6.1): the header name card is RETIRED — App.tsx renders no BalanceGrid and no NameCard; the one grid lives on the hub',
+  check('v0.4.6->v0.4.10 (v0.6.1): the header name card is RETIRED — App.tsx renders no BalanceList, no BalanceGrid and no NameCard; the one list lives on the wallet screen',
+    (appSrc.match(/<BalanceList/g) || []).length === 0 &&
     (appSrc.match(/<BalanceGrid/g) || []).length === 0 &&
     !appSrc.includes('NameCard'));
   check('v0.4.6 (hub since v0.6.0): the wallet card has no faucet button (Deposit replaced it) — on either screen',
     !/FaucetButton/.test(tlSrc) && !/faucet\.title/.test(tlSrc) &&
     !/FaucetButton/.test(meSrc) && !/faucet\.title/.test(meSrc));
-  check('v0.4.6 (hub route since v0.6.0): Deposit button is wired (focusMine with a name, Get-a-name hub section without)',
+  check('v0.4.6 (wallet screen since v0.6.2): Deposit button is wired (focusMine with a name, Get-a-name section without)',
     /tr\('home\.deposit'\)/.test(meSrc) &&
     /app\.focusMine\(acting\.id\)/.test(meSrc) &&
     /openHub\('get'\)/.test(meSrc));
@@ -292,7 +293,7 @@ try {
     /Icon: UserIcon/.test(appSrc) &&
     /export function HomeIcon/.test(uiSrc) &&
     /export function SettingsIcon/.test(uiSrc));
-  check('v0.4.6 (hub since v0.6.0): wallet card button labels are single-line shrink-to-fit (no vertical split)',
+  check('v0.4.6 (wallet screen since v0.6.2): wallet screen labels are single-line shrink-to-fit (no vertical split)',
     (meSrc.match(/numberOfLines=\{1\}/g) || []).length >= 3);
   check('v0.4.6: name-card overlay is NOT measured/anchored to the SafeAreaView (no headerH)',
     !/headerH/.test(appSrc));
@@ -338,7 +339,7 @@ try {
   check('v0.4.7: refreshBalances stores only successful reads (a failure cannot clobber)',
     /if \(b\.qom !== null\) setQom\(b\.qom\)/.test(ctxSrc) &&
     /if \(b\.qcaw !== null\) setQcaw\(b\.qcaw\)/.test(ctxSrc));
-  check('v0.4.7 (grid form, v0.4.10; hub wallet detail since v0.6.1): the QOM cell takes the live qom state as raw (null -> dash); App.tsx carries no balance cells',
+  check('v0.4.7 (grid form, v0.4.10; list form since v0.6.2): the QOM row takes the live qom state as raw (null -> dash); App.tsx carries no balance rows',
     /unit: 'QOM', raw: qom/.test(meSrc) &&
     !/unit: 'QOM'/.test(appSrc));
 
@@ -431,10 +432,10 @@ try {
   check('v0.4.8: refreshBalances stores the 42 Chain reads only on success',
     /if \(b\.f42 !== null\) setF42\(b\.f42\)/.test(ctxSrc) &&
     /if \(b\.cat42 !== null\) setCat42\(b\.cat42\)/.test(ctxSrc));
-  check('v0.4.8 (grid form, v0.4.10; hub card since v0.6.0): hub card [42] + CAT42 cells take live state as raw (null -> dash)',
+  check('v0.4.8 (grid form, v0.4.10; list form since v0.6.2): wallet list [42] + CAT42 rows take live state as raw (null -> dash)',
     /unit: '42', raw: f42/.test(meSrc) &&
     /unit: 'CAT42', raw: cat42/.test(meSrc));
-  check('v0.4.8 (grid form, v0.4.10; v0.6.1): App.tsx carries no [42]/CAT42 cells (name card retired); the hub grid keeps the shared CAT42 label key',
+  check('v0.4.8 (grid form, v0.4.10; v0.6.1): App.tsx carries no [42]/CAT42 cells (name card retired); the wallet list keeps the shared CAT42 label key',
     !/unit: '42'/.test(appSrc) && !/unit: 'CAT42'/.test(appSrc) &&
     /tr\('card\.cat42'\)/.test(meSrc));
   check('v0.4.8: new label keys exist in all 20 language dicts',
@@ -451,17 +452,17 @@ try {
     uiSrc.indexOf('const balanceStyles'),
     uiSrc.indexOf('const balanceStyles') + 1600,
   );
-  check('v0.4.9->v0.4.10: the grid keeps the compact v0.4.9 metrics (paddingVertical 5, amount 17, label 11.5)',
-    /paddingVertical: 5/.test(balBlock) &&
+  check('v0.4.9->v0.4.10 (list since v0.6.2): the list keeps the amount metrics (paddingVertical 11 list air, amount 17, unit 11.5)',
+    /paddingVertical: 11/.test(balBlock) &&
     /fontSize: 17/.test(balBlock) &&
     /fontSize: 11\.5/.test(balBlock) &&
     /paddingHorizontal: 12/.test(balBlock));
-  check('v0.4.9->v0.4.10: the grid keeps the bordered look + unread dash rule',
+  check('v0.4.9->v0.4.10: the list keeps the bordered look + unread dash rule',
     /borderColor: '#d9dee2'/.test(balBlock) &&
     /shown === null \? '—'/.test(uiSrc));
-  check('v0.4.9->v0.4.10 (v0.6.1): the grid renders in exactly one home (the hub wallet detail); App.tsx has none; no stacked frames remain',
-    (meSrc.match(/<BalanceGrid/g) || []).length === 1 &&
-    (appSrc.match(/<BalanceGrid/g) || []).length === 0 &&
+  check('v0.4.9->v0.4.10 (v0.6.2): the list renders in exactly one home (the wallet screen); App.tsx has none; no stacked frames remain',
+    (meSrc.match(/<BalanceList/g) || []).length === 1 &&
+    (appSrc.match(/<BalanceList/g) || []).length === 0 &&
     !/<BalanceFrame/.test(tlSrc) && !/<BalanceFrame/.test(meSrc) && !/<BalanceFrame/.test(appSrc));
 
   const realFetch = globalThis.fetch;
