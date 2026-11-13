@@ -41,10 +41,11 @@ WHAT YOU CAN DO
 • Buy and sell CAW with a guided step-by-step flow (HuntersDEX) that
   swaps and bridges across chains for you
 • Send any of your balances, with an on-device address book
-• Use the app in 13 languages: English, Japanese, Korean, Chinese,
-  Spanish, Turkish, Persian, Indonesian, Vietnamese, Portuguese,
-  Dutch, Hindi and French — including a full right-to-left layout
-  for Persian
+• Use the app in 20 languages: English, Japanese, Korean, Chinese,
+  Spanish, Turkish, Persian, Indonesian, Vietnamese, Thai, Italian,
+  Portuguese, Dutch, Polish, Ukrainian, German, Russian, Arabic,
+  Hindi and French — including a full right-to-left layout for
+  Persian and Arabic
 
 PLEASE KNOW
 • This is a community app, made by a fan. It is not operated by the
@@ -80,9 +81,11 @@ NFT として本当に自分のものになる「名前」です。
 • チェーンをまたぐスワップとブリッジを、1つずつ案内する買い方・売り方
   （HuntersDEX）で CAW を売買
 • どの残高からでも送金、端末内アドレス帳つき
-• 13言語対応：英語、日本語、韓国語、中国語、スペイン語、トルコ語、
-  ペルシャ語、インドネシア語、ベトナム語、ポルトガル語、オランダ語、
-  ヒンディー語、フランス語（ペルシャ語は右から左のレイアウトに完全対応）
+• 20言語対応：英語、日本語、韓国語、中国語、スペイン語、トルコ語、
+  ペルシャ語、インドネシア語、ベトナム語、タイ語、イタリア語、
+  ポルトガル語、オランダ語、ポーランド語、ウクライナ語、ドイツ語、
+  ロシア語、アラビア語、ヒンディー語、フランス語（ペルシャ語と
+  アラビア語は右から左のレイアウトに完全対応）
 
 知っておいてほしいこと
 • これはファンが作ったコミュニティアプリです。CAW 公式チームが運営する
