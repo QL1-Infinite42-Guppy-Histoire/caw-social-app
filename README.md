@@ -4,8 +4,11 @@ The community CAW SocialFi network on **QL1**, as a native Android app.
 Timeline, names, posting, likes, shares and follows — with the signing
 done **inside the app**, so no wallet browser is needed.
 
-🐦 Web version (same network, read + wallet-browser writes):
+🐦 Web version (same network — read in the browser, post
+from a built-in in-page wallet):
 https://ql1-infinite42-guppy-histoire.github.io/caw-social-ql1/
+No real post has been sent from the web version yet — the
+first one is its end-to-end check.
 
 > This is a community app made by a fan. It is **not** run by the
 > official CAW team. The CAW contracts on QL1 are a community port.
