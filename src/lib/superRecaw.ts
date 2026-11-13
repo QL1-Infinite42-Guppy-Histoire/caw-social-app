@@ -1,17 +1,28 @@
 /**
- * SuperRecaw (v0.5.0) — a Recaw set apart in the feed,
- * paid for by burning exactly 1,000,000 O (QL1) with an
- * "SRC1" trailing-calldata marker naming the ORIGINAL post's
- * cawId (see lib/markedBurns.ts for the shared marked-burn
- * index and the O transfer verification).
+ * SuperRecaw (v0.5.0) — a Recaw set apart in the feed.
+ *
+ * Since v0.6.3 (user decision 2026-11-13) a SuperRecaw
+ * costs 25,000,000 O IN TOTAL after the Recaw itself: a
+ * burn of 20,000,000 O (QL1) with an "SRC1"
+ * trailing-calldata marker naming the ORIGINAL post's
+ * cawId, plus a plain, unmarked transfer of 5,000,000 O to
+ * the original author (see lib/markedBurns.ts for the
+ * shared marked-burn index and the money constants, and
+ * lib/authorPay.ts for the author leg). Under the
+ * v0.5.0–v0.6.2 spec the burn alone was 1,000,000 O; those
+ * legacy burns stay detected forever.
  *
  * The order of operations mirrors the v0.4.9 SuperLike debt
- * discipline: the NORMAL Recaw action lands FIRST (it is the
- * visible act); only then is the O burn sent. If the burn
- * fails after the recaw landed, the debt is recorded here
- * (on-device KV) and the only retry offered sends the burn
- * alone — the retry path cannot build a second recaw. If the
- * recaw itself fails, nothing else runs.
+ * discipline: the NORMAL Recaw action lands FIRST (it is
+ * the visible act); only then is the O burn sent, and the
+ * author payment last. If the burn fails after the recaw
+ * landed, the debt is recorded here (on-device KV) and the
+ * only retry offered sends the burn alone — the retry path
+ * cannot build a second recaw. When that burn retry lands,
+ * the author payment becomes the owed leg instead (recorded
+ * in lib/authorPay.ts). If the payment itself fails after
+ * the burn landed, the same author-pay debt applies. If
+ * the recaw itself fails, nothing else runs.
  *
  * Display: a recaw row renders with the gold SuperRecaw
  * attribution line (flat X-style since v0.6.1; a gradient
@@ -20,6 +31,7 @@
  * address) — chain data only, never a local tally.
  */
 import {
+  SUPERRECAW_BURN_RAW,
   SUPERRECAW_MAGIC,
   buildMarkedBurnData,
   hasSuperRecaw,
@@ -30,9 +42,10 @@ import type { KVStorage } from './myActions';
 
 export { SUPERRECAW_MAGIC };
 
-/** The full transaction data for a SuperRecaw burn. */
+/** The full transaction data for a SuperRecaw burn
+ *  (20,000,000 O since v0.6.3). */
 export function buildSuperRecawData(cawId: string): string | null {
-  return buildMarkedBurnData(SUPERRECAW_MAGIC, cawId);
+  return buildMarkedBurnData(SUPERRECAW_MAGIC, cawId, SUPERRECAW_BURN_RAW);
 }
 
 /** Detection from completed scans (no network). */
@@ -64,6 +77,16 @@ export interface PendingSrcBurn {
   cawId: string;
   /** Unix seconds when the recaw landed. */
   ts: number;
+  /**
+   * The original post author's owner address, resolved at
+   * the original attempt (v0.6.3 — optional: records written
+   * before v0.6.3 have no author). When the burn retry lands,
+   * the author payment becomes the owed leg and is recorded
+   * in lib/authorPay.ts against THIS address when present —
+   * the recipient pinned when the action was taken. Absent
+   * or empty means "resolve fresh at retry time".
+   */
+  author?: string;
 }
 
 let kv: KVStorage | null = null;

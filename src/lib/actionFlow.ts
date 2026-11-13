@@ -7,6 +7,7 @@ import {
 } from './cawApi';
 import { isSelfFollowOwners, type CawAction } from './cawCore';
 import {
+  SUPERLIKE_AUTHOR_RAW,
   buildSuperlikeData,
   oBalanceOf,
   refreshSuperlikesFor,
@@ -19,7 +20,17 @@ import {
   pendingSrcBurnFor,
   recordSrcBurn,
 } from './superRecaw';
-import { MARKED_BURN_PRICE_RAW } from './markedBurns';
+import {
+  SUPERRECAW_AUTHOR_RAW,
+  SUPERRECAW_BURN_RAW,
+} from './markedBurns';
+import {
+  buildAuthorPayData,
+  clearAuthorPay,
+  pendingAuthorPayFor,
+  recordAuthorPay,
+  type AuthorPayKind,
+} from './authorPay';
 import {
   buildTipData,
   cat42BalanceOf,
@@ -142,23 +153,32 @@ export async function performAction(
 }
 
 /**
- * SuperLike （超いいね, v0.4.8; O-burn design v0.5.0): see
- * lib/superlike.ts. NOT a CAW protocol action: the whole
- * payment is ONE ordinary QL1 transaction — an O transfer of
- * exactly 1,000,000 O to the burn address, carrying the post
- * binding as trailing calldata. If it fails, nothing happened
- * and the user simply retries; there is no second leg and no
- * debt state. (The v0.4.9 CAT42 design — author leg + burn
- * leg + pending-burn store — is gone; no SuperLike was ever
- * sent at the CAT42 prices.)
+ * SuperLike （超いいね, v0.4.8; O-burn design v0.5.0; two-leg
+ * design v0.6.3): see lib/superlike.ts. NOT a CAW protocol
+ * action: the payment is TWO ordinary QL1 transactions —
+ *   leg 1: the BURN of 10,000,000 O to the burn address,
+ *          carrying the post binding as trailing calldata.
+ *          This leg defines the action (it is what the ⭐
+ *          count reads), so it goes first: if it fails,
+ *          nothing happened and there is no debt state.
+ *   leg 2: a plain transfer of 15,000,000 O to the post
+ *          author's owner. If THIS fails after the burn
+ *          landed, the payment is recorded as a debt
+ *          (lib/authorPay.ts) and Error('sl-pay-pending') is
+ *          thrown — the only way forward is performAuthorPay,
+ *          which sends the transfer alone.
+ * (v0.5.0–v0.6.2 had ONE leg: a 1,000,000 O burn. Those
+ * burns stay counted — see the detection sets in
+ * lib/markedBurns.ts.)
  *
  * Guards, all BEFORE anything is signed:
  *  - self-SuperLike is blocked (Error('self-superlike')): the
  *    post's name in my tokens, or the author owner (resolved
- *    fresh) being my own address;
+ *    fresh) being my own address — so the author leg can
+ *    never be a payment to oneself;
  *  - the O balance is re-read fresh on QL1; short of the
- *    1,000,000 price is a hard stop (Error('shortfall'), the
- *    balance attached as `balance`).
+ *    25,000,000 total is a hard stop (Error('shortfall'),
+ *    the balance attached as `balance`).
  * Throws Error('auth') / Error('locked') like performAction.
  * On success the marked-burn index is nudged (the count itself
  * still comes from the chain scan) and balances refresh.
@@ -190,28 +210,64 @@ export async function performSuperlike(
   if (!secret) throw new Error('locked');
 
   const signer = signerFor(secret.kind, secret.secret);
+  // Leg 1 — the burn. A throw here is an ordinary failure:
+  // nothing else has run and nothing is owed.
   const hash = await sendCalldata(signer, O_TOKEN, data);
+  // Leg 2 — the author payment (plain transfer, no marker).
+  try {
+    await sendCalldata(
+      signer,
+      O_TOKEN,
+      buildAuthorPayData(authorOwner, SUPERLIKE_AUTHOR_RAW),
+    );
+  } catch {
+    await recordAuthorPay(app.address, 'sl', {
+      cawId: args.target.cawId,
+      author: authorOwner,
+      amountRaw: SUPERLIKE_AUTHOR_RAW,
+      ts: nowSec(),
+    });
+    refreshSuperlikesFor();
+    app.refreshBalances().catch(() => {});
+    throw new Error('sl-pay-pending');
+  }
   refreshSuperlikesFor();
   app.refreshBalances().catch(() => {});
   return hash;
 }
 
 /**
- * SuperRecaw (v0.5.0): the normal Recaw action FIRST, then —
- * only after it landed — the 1,000,000 O burn carrying the
- * SRC1 marker for the original post. The O balance is checked
- * fresh BEFORE the recaw is signed, so an O shortfall refuses
- * the whole Super path (Error('shortfall')) and the UI can
- * offer the plain Recaw instead — never a half state.
+ * SuperRecaw (v0.5.0; two money legs since v0.6.3): the
+ * normal Recaw action FIRST, then — only after it landed —
+ * the 20,000,000 O burn carrying the SRC1 marker for the
+ * original post, and last the 5,000,000 O plain transfer to
+ * the original author. The O balance is checked fresh BEFORE
+ * the recaw is signed, so an O shortfall refuses the whole
+ * Super path (Error('shortfall')) and the UI can offer the
+ * plain Recaw instead — never a half state.
  *
- * One authentication covers both signatures (the flow mirrors
+ * One authentication covers all signatures (the flow mirrors
  * performAction's kind-2 construction directly so the user is
- * not prompted twice back-to-back).
+ * not prompted repeatedly back-to-back).
  *
  * If the burn fails AFTER the recaw landed, the debt is
  * recorded (pendingSrcBurnFor) and Error('src-burn-pending')
  * is thrown — the recaw stands, and the only way forward is
- * performSuperRecawBurn, which can never resend the recaw.
+ * performSuperRecawBurn, which can never resend the recaw;
+ * when that burn lands, the author payment becomes the owed
+ * leg in turn. If the payment fails after the burn landed,
+ * it is recorded (lib/authorPay.ts) and
+ * Error('src-pay-pending') is thrown — the only retry sends
+ * the transfer alone.
+ *
+ * Self-SuperRecaw: unlike SuperLike, a SuperRecaw of one's
+ * OWN post has never been blocked (there is no self check —
+ * a recaw of your own post is a normal CAW action), and
+ * v0.6.3 keeps that behavior. The author leg is the only
+ * difference: when the author owner IS the sender, nobody
+ * is owed anything, so the payment leg is skipped, no debt
+ * can arise from it, and the balance gate drops to the burn
+ * alone.
  */
 export async function performSuperRecaw(
   app: AppContextValue,
@@ -221,8 +277,23 @@ export async function performSuperRecaw(
     app.myTokens.find((t) => t.id === app.actingId) ?? app.myTokens[0];
   if (!acting) throw new Error('need-name');
   if (!app.address) throw new Error('locked');
+  // The author's owner decides the payment leg (and whether
+  // there is one at all). A read failure does NOT block the
+  // Recaw path: the payment is then recorded as owed with
+  // the recipient resolved at retry time.
+  let authorOwner = '';
+  try {
+    authorOwner = await nameOwner(args.target.senderId);
+  } catch {
+    /* resolved at the payment step or at retry */
+  }
+  const selfPay =
+    authorOwner !== '' &&
+    authorOwner.toLowerCase() === app.address.toLowerCase();
   const balance = await oBalanceOf(app.address);
-  if (balance < MARKED_BURN_PRICE_RAW) {
+  const needed =
+    SUPERRECAW_BURN_RAW + (selfPay ? 0n : SUPERRECAW_AUTHOR_RAW);
+  if (balance < needed) {
     throw Object.assign(new Error('shortfall'), { balance });
   }
   const burnData = buildSuperRecawData(args.target.cawId);
@@ -249,17 +320,42 @@ export async function performSuperRecaw(
   const recawHash = await submitAction(secret.kind, secret.secret, action);
   // Step 2 — the marked O burn (QL1). Its failure leaves an
   // honest debt, never a second recaw.
+  const signer = signerFor(secret.kind, secret.secret);
   let burnHash: string;
   try {
-    const signer = signerFor(secret.kind, secret.secret);
     burnHash = await sendCalldata(signer, O_TOKEN, burnData);
   } catch {
     await recordSrcBurn(app.address, {
       cawId: args.target.cawId,
       ts: nowSec(),
+      author: authorOwner,
     });
     app.refreshBalances().catch(() => {});
     throw new Error('src-burn-pending');
+  }
+  // Step 3 — the author payment (plain transfer, no marker).
+  // Skipped when the author is the sender (self-SuperRecaw).
+  if (!selfPay) {
+    try {
+      if (!authorOwner) {
+        authorOwner = await nameOwner(args.target.senderId);
+      }
+      await sendCalldata(
+        signer,
+        O_TOKEN,
+        buildAuthorPayData(authorOwner, SUPERRECAW_AUTHOR_RAW),
+      );
+    } catch {
+      await recordAuthorPay(app.address, 'src', {
+        cawId: args.target.cawId,
+        author: authorOwner,
+        amountRaw: SUPERRECAW_AUTHOR_RAW,
+        ts: nowSec(),
+      });
+      refreshSuperlikesFor();
+      app.refreshBalances().catch(() => {});
+      throw new Error('src-pay-pending');
+    }
   }
   refreshSuperlikesFor();
   app.refreshBalances().catch(() => {});
@@ -273,8 +369,16 @@ export async function performSuperRecaw(
  * finish (Error('no-pending-src-burn')) — and the burn
  * calldata is the only thing this function can build, so the
  * recaw cannot be resent from here. The O balance is re-read
- * fresh; short of the price is a hard stop (Error('shortfall'))
- * and the debt stays recorded.
+ * fresh; short of the burn price is a hard stop
+ * (Error('shortfall')) and the debt stays recorded.
+ *
+ * v0.6.3: once this burn lands, the SuperRecaw's author
+ * payment (never attempted while the burn was outstanding)
+ * becomes the owed leg and is handed over to the author-pay
+ * debt (lib/authorPay.ts) — the recipient is the one pinned
+ * in the burn record when the action was taken, or resolved
+ * fresh now for older records. When the author IS the
+ * sender, nobody is owed anything and nothing is recorded.
  */
 export async function performSuperRecawBurn(
   app: AppContextValue,
@@ -284,7 +388,7 @@ export async function performSuperRecawBurn(
   const pending = await pendingSrcBurnFor(app.address, args.target.cawId);
   if (!pending) throw new Error('no-pending-src-burn');
   const balance = await oBalanceOf(app.address);
-  if (balance < MARKED_BURN_PRICE_RAW) {
+  if (balance < SUPERRECAW_BURN_RAW) {
     throw Object.assign(new Error('shortfall'), { balance });
   }
 
@@ -301,7 +405,77 @@ export async function performSuperRecawBurn(
     buildSuperRecawData(args.target.cawId) as string,
   );
   await clearSrcBurn(app.address, args.target.cawId);
+  let author = pending.author ?? '';
+  if (!author) {
+    try {
+      author = await nameOwner(args.target.senderId);
+    } catch {
+      /* stays unresolved; the payment retry resolves it */
+    }
+  }
+  if (author.toLowerCase() !== app.address.toLowerCase()) {
+    await recordAuthorPay(app.address, 'src', {
+      cawId: args.target.cawId,
+      author,
+      amountRaw: SUPERRECAW_AUTHOR_RAW,
+      ts: nowSec(),
+    });
+  }
   refreshSuperlikesFor();
+  app.refreshBalances().catch(() => {});
+  return hash;
+}
+
+/**
+ * The pending author-payment retry (v0.6.3): sends ONLY the
+ * plain O transfer owed by a SuperLike or a SuperRecaw whose
+ * defining legs already landed. The pending record is
+ * required — without it there is nothing to finish
+ * (Error('no-pending-author-pay')) — and the transfer is the
+ * only thing this function can build: no burn, no recaw, no
+ * second action of any kind.
+ *
+ * The recipient is the address pinned in the record when the
+ * action was taken (by design it cannot drift); only a
+ * record left unresolved resolves fresh from the post here.
+ * The O balance is re-read fresh; short of the owed amount
+ * is a hard stop (Error('shortfall')) and the debt stays
+ * recorded. The record clears only on the transfer's
+ * confirmed success.
+ */
+export async function performAuthorPay(
+  app: AppContextValue,
+  args: { target: TimelineItem; kind: AuthorPayKind },
+): Promise<string> {
+  if (!app.address) throw new Error('locked');
+  const pending = await pendingAuthorPayFor(
+    app.address,
+    args.kind,
+    args.target.cawId,
+  );
+  if (!pending) throw new Error('no-pending-author-pay');
+  const balance = await oBalanceOf(app.address);
+  if (balance < pending.amountRaw) {
+    throw Object.assign(new Error('shortfall'), { balance });
+  }
+  let author = pending.author;
+  if (!author) {
+    author = await nameOwner(args.target.senderId);
+  }
+
+  const ok = await app.requireAuth();
+  if (!ok) throw new Error('auth');
+
+  const secret = app.getSecret();
+  if (!secret) throw new Error('locked');
+
+  const signer = signerFor(secret.kind, secret.secret);
+  const hash = await sendCalldata(
+    signer,
+    O_TOKEN,
+    buildAuthorPayData(author, pending.amountRaw),
+  );
+  await clearAuthorPay(app.address, args.kind, args.target.cawId);
   app.refreshBalances().catch(() => {});
   return hash;
 }

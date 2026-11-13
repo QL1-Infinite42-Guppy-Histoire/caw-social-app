@@ -832,41 +832,61 @@ shows the original post** it points to, X-style, instead of a bare
 "recawed your post" line (with an explicit fallback when the
 original is not in the local index).
 
-## SuperLike & SuperRecaw (v0.5.0) — app-original features, not CAW actions
+## SuperLike & SuperRecaw (v0.6.3) — app-original features, not CAW actions
 
-A **SuperLike** is now paid for by **burning O**: one
-SuperLike is ONE QL1 transaction — a transfer of exactly
-**1,000,000 O** (the QL1 token "Childhoods End",
+Since v0.6.3 (user decision, 2026-11-13) both actions cost
+**25,000,000 O in total**, split into a **burn leg** and an
+**author leg**. The token is O ("Childhoods End",
 `0x6c39b68a28bA90F4EB80032ec0eB32ad81cbbEd4` — a QL1
-contract; it has no code on 42 Chain) to the burn address
-`0x000000000000000000000000000000000000dEaD`, with the post
-binding carried as trailing calldata (below). The O goes to
-nobody and is destroyed. It is shown in the app as a ⭐ count
-on the post.
+contract; it has no code on 42 Chain), 18 decimals.
 
-A **SuperRecaw** (new in v0.5.0) is a Recaw done the flashy
-way: the app performs the **normal Recaw action first**;
-only after it lands, it burns **1,000,000 O** the same way,
-with the "SRC1" marker naming the ORIGINAL post. A recaw
-renders with a gradient frame and a "SuperRecaw" badge when
-a marked SRC1 burn exists for that post **by the recawing
-account**. If the burn fails after the recaw landed, the app
-records the owed burn on-device and offers a burn-only retry
-(tapping Recaw on that post) — the retry can never send a
-second recaw. An O shortfall refuses the Super path before
-anything is signed, and the plain Recaw is offered instead.
+| action     | author leg (plain transfer) | burn leg (marked, to `0x…dEaD`) |
+|------------|-----------------------------|---------------------------------|
+| SuperLike  | 15,000,000 O to the author  | 10,000,000 O, marker `SLK1`     |
+| SuperRecaw | 5,000,000 O to the author   | 20,000,000 O, marker `SRC1`     |
+
+A **SuperLike** sends the **burn leg first** (it defines the
+action — the post's ⭐ count is tallied from the marked
+burns), then the author leg: an ordinary, **unmarked** O
+transfer to the post author's owner address. If the burn
+fails, nothing happened. If the author leg fails after the
+burn landed, the app records the owed payment on-device and
+offers a **payment-only retry** (tapping ⭐ on that post) —
+the retry sends only the transfer. SuperLike on your own
+names' posts is blocked (execution-level too), so the
+author leg can never be a payment to yourself.
+
+A **SuperRecaw** performs the **normal Recaw action
+first**; only after it lands does it send the burn leg,
+then the author leg. If the burn fails after the recaw
+landed, the app records the owed burn on-device and offers
+a **burn-only retry** (tapping Recaw on that post) — the
+retry can never send a second recaw; once that burn lands,
+the author payment becomes the owed leg, with the same
+payment-only retry. A recaw renders with the gold
+SuperRecaw attribution line when a marked SRC1 burn exists
+for that post **by the recawing account**. A SuperRecaw of
+your **own** post is allowed (it always has been — a recaw
+of your own post is a normal CAW action): the author leg is
+simply skipped, nobody being owed anything, and only the
+20,000,000 O burn is required. An O shortfall refuses the
+Super path before anything is signed, and the plain Recaw
+is offered instead.
 
 History: v0.4.8/0.4.9 priced SuperLike in CAT42 (a marked
 transfer to the author, plus a burn leg). **No SuperLike was
-ever sent at either CAT42 price** (the count scans verified 0
-throughout), so v0.5.0 replaced the design cleanly — there is
-no legacy CAT42 counting. CAT42's one job is now **tips**
-(below).
+ever sent at either CAT42 price** (the count scans verified
+0 throughout), so v0.5.0 replaced the design cleanly — there
+is no legacy CAT42 counting. From v0.5.0 to v0.6.2, both
+actions were a single burn of exactly **1,000,000 O**. Those
+burns were genuine under the spec of their time and **stay
+counted forever** (see the reading rule). CAT42's one job
+is **tips** (below).
 
 **The binding — trailing calldata on the burn transfer.**
-The burn is one ordinary O `transfer(0x…dEaD, 1,000,000 O)`
-whose calldata carries the marker appended after the
-standard arguments:
+The burn leg is one ordinary O `transfer(0x…dEaD, <burn
+amount>)` whose calldata carries the marker appended after
+the standard arguments:
 
 ```
 transfer calldata (68 bytes)
@@ -875,41 +895,51 @@ transfer calldata (68 bytes)
 + cawId   (32 bytes — the post's CAW id)
 ```
 
+The author leg carries **no marker** — it is a plain
+transfer, deliberately indistinguishable from any other O
+transfer, because the counting convention belongs to the
+burn leg only.
+
 This was verified with the REAL O token before the design
 was adopted (2026-11-10, read-only, QL1 head 13,435,401):
-`eth_call` of the 1,000,000 O burn transfer, simulated from
-the QomSwap O/WQOM pair (a holder of ~13.28 trillion O),
-returns `true` **identically** with and without the marker;
+`eth_call` of the marked burn transfer, simulated from the
+QomSwap O/WQOM pair (a holder of ~13.28 trillion O), returns
+`true` **identically** with and without the marker;
 `eth_estimateGas` differs by exactly 204 gas — the intrinsic
 calldata charge of the marker bytes — so the execution is
 untouched and never reads the trailing bytes; and 36 real
 direct `transfer()` transactions sampled over ~1.46M blocks
 each had input amount == Transfer log amount (**no transfer
-tax**).
+tax**). The marker mechanics are amount-independent; the
+probe used the then-current 1,000,000 O burn.
 
-**Reading rule (any client can implement it).** Because the
-recipient is the burn address for everyone, counts cannot be
-gathered per author. Instead: scan the O token's Transfer
-events TO the burn address from QL1 block 13,400,000, fetch
-each transaction's input, and count those that parse as the
-marked shape above with amount exactly 1,000,000 O (the
-Transfer log's value must agree). "SLK1" marks index SuperLike
-counts by cawId; "SRC1" marks index SuperRecaw display by
-(cawId, sender). The app keeps ONE such chain-wide scan
-cursor on-device (the QL1 RPC caps `eth_getLogs` ranges at
-10,000 blocks; the scan chunks at 9,000) and never shows a
-locally invented number. A chunk that fails never advances
-the cursor.
+**Reading rule (any client can implement it).** Because
+the recipient is the burn address for everyone, counts
+cannot be gathered per author. Instead: scan the O token's
+Transfer events TO the burn address from QL1 block
+13,400,000, fetch each transaction's input, and count those
+that parse as the marked shape above with an amount in the
+marker's accepted set — **SLK1: 10,000,000 (current) or
+1,000,000 (legacy); SRC1: 20,000,000 (current) or 1,000,000
+(legacy)** — the Transfer log's value must agree. "SLK1"
+marks index SuperLike counts by cawId; "SRC1" marks index
+SuperRecaw display by (cawId, sender). The app keeps ONE
+such chain-wide scan cursor on-device (the QL1 RPC caps
+`eth_getLogs` ranges at 10,000 blocks; the scan chunks at
+9,000) and never shows a locally invented number. A chunk
+that fails never advances the cursor.
 
-**Guards.** SuperLike on your own names' posts is blocked
-(execution-level too), an O balance below 1,000,000 is a hard
-stop with plain guidance on getting O, and every send passes
-a confirmation sheet (the 1,000,000 O burned, the author/post
-it honours, the sender's O balance) and the app's
-fresh-authentication gate.
+**Guards.** An O balance below the 25,000,000 O total (or,
+for a SuperRecaw of your own post, below the 20,000,000 O
+burn) is a hard stop with plain guidance on getting O, and
+every send passes a confirmation sheet (the total, the
+split between author and burn, the author/post it honours,
+the sender's O balance) and the app's fresh-authentication
+gate.
 
-**Honest interop note:** other clients see a plain O burn.
-Only readers of this convention attribute it to a post.
+**Honest interop note:** other clients see a plain O burn
+(and a plain O transfer). Only readers of this convention
+attribute the burn to a post.
 
 ## Tips (v0.5.0) — CAT42's one job
 

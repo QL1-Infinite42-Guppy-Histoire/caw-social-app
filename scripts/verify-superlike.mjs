@@ -1,27 +1,42 @@
 #!/usr/bin/env node
 /**
- * SuperLike verification (v0.5.0 — the O-burn design).
- * Behaviour where the module allows it (the marked-burn codec,
- * guard decisions, the chain-wide marked-burn scanner against
- * a stubbed QL1 RPC), statics for the RN-bound wiring
- * (performSuperlike / TimelineScreen / ProfileScreen /
- * PostDetailScreen / PostCard), and the live O tolerance
- * probe's numbers as a fixture.
+ * SuperLike verification (v0.6.3 — the two-leg design).
  *
- * v0.5.0 design: a SuperLike is ONE QL1 transaction — burn
- * exactly 1,000,000 O to 0x…dEaD with trailing calldata
- * "SLK1" + the post's cawId. The CAT42 path of v0.4.8/9 (and
- * its pending-burn debt store) is gone: no SuperLike was ever
- * sent at the CAT42 prices, so no legacy counting exists.
- * Counts come from a chain-wide scan of O Transfer events TO
- * the burn address, inputs parsed for the marker (the
- * recipient is dEaD for everyone, so per-author scans are
- * impossible — see lib/markedBurns.ts).
+ * Since v0.6.3 (user decision 2026-11-13) a SuperLike costs
+ * 25,000,000 O IN TOTAL, in two QL1 transactions:
+ *   leg 1 — the BURN: 10,000,000 O to 0x…dEaD with trailing
+ *           calldata "SLK1" + the post's cawId (defines the
+ *           action; the ⭐ count reads these burns);
+ *   leg 2 — the AUTHOR PAYMENT: a plain, unmarked transfer of
+ *           15,000,000 O to the post author's owner.
+ * From v0.5.0 to v0.6.2 a SuperLike was ONE transaction: a
+ * burn of exactly 1,000,000 O. Those legacy burns were
+ * genuine under their spec and STAY counted: the detection
+ * set for SLK1 is {10,000,000, 1,000,000}. (The CAT42 path of
+ * v0.4.8/9 left no legacy at all — no SuperLike was ever sent
+ * at the CAT42 prices.)
+ *
+ * This suite tests BEHAVIOUR, not just shapes: the marked-burn
+ * codec, the scanner's detection sets against a stubbed QL1
+ * RPC (current + legacy amounts counted; the OTHER action's
+ * amounts, log mismatches, plain burns and cross-magic marks
+ * excluded), the author-pay debt store, and the REAL
+ * performSuperlike / performAuthorPay from actionFlow.ts
+ * driven against a stubbed wallet + RPC:
+ *   burn fails      -> the error propagates, ONE send was
+ *                      attempted, NOTHING is recorded;
+ *   payment fails   -> 'sl-pay-pending' + a persisted debt;
+ *   the retry       -> sends ONLY the plain transfer and
+ *                      clears the debt; a short balance is a
+ *                      hard stop that keeps the debt;
+ *   self / short    -> refused before anything is signed.
+ * Statics remain only for the RN-bound wiring (the three
+ * screens' sheets and gates).
  *
  * The tolerance fixture: on 2026-11-10 the REAL O token was
  * probed read-only (QL1 head 13,435,401) with a simulated
- * 1,000,000 O burn transfer from the QomSwap O/WQOM pair
- * (a holder of ~13.28 trillion O):
+ * burn transfer from the QomSwap O/WQOM pair (a holder of
+ * ~13.28 trillion O):
  *   eth_call plain  -> 0x…01 (true)
  *   eth_call marked -> 0x…01 (true)   (marker = "SLK1" + cawId)
  *   estimateGas plain  = 35,077
@@ -30,11 +45,11 @@
  *   bytes x 16 + 31 zero bytes x 4 — execution untouched)
  * And no transfer tax: 36 real direct transfer() txs sampled
  * over ~1.46M blocks each had input amount == Transfer log
- * amount (0 mismatches). The v0.4.9 CAT42 probe (2026-11-09,
- * delta 576 = 36 nonzero bytes x 16) is the same mechanics on
- * the old token; it stays valid as a pattern reference.
+ * amount (0 mismatches). The marker mechanics are
+ * amount-independent, so the fixture stands for the new burn
+ * amounts too.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   cpSync,
   existsSync,
@@ -58,11 +73,16 @@ function ok(cond, label) {
   }
 }
 
-/* ---------- compile the pure graph ---------- */
+/* ---------- compile the graph (incl. the real flows) ---------- */
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
-try {
-  execFileSync(
+{
+  // The flow files pull the app's wider type graph in; under
+  // this standalone flag set tsc prints pre-existing type
+  // noise from unrelated modules but still EMITS. The gate
+  // here is that the needed modules were emitted — the app's
+  // own `tsc -p tsconfig.json` is the type gate.
+  spawnSync(
     'npx',
     [
       'tsc',
@@ -73,6 +93,10 @@ try {
       'src/lib/cawApi.ts',
       'src/lib/markedBurns.ts',
       'src/lib/superlike.ts',
+      'src/lib/superRecaw.ts',
+      'src/lib/authorPay.ts',
+      'src/lib/tip.ts',
+      'src/lib/actionFlow.ts',
       '--outDir',
       OUT,
       '--module',
@@ -81,24 +105,133 @@ try {
       'es2022',
       '--esModuleInterop',
       '--skipLibCheck',
+      '--jsx',
+      'react',
+      '--noImplicitAny',
+      'false',
     ],
     { cwd: ROOT, stdio: 'pipe' },
   );
-  ok(true, 'tsc compiles config/cawCore/chains/cawApi/markedBurns/superlike');
-} catch (e) {
-  ok(false, 'tsc: ' + (e.stdout || '').toString().slice(0, 400));
-  process.exit(1);
+  const needed = [
+    'lib/markedBurns.js',
+    'lib/superlike.js',
+    'lib/superRecaw.js',
+    'lib/authorPay.js',
+    'lib/actionFlow.js',
+    'lib/wallet.js',
+    'config.js',
+  ];
+  ok(
+    needed.every((f) => existsSync(OUT + '/' + f)),
+    'tsc emits the marked-burn graph + authorPay + actionFlow',
+  );
+  if (!needed.every((f) => existsSync(OUT + '/' + f))) process.exit(1);
 }
 writeFileSync(OUT + '/package.json', '{"type":"commonjs"}');
 
+/* The wallet is replaced by a programmable stub: the flows
+ * under test run for real; only signing/transport is fake. */
+writeFileSync(
+  OUT + '/lib/wallet.js',
+  `'use strict';
+const state = { sends: [], submitCalls: [], failSend: null, failSubmit: false, sendCount: 0 };
+exports.__state = state;
+exports.__reset = () => { state.sends = []; state.submitCalls = []; state.failSend = null; state.failSubmit = false; state.sendCount = 0; };
+exports.nowSec = () => 1700000000;
+exports.randomCawId = () => '0x' + 'ab'.repeat(32);
+exports.signerFor = (kind, secret) => ({ kind, secret });
+exports.signerForHsChain = (kind, secret) => ({ kind, secret });
+exports.sendCalldata = async (signer, to, data) => {
+  state.sendCount++;
+  if (state.failSend && state.failSend(data, state.sendCount)) throw new Error('stubbed send failure');
+  state.sends.push({ to, data });
+  return '0xhash' + state.sendCount;
+};
+exports.submitAction = async (kind, secret, action) => {
+  if (state.failSubmit) throw new Error('stubbed submit failure');
+  state.submitCalls.push(action);
+  return '0xrecawhash';
+};
+`,
+);
+
 const SL = await import(OUT + '/lib/superlike.js');
 const MB = await import(OUT + '/lib/markedBurns.js');
+const AP = await import(OUT + '/lib/authorPay.js');
+const FLOW = await import(OUT + '/lib/actionFlow.js');
+const WALLET = await import(OUT + '/lib/wallet.js');
 const CFG = await import(OUT + '/config.js');
 
-/* ---------- the marker codec ---------- */
+const O = (n) => BigInt(n) * 10n ** 18n;
+const SL_BURN = O(10_000_000);
+const SL_AUTHOR = O(15_000_000);
+const SL_TOTAL = O(25_000_000);
+const SRC_BURN = O(20_000_000);
+const LEGACY = O(1_000_000);
 const P1 = '0x' + '11'.repeat(32);
 const P2 = '0x' + '22'.repeat(32);
-const PRICE = 1000000n * 10n ** 18n;
+
+/* ---------- the money constants: one source of truth ---------- */
+{
+  ok(
+    MB.SUPERLIKE_TOTAL_RAW === SL_TOTAL &&
+      MB.SUPERLIKE_BURN_RAW === SL_BURN &&
+      MB.SUPERLIKE_AUTHOR_RAW === SL_AUTHOR &&
+      SL.SUPERLIKE_TOTAL_RAW === SL_TOTAL &&
+      SL.SUPERLIKE_BURN_RAW === SL_BURN &&
+      SL.SUPERLIKE_AUTHOR_RAW === SL_AUTHOR,
+    'constants: SuperLike total 25,000,000 = author 15,000,000 + burn 10,000,000 (markedBurns + superlike agree)',
+  );
+  ok(
+    MB.SUPERRECAW_TOTAL_RAW === SL_TOTAL &&
+      MB.SUPERRECAW_BURN_RAW === SRC_BURN &&
+      MB.SUPERRECAW_AUTHOR_RAW === O(5_000_000),
+    'constants: SuperRecaw total 25,000,000 = author 5,000,000 + burn 20,000,000',
+  );
+  ok(
+    MB.LEGACY_MARKED_BURN_RAW === LEGACY,
+    'constants: the legacy burn (v0.5.0–v0.6.2) is exactly 1,000,000 O',
+  );
+  ok(
+    MB.SUPERLIKE_BURN_AMOUNTS.length === 2 &&
+      MB.SUPERLIKE_BURN_AMOUNTS.includes(SL_BURN) &&
+      MB.SUPERLIKE_BURN_AMOUNTS.includes(LEGACY) &&
+      !MB.SUPERLIKE_BURN_AMOUNTS.includes(SRC_BURN),
+    'detection set SLK1 = {10,000,000 current, 1,000,000 legacy} — the SuperRecaw burn is NOT in it',
+  );
+  ok(
+    MB.SUPERRECAW_BURN_AMOUNTS.length === 2 &&
+      MB.SUPERRECAW_BURN_AMOUNTS.includes(SRC_BURN) &&
+      MB.SUPERRECAW_BURN_AMOUNTS.includes(LEGACY) &&
+      !MB.SUPERRECAW_BURN_AMOUNTS.includes(SL_BURN),
+    'detection set SRC1 = {20,000,000 current, 1,000,000 legacy} — the SuperLike burn is NOT in it',
+  );
+  ok(
+    AP.authorPayAmountFor('sl') === SL_AUTHOR &&
+      AP.authorPayAmountFor('src') === O(5_000_000),
+    'authorPay legs price from the same constants (15M / 5M)',
+  );
+  ok(
+    MB.BURN_ADDRESS === '0x000000000000000000000000000000000000dEaD',
+    'the burn address is the established 0x…dEaD',
+  );
+  ok(
+    CFG.O_TOKEN === '0x6c39b68a28bA90F4EB80032ec0eB32ad81cbbEd4',
+    'O token target is the QL1 contract',
+  );
+  ok(
+    MB.MARKED_BURN_START_BLOCK === 13400000,
+    'scan starts just under the 2026-11-10 QL1 head (no marked burn can predate it)',
+  );
+  const PLAIN_GAS = 35077;
+  const MARKED_GAS = 35281;
+  ok(
+    MARKED_GAS - PLAIN_GAS === 5 * 16 + 31 * 4,
+    'probe fixture: gas delta 204 = intrinsic cost of the marker bytes only',
+  );
+}
+
+/* ---------- the marker codec ---------- */
 {
   const data = SL.buildSuperlikeData(P1);
   ok(typeof data === 'string', 'buildSuperlikeData returns data');
@@ -113,10 +246,13 @@ const PRICE = 1000000n * 10n ** 18n;
       '0x000000000000000000000000000000000000dead',
     'recipient is the burn address 0x…dEaD',
   );
-  ok(BigInt('0x' + data.slice(74, 138)) === PRICE, 'amount is exactly 1,000,000 O');
+  ok(
+    BigInt('0x' + data.slice(74, 138)) === SL_BURN,
+    'the burn leg is exactly 10,000,000 O (v0.6.3 — no longer 1,000,000)',
+  );
   const mark = SL.parseSuperlikeInput(data);
   ok(!!mark, 'parse accepts the built data');
-  ok(mark.amount === PRICE, 'round-trip: amount is exactly the price');
+  ok(mark.amount === SL_BURN, 'round-trip: amount is the burn leg');
   ok(mark.cawId === P1, 'round-trip: cawId survives');
   ok(mark.to.toLowerCase() === MB.BURN_ADDRESS.toLowerCase(), 'round-trip: burn recipient');
   ok(SL.buildSuperlikeData('0x1234') === null, 'bad cawId refused');
@@ -125,7 +261,7 @@ const PRICE = 1000000n * 10n ** 18n;
     '0xa9059cbb' +
     '0'.repeat(24) +
     '000000000000000000000000000000000000dead' +
-    PRICE.toString(16).padStart(64, '0');
+    SL_BURN.toString(16).padStart(64, '0');
   ok(SL.parseSuperlikeInput(plain) === null, 'plain (unmarked) burn is not a SuperLike');
   ok(SL.parseSuperlikeInput(data.slice(0, -2)) === null, 'truncated marker rejected');
   const wrongMagic = data.replace(SL.SUPERLIKE_MAGIC, 'deadbeef');
@@ -133,48 +269,31 @@ const PRICE = 1000000n * 10n ** 18n;
   const wrongSel = '0x095ea7b3' + data.slice(10);
   ok(SL.parseSuperlikeInput(wrongSel) === null, 'non-transfer selector rejected');
   ok(SL.parseSuperlikeInput(data + 'ff') === null, 'extra trailing byte rejected');
-  // a marked transfer to someone else is not a burn at all
   const toOther =
     '0xa9059cbb' +
     '0'.repeat(24) +
     '1111111111111111111111111111111111111111' +
-    PRICE.toString(16).padStart(64, '0') +
+    SL_BURN.toString(16).padStart(64, '0') +
     SL.SUPERLIKE_MAGIC +
     P1.slice(2);
   ok(MB.parseMarkedBurnInput(toOther) === null, 'marked transfer to a non-burn address rejected');
-  // the SRC1 (SuperRecaw) marker parses in the shared codec but
-  // is NOT a SuperLike
-  const src = MB.buildMarkedBurnData(MB.SUPERRECAW_MAGIC, P1);
+  const src = MB.buildMarkedBurnData(MB.SUPERRECAW_MAGIC, P1, SRC_BURN);
   const srcMark = MB.parseMarkedBurnInput(src);
   ok(!!srcMark && srcMark.magic === MB.SUPERRECAW_MAGIC, 'shared codec parses SRC1');
   ok(SL.parseSuperlikeInput(src) === null, 'an SRC1 burn never parses as a SuperLike');
-}
-
-/* ---------- price + tolerance fixture (measured on-chain) ---------- */
-{
-  ok(
-    SL.SUPERLIKE_PRICE_O === 1000000 &&
-      SL.SUPERLIKE_PRICE_RAW === PRICE &&
-      MB.MARKED_BURN_PRICE_RAW === PRICE,
-    'price constants: exactly 1,000,000 O',
+  // the author leg is a PLAIN transfer: no marker, 68 bytes,
+  // and it must never parse as a marked burn
+  const pay = AP.buildAuthorPayData(
+    '0x0Cdd1EbbBCb55601b207B384245dDe646882b86B',
+    SL_AUTHOR,
   );
   ok(
-    MB.BURN_ADDRESS === '0x000000000000000000000000000000000000dEaD',
-    'the burn address is the established 0x…dEaD',
+    (pay.length - 2) / 2 === 68 && MB.parseMarkedBurnInput(pay) === null,
+    'the author leg is a plain 68-byte transfer with NO marker',
   );
   ok(
-    CFG.O_TOKEN === '0x6c39b68a28bA90F4EB80032ec0eB32ad81cbbEd4',
-    'O token target is the QL1 contract',
-  );
-  const PLAIN_GAS = 35077;
-  const MARKED_GAS = 35281;
-  ok(
-    MARKED_GAS - PLAIN_GAS === 5 * 16 + 31 * 4,
-    'probe fixture: gas delta 204 = intrinsic cost of the marker bytes only',
-  );
-  ok(
-    MB.MARKED_BURN_START_BLOCK === 13400000,
-    'scan starts just under the 2026-11-10 QL1 head (no marked burn can predate it)',
+    BigInt('0x' + pay.slice(74, 138)) === SL_AUTHOR,
+    'the author leg carries exactly 15,000,000 O',
   );
 }
 
@@ -209,12 +328,13 @@ const PRICE = 1000000n * 10n ** 18n;
     }) === null,
     'guard: someone else’s post allowed',
   );
-  ok(SL.superlikeShortfall(PRICE - 1n) === true, 'shortfall: 999,999.99… O blocked');
-  ok(SL.superlikeShortfall(PRICE) === false, 'shortfall: exactly 1,000,000 O ok');
-  ok(SL.superlikeShortfall(0n) === true, 'shortfall: 0 blocked');
+  ok(SL.superlikeShortfall(SL_TOTAL - 1n) === true, 'precheck: 24,999,999.99… O blocked (the TOTAL gates, not one leg)');
+  ok(SL.superlikeShortfall(SL_TOTAL) === false, 'precheck: exactly 25,000,000 O ok');
+  ok(SL.superlikeShortfall(SL_BURN) === true, 'precheck: burn-only money (10M) is NOT enough anymore');
+  ok(SL.superlikeShortfall(0n) === true, 'precheck: 0 blocked');
 }
 
-/* ---------- the marked-burn scanner (stubbed QL1 RPC) ---------- */
+/* ---------- the marked-burn scanner: detection sets ---------- */
 const word = (n) => '0x' + n.toString(16).padStart(64, '0');
 const TRANSFER_TOPIC =
   '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
@@ -254,38 +374,44 @@ function fetchStub({ head, chunks, txInputs }) {
   };
   return state;
 }
+const burnData = (magic, cawId, amount) => {
+  // a marked burn at an ARBITRARY amount (legacy / wrong-set fixtures)
+  const base = MB.buildMarkedBurnData(magic, cawId, amount);
+  return base;
+};
 {
   const START = MB.MARKED_BURN_START_BLOCK;
   const HEAD = START + 9500; // two chunks: 9000 + 500
-  // txE: marked SLK1 input at 999,999 O — hand-rewritten amount
-  // word; the exactly-the-price rule must exclude it.
-  const markedWrongAmt = (() => {
-    const d = SL.buildSuperlikeData(P1);
-    const amt = (999999n * 10n ** 18n).toString(16).padStart(64, '0');
-    return d.slice(0, 74) + amt + d.slice(138);
-  })();
   const txInputs = {
-    txA: SL.buildSuperlikeData(P1), // counts for P1
-    txB: SL.buildSuperlikeData(P1), // log value disagrees -> excluded
-    txC: SL.buildSuperlikeData(P2), // counts for P2
+    txA: SL.buildSuperlikeData(P1), // SLK1 10M — counts (current)
+    txB: SL.buildSuperlikeData(P1), // SLK1 10M input but the LOG value disagrees -> excluded
+    txC: SL.buildSuperlikeData(P2), // SLK1 10M for P2 — counts
     txD:
       '0xa9059cbb' +
       '0'.repeat(24) +
       '000000000000000000000000000000000000dead' +
-      PRICE.toString(16).padStart(64, '0'), // plain burn, no marker -> excluded
-    txE: markedWrongAmt, // wrong amount -> excluded
-    txF: MB.buildMarkedBurnData(MB.SUPERRECAW_MAGIC, P1), // SRC1 -> src index, not a SuperLike
+      SL_BURN.toString(16).padStart(64, '0'), // plain burn, no marker -> excluded
+    txE: burnData(MB.SUPERLIKE_MAGIC, P1, O(999_999)), // SLK1 at a non-set amount -> excluded
+    txF: burnData(MB.SUPERRECAW_MAGIC, P1, SRC_BURN), // SRC1 20M -> src index, not a SuperLike
+    txG: burnData(MB.SUPERLIKE_MAGIC, P1, LEGACY), // SLK1 legacy 1M -> COUNTS (no cut-off)
+    txH: burnData(MB.SUPERLIKE_MAGIC, P1, SRC_BURN), // SLK1 at the SRC amount -> excluded (wrong set)
+    txI: burnData(MB.SUPERRECAW_MAGIC, P1, SL_BURN), // SRC1 at the SL amount -> excluded everywhere
+    txJ: burnData(MB.SUPERRECAW_MAGIC, P1, LEGACY), // SRC1 legacy 1M -> src index
   };
   const chunks = new Map([
     [
       START,
       [
-        logFor('txA', SENDER, PRICE),
-        logFor('txB', SENDER, 250n * 10n ** 18n),
-        logFor('txC', OTHER, PRICE),
-        logFor('txD', SENDER, PRICE),
-        logFor('txE', SENDER, 999999n * 10n ** 18n),
-        logFor('txF', SENDER, PRICE),
+        logFor('txA', SENDER, SL_BURN),
+        logFor('txB', SENDER, O(250)),
+        logFor('txC', OTHER, SL_BURN),
+        logFor('txD', SENDER, SL_BURN),
+        logFor('txE', SENDER, O(999_999)),
+        logFor('txF', SENDER, SRC_BURN),
+        logFor('txG', OTHER, LEGACY),
+        logFor('txH', SENDER, SRC_BURN),
+        logFor('txI', SENDER, SL_BURN),
+        logFor('txJ', SENDER, LEGACY),
       ],
     ],
   ]);
@@ -296,14 +422,17 @@ function fetchStub({ head, chunks, txInputs }) {
   });
   const stub = fetchStub({ head: HEAD, chunks, txInputs });
   const n1 = await SL.superlikeCount(P1);
-  ok(n1 === 1, 'scanner: P1 counts only the exact marked 1M O burn (log-mismatch, plain, wrong-amount and SRC1 all excluded)');
+  ok(
+    n1 === 2,
+    'scanner: P1 counts the current 10M burn AND the legacy 1M burn (log-mismatch, plain, wrong-amount, SRC-amount and SRC1 all excluded)',
+  );
   const n2 = await SL.superlikeCount(P2);
   ok(n2 === 1, 'scanner: P2 counted from the same scan');
-  ok(SL.superlikeCountCached(P1) === 1, 'scanner: cached count readable');
+  ok(SL.superlikeCountCached(P1) === 2, 'scanner: cached count readable');
   ok(
     MB.superRecawCached(P1, SENDER) === true &&
       MB.superRecawCached(P1, OTHER) === false,
-    'scanner: the SRC1 mark is indexed by (cawId, sender) in the same scan',
+    'scanner: SRC1 marks (20M current + 1M legacy) index by (cawId, sender); the SRC1-at-10M mark counts for nobody',
   );
   const before = stub.getLogsCalls;
   await SL.superlikeCount(P1);
@@ -311,24 +440,21 @@ function fetchStub({ head, chunks, txInputs }) {
   const saved = JSON.parse(kvMem.get('caw-marked-burns-v1'));
   ok(saved.to === HEAD, 'scanner: cursor persisted at the scanned head');
   ok(
-    saved.sl[P1] === 1 && saved.src[P1 + ':' + SENDER] === 1,
-    'scanner: both indexes persisted to the on-device KV',
+    saved.sl[P1] === 2 && saved.src[P1 + ':' + SENDER] === 2,
+    'scanner: both indexes persisted to the on-device KV (src counts current + legacy)',
   );
 }
 
 /* ---------- scanner failure: cursor must not advance ---------- */
 {
-  // A fresh module instance (a copied build tree — the CJS
-  // cache keys on file path) so this scenario starts from an
-  // empty index, not the one above.
   const OUT2 = ROOT + '/scripts/.build-superlike-fail';
   rmSync(OUT2, { recursive: true, force: true });
   cpSync(OUT, OUT2, { recursive: true });
   const MB2 = await import(OUT2 + '/lib/markedBurns.js');
   const START = MB2.MARKED_BURN_START_BLOCK;
   const HEAD = START + 19000; // chunks: 9000, 9000, 1000
-  const chunks = new Map([[START, [logFor('txA', SENDER, PRICE)]]]);
-  const txInputs = { txA: MB2.buildMarkedBurnData(MB2.SUPERLIKE_MAGIC, P1) };
+  const chunks = new Map([[START, [logFor('txA', SENDER, SL_BURN)]]]);
+  const txInputs = { txA: MB2.buildMarkedBurnData(MB2.SUPERLIKE_MAGIC, P1, SL_BURN) };
   const kvMem = new Map();
   MB2.initMarkedBurnStore({
     getItem: async (k) => kvMem.get(k) ?? null,
@@ -373,6 +499,257 @@ function fetchStub({ head, chunks, txInputs }) {
   ok(recEnd.to === HEAD, 'failure: cursor reaches the head after recovery');
 }
 
+/* ---------- the author-pay debt store ---------- */
+{
+  const ME = '0x90359C6913915B9824b9ce8Abf4b85B30A5cF8cC';
+  const AUTHOR = '0x0Cdd1EbbBCb55601b207B384245dDe646882b86B';
+  const kvMem = new Map();
+  const kv = {
+    getItem: async (k) => kvMem.get(k) ?? null,
+    setItem: async (k, v) => void kvMem.set(k, v),
+  };
+  AP.initAuthorPayStore(kv);
+  ok(
+    (await AP.pendingAuthorPayFor(ME, 'sl', P1)) === null,
+    'pay debt: none recorded initially',
+  );
+  await AP.recordAuthorPay(ME, 'sl', {
+    cawId: P1,
+    author: AUTHOR,
+    amountRaw: SL_AUTHOR,
+    ts: 1700000000,
+  });
+  const rec = await AP.pendingAuthorPayFor(ME, 'sl', P1);
+  ok(
+    !!rec && rec.author === AUTHOR && rec.amountRaw === SL_AUTHOR,
+    'pay debt: readable with the pinned author + amount',
+  );
+  ok(
+    (await AP.pendingAuthorPayFor(ME, 'src', P1)) === null &&
+      (await AP.pendingAuthorPayFor(ME, 'sl', P2)) === null &&
+      (await AP.pendingAuthorPayFor(AUTHOR, 'sl', P1)) === null,
+    'pay debt: scoped per (sender, kind, post)',
+  );
+  const saved = JSON.parse(kvMem.get('caw-author-pay-v1'));
+  ok(
+    Object.values(saved).some(
+      (v) => v.cawId === P1 && v.amount === SL_AUTHOR.toString(),
+    ),
+    'pay debt: persisted to the on-device KV (survives restarts)',
+  );
+  // a "restart": a fresh module instance over the same KV
+  const OUT3 = ROOT + '/scripts/.build-superlike-restart';
+  rmSync(OUT3, { recursive: true, force: true });
+  cpSync(OUT, OUT3, { recursive: true });
+  const AP3 = await import(OUT3 + '/lib/authorPay.js');
+  AP3.initAuthorPayStore(kv);
+  const rec3 = await AP3.pendingAuthorPayFor(ME, 'sl', P1);
+  ok(
+    !!rec3 && rec3.amountRaw === SL_AUTHOR,
+    'pay debt: a fresh module instance (app restart) still sees it',
+  );
+  await AP.clearAuthorPay(ME, 'sl', P1);
+  ok(
+    (await AP.pendingAuthorPayFor(ME, 'sl', P1)) === null,
+    'pay debt: cleared only by an explicit clear (the confirmed retry)',
+  );
+}
+
+/* ---------- BEHAVIOUR: the real SuperLike flow ---------- */
+{
+  const ME = '0x90359C6913915B9824b9ce8Abf4b85B30A5cF8cC';
+  const AUTHOR = '0x0Cdd1EbbBCb55601b207B384245dDe646882b86B';
+  let oBal = O(100_000_000);
+  const addrWord = (a) => '0x' + '0'.repeat(24) + a.slice(2).toLowerCase();
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const answer = (req) => {
+      if (req.method === 'eth_call') {
+        const data = req.params[0].data;
+        if (data.startsWith('0x6352211e')) return { result: addrWord(AUTHOR) }; // ownerOf
+        if (data.startsWith('0x70a08231')) return { result: word(oBal) }; // balanceOf
+        return { result: '0x' };
+      }
+      if (req.method === 'eth_blockNumber')
+        return { result: '0x' + (MB.MARKED_BURN_START_BLOCK + 10).toString(16) };
+      if (req.method === 'eth_getLogs') return { result: [] };
+      return { result: null };
+    };
+    if (Array.isArray(body)) {
+      return {
+        json: async () =>
+          body.map((req) => ({ jsonrpc: '2.0', id: req.id, ...answer(req) })),
+      };
+    }
+    return { json: async () => ({ jsonrpc: '2.0', id: body.id, ...answer(body) }) };
+  };
+  const kvMem = new Map();
+  const kv = {
+    getItem: async (k) => kvMem.get(k) ?? null,
+    setItem: async (k, v) => void kvMem.set(k, v),
+  };
+  SL.initSuperlikeStore(kv);
+  AP.initAuthorPayStore(kv);
+  const app = {
+    address: ME,
+    myTokens: [{ id: 7n }],
+    actingId: 7n,
+    requireAuth: async () => true,
+    getSecret: () => ({ kind: 'phrase', secret: 'test' }),
+    refreshBalances: async () => {},
+  };
+  const target = { senderId: 5n, cawId: P1, hash: 'h1' };
+  const amtOf = (d) => BigInt('0x' + d.slice(74, 138));
+  const toOf = (d) => '0x' + d.slice(34, 74);
+
+  // happy path: burn first, payment second, nothing owed
+  WALLET.__reset();
+  await FLOW.performSuperlike(app, { target });
+  {
+    const s = WALLET.__state.sends;
+    ok(s.length === 2, 'flow: a SuperLike sends exactly two transactions');
+    const m = SL.parseSuperlikeInput(s[0].data);
+    ok(!!m && m.amount === SL_BURN, 'flow: leg 1 is the marked 10M burn');
+    ok(
+      (s[1].data.length - 2) / 2 === 68 &&
+        toOf(s[1].data).toLowerCase() === AUTHOR.toLowerCase() &&
+        amtOf(s[1].data) === SL_AUTHOR,
+      'flow: leg 2 is a plain 15M transfer to the author',
+    );
+    ok(
+      (await AP.pendingAuthorPayFor(ME, 'sl', P1)) === null,
+      'flow: nothing owed after a clean SuperLike',
+    );
+  }
+  // burn fails: one attempt, error propagates, NO debt
+  WALLET.__reset();
+  WALLET.__state.failSend = () => true;
+  {
+    let err = null;
+    try {
+      await FLOW.performSuperlike(app, { target });
+    } catch (e) {
+      err = e;
+    }
+    ok(
+      !!err && err.message === 'stubbed send failure',
+      'flow: a failed burn is an ordinary failure (no pending code)',
+    );
+    ok(
+      WALLET.__state.sendCount === 1 && WALLET.__state.sends.length === 0,
+      'flow: burn failure -> the payment is NEVER attempted',
+    );
+    ok(
+      (await AP.pendingAuthorPayFor(ME, 'sl', P1)) === null,
+      'flow: burn failure records NO debt',
+    );
+  }
+  // payment fails: sl-pay-pending + debt; retry sends ONLY the transfer
+  WALLET.__reset();
+  WALLET.__state.failSend = (d, n) => n === 2;
+  {
+    let err = null;
+    try {
+      await FLOW.performSuperlike(app, { target });
+    } catch (e) {
+      err = e;
+    }
+    ok(
+      !!err && err.message === 'sl-pay-pending',
+      'flow: a failed payment after the burn reports sl-pay-pending',
+    );
+    const pend = await AP.pendingAuthorPayFor(ME, 'sl', P1);
+    ok(
+      !!pend && pend.amountRaw === SL_AUTHOR &&
+        pend.author.toLowerCase() === AUTHOR.toLowerCase(),
+      'flow: the debt pins the author + the 15M amount',
+    );
+    WALLET.__reset();
+    await FLOW.performAuthorPay(app, { target, kind: 'sl' });
+    const s = WALLET.__state.sends;
+    ok(
+      s.length === 1 && (s[0].data.length - 2) / 2 === 68 &&
+        amtOf(s[0].data) === SL_AUTHOR &&
+        SL.parseSuperlikeInput(s[0].data) === null,
+      'flow: the retry sends ONLY the plain transfer (no second burn)',
+    );
+    ok(
+      (await AP.pendingAuthorPayFor(ME, 'sl', P1)) === null,
+      'flow: the debt clears on the retry’s confirmed success',
+    );
+  }
+  // retry with a short balance: hard stop, debt kept, no send
+  await AP.recordAuthorPay(ME, 'sl', {
+    cawId: P1,
+    author: AUTHOR,
+    amountRaw: SL_AUTHOR,
+    ts: 1700000000,
+  });
+  oBal = SL_AUTHOR - 1n;
+  WALLET.__reset();
+  {
+    let err = null;
+    try {
+      await FLOW.performAuthorPay(app, { target, kind: 'sl' });
+    } catch (e) {
+      err = e;
+    }
+    ok(
+      !!err && err.message === 'shortfall' && WALLET.__state.sendCount === 0,
+      'flow: a short retry balance is a hard stop — nothing attempted',
+    );
+    ok(
+      (await AP.pendingAuthorPayFor(ME, 'sl', P1)) !== null,
+      'flow: the debt survives the refused retry',
+    );
+  }
+  oBal = O(100_000_000);
+  await AP.clearAuthorPay(ME, 'sl', P1);
+  // retry without a debt refuses
+  {
+    let err = null;
+    try {
+      await FLOW.performAuthorPay(app, { target, kind: 'sl' });
+    } catch (e) {
+      err = e;
+    }
+    ok(
+      !!err && err.message === 'no-pending-author-pay',
+      'flow: performAuthorPay refuses without a recorded debt',
+    );
+  }
+  // short precheck: 24M refuses before auth/sends
+  oBal = O(24_000_000);
+  WALLET.__reset();
+  {
+    let err = null;
+    try {
+      await FLOW.performSuperlike(app, { target });
+    } catch (e) {
+      err = e;
+    }
+    ok(
+      !!err && err.message === 'shortfall' && WALLET.__state.sendCount === 0,
+      'flow: 24M (< the 25M total) refuses before anything is signed',
+    );
+  }
+  oBal = O(100_000_000);
+  // self: the author IS me -> blocked before any send
+  {
+    const selfApp = { ...app, myTokens: [{ id: 5n }] };
+    let err = null;
+    try {
+      await FLOW.performSuperlike(selfApp, { target });
+    } catch (e) {
+      err = e;
+    }
+    ok(
+      !!err && err.message === 'self-superlike',
+      'flow: a SuperLike on my own name’s post is blocked — so a self-payment can never arise',
+    );
+  }
+}
+
 /* ---------- wiring statics ---------- */
 {
   const flowAll = readFileSync(ROOT + '/src/lib/actionFlow.ts', 'utf8');
@@ -382,14 +759,17 @@ function fetchStub({ head, chunks, txInputs }) {
   );
   const iSelf = flow.indexOf("Error('self-superlike')");
   const iShort = flow.indexOf("Error('shortfall')");
-  const iSend = flow.indexOf('sendCalldata');
-  ok(iSelf > 0 && iSelf < iSend, 'performSuperlike: self block precedes the send');
-  ok(iShort > 0 && iShort < iSend, 'performSuperlike: shortfall stop precedes the send');
-  ok(flow.includes('oBalanceOf'), 'performSuperlike: fresh O balance read (QL1)');
-  ok(flow.includes('buildSuperlikeData'), 'performSuperlike: marked burn calldata built');
+  const iBurn = flow.indexOf('sendCalldata(signer, O_TOKEN, data)');
+  const iPay = flow.indexOf('buildAuthorPayData(authorOwner, SUPERLIKE_AUTHOR_RAW)');
+  ok(iSelf > 0 && iSelf < iBurn, 'performSuperlike: self block precedes every send');
+  ok(iShort > 0 && iShort < iBurn, 'performSuperlike: shortfall stop precedes every send');
   ok(
-    flow.includes('sendCalldata(signer, O_TOKEN, data)'),
-    'performSuperlike: the ONE send is the O burn',
+    iBurn > 0 && iPay > iBurn,
+    'performSuperlike: ORDER — the burn leg is sent before the author leg',
+  );
+  ok(
+    flow.includes('recordAuthorPay') && flow.includes("Error('sl-pay-pending')"),
+    'performSuperlike: a failed payment records the debt and reports sl-pay-pending',
   );
   ok(flow.includes('requireAuth'), 'performSuperlike: fresh auth gate');
   ok(
@@ -400,32 +780,52 @@ function fetchStub({ head, chunks, txInputs }) {
     !flowAll.includes('recordPendingBurn') &&
       !flowAll.includes('performSuperlikeBurn') &&
       !flow.includes('CAT42'),
-    'the CAT42 SuperLike path and its debt store are GONE',
+    'the CAT42 SuperLike path and its debt store stay GONE',
   );
-  const tl = readFileSync(ROOT + '/src/screens/TimelineScreen.tsx', 'utf8');
-  ok(tl.includes('onSuperlike={handleSuperlike}'), 'TimelineScreen passes the handler');
-  ok(tl.includes("tr('sl.body'"), 'TimelineScreen sheet shows price/recipient/balance');
-  ok(tl.includes("tr('sl.shortfall')"), 'TimelineScreen surfaces the shortfall guidance');
-  ok(tl.includes('SUPERLIKE_PRICE_RAW'), 'TimelineScreen sheet prices from the constant');
-  const pf = readFileSync(ROOT + '/src/screens/ProfileScreen.tsx', 'utf8');
-  ok(pf.includes('onSuperlike={handleSuperlike}'), 'ProfileScreen passes the handler');
+  const payFlow = flowAll.slice(
+    flowAll.indexOf('export async function performAuthorPay'),
+    flowAll.indexOf('export async function performTip'),
+  );
   ok(
-    pf.includes('performSuperlike') && pf.includes("tr('sl.body'") &&
-      pf.includes("tr('sl.self'") && pf.includes("tr('sl.shortfall'"),
-    'ProfileScreen carries the same sheet + guards as the feed',
+    payFlow.includes('pendingAuthorPayFor') &&
+      payFlow.includes("Error('no-pending-author-pay')") &&
+      !payFlow.includes('submitAction') &&
+      !payFlow.includes('buildSuperlikeData') &&
+      !payFlow.includes('buildSuperRecawData'),
+    'performAuthorPay: debt-gated and can build ONLY the transfer — no burn, no recaw',
   );
-  const pd = readFileSync(ROOT + '/src/screens/PostDetailScreen.tsx', 'utf8');
-  ok(
-    (pd.match(/onSuperlike=\{handleSuperlike\}/g) || []).length === 2,
-    'PostDetailScreen wires SuperLike on the post and its replies',
-  );
-  ok(pd.includes('performSuperlike'), 'PostDetailScreen carries the send flow');
+  for (const [file, label] of [
+    ['src/screens/TimelineScreen.tsx', 'TimelineScreen'],
+    ['src/screens/ProfileScreen.tsx', 'ProfileScreen'],
+    ['src/screens/PostDetailScreen.tsx', 'PostDetailScreen'],
+  ]) {
+    const s = readFileSync(ROOT + '/' + file, 'utf8');
+    ok(s.includes('onSuperlike={handleSuperlike}'), label + ' passes the handler');
+    ok(
+      s.includes("tr('sl.body'") &&
+        s.includes('SUPERLIKE_TOTAL_RAW') &&
+        s.includes('SUPERLIKE_AUTHOR_RAW') &&
+        s.includes('SUPERLIKE_BURN_RAW'),
+      label + ' sheet shows the TOTAL + the split from the constants',
+    );
+    ok(
+      s.includes("tr('sl.payPending')") && s.includes('performAuthorPay') &&
+        s.includes("tr('pay.body'") && s.includes('pendingAuthorPayFor'),
+      label + ' surfaces the payment-only retry (debt check, sheet, flow)',
+    );
+    ok(s.includes("tr('sl.shortfall')"), label + ' surfaces the shortfall guidance');
+    ok(
+      !s.includes('SUPERLIKE_PRICE_RAW') && !s.includes('MARKED_BURN_PRICE_RAW'),
+      label + ': no stale 1M price constant remains',
+    );
+  }
   const ui = readFileSync(ROOT + '/src/components/ui.tsx', 'utf8');
   ok(ui.includes('StarIcon'), 'PostCard renders the star treatment');
   ok(ui.includes('superlikeCount('), 'PostCard reads the chain count');
   ok(ui.includes('onSuperlike'), 'PostCard exposes the SuperLike action');
   const ctx = readFileSync(ROOT + '/src/context/AppContext.tsx', 'utf8');
   ok(ctx.includes('initSuperlikeStore(storeKV)'), 'AppContext inits the count store');
+  ok(ctx.includes('initAuthorPayStore(storeKV)'), 'AppContext inits the author-pay store');
 }
 
 console.log(`\nsuperlike: ${pass} passed, ${fail} failed`);

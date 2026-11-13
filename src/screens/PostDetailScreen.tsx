@@ -30,10 +30,19 @@ import {
   type TimelineItem,
 } from '../lib/cawApi';
 import {
+  performAuthorPay,
   performSuperlike,
   performTip,
 } from '../lib/actionFlow';
-import { SUPERLIKE_PRICE_RAW } from '../lib/superlike';
+import {
+  SUPERLIKE_AUTHOR_RAW,
+  SUPERLIKE_BURN_RAW,
+  SUPERLIKE_TOTAL_RAW,
+} from '../lib/superlike';
+import {
+  pendingAuthorPayFor,
+  type AuthorPayKind,
+} from '../lib/authorPay';
 import { fmtAmountCardDec } from '../lib/cawCore';
 import { backArrow } from '../lib/rtl';
 
@@ -95,11 +104,14 @@ export default function PostDetailScreen({
     [app, onBack],
   );
 
-  /* ---------- SuperLike (v0.4.9; O-burn design v0.5.0) ----------
+  /* ---------- SuperLike (v0.4.9; O-burn design v0.5.0; two-leg
+   * design v0.6.3) ----------
    * The detail view renders the same PostCard as the feed and
-   * the profile lists, so it offers the same SuperRecaw flow with the
-   * same guards (own-post block, fresh-balance hard stop). One
-   * O burn transaction — no debt state. */
+   * the profile lists, so it offers the same SuperLike flow with
+   * the same guards (own-post block, fresh-balance hard stop).
+   * 25,000,000 O in two legs; a failed author payment after
+   * the burn leaves the payment-only debt, retried from the
+   * ⭐ tap like everywhere else. */
   const [slStatus, setSlStatus] = useState<Record<string, string>>({});
   const [slBusyHash, setSlBusyHash] = useState<Record<string, boolean>>({});
   const [slItem, setSlItem] = useState<TimelineItem | null>(null);
@@ -107,9 +119,15 @@ export default function PostDetailScreen({
   const [slOwner, setSlOwner] = useState('');
   const [slBusy, setSlBusy] = useState(false);
 
+  const oBalanceText = useCallback((): string => {
+    return app.oTok !== null
+      ? fmtAmountCardDec(app.oTok.raw, app.oTok.decimals)
+      : '—';
+  }, [app]);
+
   const openSuperlikeSheet = useCallback(
     (item: TimelineItem) => {
-      if (app.oTok !== null && app.oTok.raw < SUPERLIKE_PRICE_RAW) {
+      if (app.oTok !== null && app.oTok.raw < SUPERLIKE_TOTAL_RAW) {
         setSlStatus((prev) => ({ ...prev, [item.hash]: tr('sl.shortfall') }));
         return;
       }
@@ -125,6 +143,27 @@ export default function PostDetailScreen({
   );
 
   const handleSuperlike = useCallback(
+    (item: TimelineItem) => {
+      // v0.6.3: an owed author payment opens the payment-only
+      // sheet — a fresh SuperLike would burn a second time.
+      if (app.address) {
+        pendingAuthorPayFor(app.address, 'sl', item.cawId)
+          .then((pay) => {
+            if (pay) {
+              openPaySheet(item, 'sl', pay.amountRaw, pay.author);
+              return;
+            }
+            startSuperlike(item);
+          })
+          .catch(() => startSuperlike(item));
+        return;
+      }
+      startSuperlike(item);
+    },
+    [app],
+  );
+
+  const startSuperlike = useCallback(
     (item: TimelineItem) => {
       if (app.myTokens.some((t) => t.id === item.senderId)) {
         setSlStatus((prev) => ({ ...prev, [item.hash]: tr('sl.self') }));
@@ -149,7 +188,9 @@ export default function PostDetailScreen({
           ? tr('sl.self')
           : e instanceof Error && e.message === 'shortfall'
             ? tr('sl.shortfall')
-            : tr('act.failed');
+            : e instanceof Error && e.message === 'sl-pay-pending'
+              ? tr('sl.payPending')
+              : tr('act.failed');
       setSlStatus((prev) => ({ ...prev, [item.hash]: msg }));
     } finally {
       setSlBusy(false);
@@ -157,6 +198,72 @@ export default function PostDetailScreen({
       setSlItem(null);
     }
   }, [app, slItem]);
+
+  /* ---------- Author-payment debt (v0.6.3) ----------
+   * The payment-only retry (see the timeline): this sheet can
+   * send ONLY the plain transfer — never a second burn. */
+  const [payTarget, setPayTarget] = useState<{
+    item: TimelineItem;
+    kind: AuthorPayKind;
+    amountRaw: bigint;
+    author: string;
+  } | null>(null);
+  const [payName, setPayName] = useState('');
+  const [payAddr, setPayAddr] = useState('');
+  const [payBusy, setPayBusy] = useState(false);
+
+  const openPaySheet = useCallback(
+    (
+      item: TimelineItem,
+      kind: AuthorPayKind,
+      amountRaw: bigint,
+      author: string,
+    ) => {
+      // Balance re-check before any retry; short of the owed
+      // amount the sheet never opens and the status says so.
+      if (app.oTok !== null && app.oTok.raw < amountRaw) {
+        setSlStatus((prev) => ({
+          ...prev,
+          [item.hash]: tr('pay.shortfall'),
+        }));
+        return;
+      }
+      resolveName(item.senderId)
+        .then((n) => setPayName(n ? '@' + n : ''))
+        .catch(() => setPayName(''));
+      const short = (a: string) =>
+        a ? a.slice(0, 6) + '…' + a.slice(-4) : '';
+      setPayAddr(short(author));
+      if (!author) {
+        nameOwner(item.senderId)
+          .then((o) => setPayAddr(short(o)))
+          .catch(() => setPayAddr(''));
+      }
+      setPayTarget({ item, kind, amountRaw, author });
+    },
+    [app],
+  );
+
+  const confirmAuthorPay = useCallback(async () => {
+    if (!payTarget) return;
+    const { item, kind } = payTarget;
+    setPayBusy(true);
+    setSlBusyHash((prev) => ({ ...prev, [item.hash]: true }));
+    try {
+      await performAuthorPay(app, { target: item, kind });
+      setSlStatus((prev) => ({ ...prev, [item.hash]: tr('pay.done') }));
+    } catch (e) {
+      const msg =
+        e instanceof Error && e.message === 'shortfall'
+          ? tr('pay.shortfall')
+          : tr('act.failed');
+      setSlStatus((prev) => ({ ...prev, [item.hash]: msg }));
+    } finally {
+      setPayBusy(false);
+      setSlBusyHash((prev) => ({ ...prev, [item.hash]: false }));
+      setPayTarget(null);
+    }
+  }, [app, payTarget]);
 
   /* ---------- Tip (v0.5.0) ---------- */
   const [tipItem, setTipItem] = useState<TimelineItem | null>(null);
@@ -364,11 +471,10 @@ export default function PostDetailScreen({
             ? tr('sl.body', {
                 name: slName || '—',
                 addr: slOwner || '—',
-                price: fmtAmountCardDec(SUPERLIKE_PRICE_RAW, 18),
-                balance:
-                  app.oTok !== null
-                    ? fmtAmountCardDec(app.oTok.raw, app.oTok.decimals)
-                    : '—',
+                total: fmtAmountCardDec(SUPERLIKE_TOTAL_RAW, 18),
+                author: fmtAmountCardDec(SUPERLIKE_AUTHOR_RAW, 18),
+                burn: fmtAmountCardDec(SUPERLIKE_BURN_RAW, 18),
+                balance: oBalanceText(),
               })
             : ''
         }
@@ -377,6 +483,31 @@ export default function PostDetailScreen({
         onConfirm={confirmSuperlike}
         onCancel={() => setSlItem(null)}
         busy={slBusy}
+      />
+      <ConfirmSheet
+        visible={!!payTarget}
+        title={tr('pay.title')}
+        body={
+          payTarget
+            ? tr('pay.body', {
+                amount: fmtAmountCardDec(payTarget.amountRaw, 18),
+                name: payName || '—',
+                addr: payAddr || '—',
+                balance: oBalanceText(),
+              })
+            : ''
+        }
+        confirmLabel={
+          payTarget
+            ? tr('pay.confirm', {
+                amount: fmtAmountCardDec(payTarget.amountRaw, 18),
+              })
+            : tr('pay.title')
+        }
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmAuthorPay}
+        onCancel={() => setPayTarget(null)}
+        busy={payBusy}
       />
       <TipSheet
         visible={!!tipItem}

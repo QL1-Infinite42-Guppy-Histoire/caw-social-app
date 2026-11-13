@@ -36,14 +36,27 @@ import {
 } from '../lib/feedSync';
 import {
   performAction,
+  performAuthorPay,
   performSuperRecaw,
   performSuperRecawBurn,
   performSuperlike,
   performTip,
 } from '../lib/actionFlow';
-import { SUPERLIKE_PRICE_RAW } from '../lib/superlike';
+import {
+  SUPERLIKE_AUTHOR_RAW,
+  SUPERLIKE_BURN_RAW,
+  SUPERLIKE_TOTAL_RAW,
+} from '../lib/superlike';
 import { pendingSrcBurnFor } from '../lib/superRecaw';
-import { MARKED_BURN_PRICE_RAW } from '../lib/markedBurns';
+import {
+  SUPERRECAW_AUTHOR_RAW,
+  SUPERRECAW_BURN_RAW,
+  SUPERRECAW_TOTAL_RAW,
+} from '../lib/markedBurns';
+import {
+  pendingAuthorPayFor,
+  type AuthorPayKind,
+} from '../lib/authorPay';
 import { fmtAmountCard, fmtAmountCardDec } from '../lib/cawCore';
 import {
   buildFollowIndex,
@@ -315,11 +328,24 @@ export default function TimelineScreen() {
         // v0.5.0: a SuperRecaw whose recaw landed but whose O
         // burn is still owed opens the BURN-ONLY sheet instead
         // of the choice — its retry can never recaw twice.
+        // v0.6.3: a SuperRecaw whose burn landed but whose
+        // author payment is still owed opens the PAYMENT-ONLY
+        // sheet instead — its retry can only send the transfer.
         if (app.address) {
-          pendingSrcBurnFor(app.address, item.cawId)
-            .then((pending) => {
+          const addr = app.address;
+          pendingSrcBurnFor(addr, item.cawId)
+            .then(async (pending) => {
               if (pending) {
                 setSrcBurnItem(item);
+                return;
+              }
+              const pay = await pendingAuthorPayFor(
+                addr,
+                'src',
+                item.cawId,
+              ).catch(() => null);
+              if (pay) {
+                openPaySheet(item, 'src', pay.amountRaw, pay.author);
                 return;
               }
               setRecawChoice(item);
@@ -366,17 +392,43 @@ export default function TimelineScreen() {
     }
   }, [app, pending]);
 
-  /* ---------- SuperLike (v0.4.8; O-burn design v0.5.0) ----------
-   * One burn transaction of exactly 1,000,000 O on QL1 — no
-   * second leg, no debt state: a failure simply means nothing
-   * happened. performSuperlike re-checks the guards against
-   * fresh chain reads before signing. */
+  /* ---------- SuperLike (v0.4.8; O-burn design v0.5.0;
+   * two-leg design v0.6.3) ----------
+   * 25,000,000 O in total: the 10,000,000 O burn first, then
+   * the 15,000,000 O author payment. A failed burn means
+   * nothing happened; a failed payment after the burn leaves
+   * a debt whose only retry is the payment-only sheet below
+   * (see the pay-sheet block after SuperRecaw).
+   * performSuperlike re-checks the guards against fresh chain
+   * reads before signing. */
   const [slItem, setSlItem] = useState<TimelineItem | null>(null);
   const [slName, setSlName] = useState('');
   const [slOwner, setSlOwner] = useState('');
   const [slBusy, setSlBusy] = useState(false);
 
   const handleSuperlike = useCallback(
+    (item: TimelineItem) => {
+      // v0.6.3: a SuperLike whose burn landed but whose author
+      // payment is still owed opens the PAYMENT-ONLY sheet —
+      // starting a fresh SuperLike would burn a second time.
+      if (app.address) {
+        pendingAuthorPayFor(app.address, 'sl', item.cawId)
+          .then((pay) => {
+            if (pay) {
+              openPaySheet(item, 'sl', pay.amountRaw, pay.author);
+              return;
+            }
+            startSuperlike(item);
+          })
+          .catch(() => startSuperlike(item));
+        return;
+      }
+      startSuperlike(item);
+    },
+    [app],
+  );
+
+  const startSuperlike = useCallback(
     (item: TimelineItem) => {
       // Instant local verdicts first: my own names' posts are
       // blocked, and a known-insufficient O balance is a hard
@@ -395,7 +447,7 @@ export default function TimelineScreen() {
 
   const openSuperlikeSheet = useCallback(
     (item: TimelineItem) => {
-      if (app.oTok !== null && app.oTok.raw < SUPERLIKE_PRICE_RAW) {
+      if (app.oTok !== null && app.oTok.raw < SUPERLIKE_TOTAL_RAW) {
         setStatusByHash((prev) => ({
           ...prev,
           [item.hash]: tr('sl.shortfall'),
@@ -432,7 +484,9 @@ export default function TimelineScreen() {
           ? tr('sl.self')
           : e instanceof Error && e.message === 'shortfall'
             ? tr('sl.shortfall')
-            : tr('act.failed');
+            : e instanceof Error && e.message === 'sl-pay-pending'
+              ? tr('sl.payPending')
+              : tr('act.failed');
       setStatusByHash((prev) => ({ ...prev, [item.hash]: msg }));
     } finally {
       setSlBusy(false);
@@ -441,11 +495,13 @@ export default function TimelineScreen() {
     }
   }, [app, slItem]);
 
-  /* ---------- SuperRecaw (v0.5.0) ----------
+  /* ---------- SuperRecaw (v0.5.0; two money legs v0.6.3) ----------
    * From the recaw choice sheet: the normal Recaw lands first,
-   * then the 1,000,000 O burn marks it as a SuperRecaw. A burn
-   * that fails after the recaw landed leaves a debt whose only
-   * retry is the burn-only sheet below. */
+   * then the 20,000,000 O burn marks it as a SuperRecaw, then
+   * the 5,000,000 O author payment. A burn that fails after
+   * the recaw landed leaves a debt whose only retry is the
+   * burn-only sheet below; a payment that fails after the
+   * burn leaves the payment-only debt (next block). */
   const [srcItem, setSrcItem] = useState<TimelineItem | null>(null);
   const [srcBusy, setSrcBusy] = useState(false);
   const [srcBurnItem, setSrcBurnItem] = useState<TimelineItem | null>(null);
@@ -473,10 +529,11 @@ export default function TimelineScreen() {
       }));
     } catch (e) {
       const code = e instanceof Error ? e.message : '';
-      // A burn debt means the recaw DID land — keep it lit.
-      // Every other failure (including the pre-recaw shortfall
-      // refusal) means it did not — the light goes back off.
-      if (code !== 'src-burn-pending') {
+      // A burn debt or a payment debt means the recaw DID land
+      // — keep it lit. Every other failure (including the
+      // pre-recaw shortfall refusal) means it did not — the
+      // light goes back off.
+      if (code !== 'src-burn-pending' && code !== 'src-pay-pending') {
         app.markMyAction(2, item, false).catch(() => {});
       }
       const msg =
@@ -484,9 +541,11 @@ export default function TimelineScreen() {
           ? tr('src.shortfall')
           : code === 'src-burn-pending'
             ? tr('src.burnPending')
-            : code === 'need-name'
-              ? tr('compose.needName')
-              : tr('act.failed');
+            : code === 'src-pay-pending'
+              ? tr('src.payPending')
+              : code === 'need-name'
+                ? tr('compose.needName')
+                : tr('act.failed');
       setStatusByHash((prev) => ({ ...prev, [item.hash]: msg }));
     } finally {
       setSrcBusy(false);
@@ -502,9 +561,16 @@ export default function TimelineScreen() {
     setBusyByHash((prev) => ({ ...prev, [item.hash]: true }));
     try {
       await performSuperRecawBurn(app, { target: item });
+      // v0.6.3: the landed burn hands the debt over to the
+      // author payment — say which state the post is in.
+      const pay = app.address
+        ? await pendingAuthorPayFor(app.address, 'src', item.cawId).catch(
+            () => null,
+          )
+        : null;
       setStatusByHash((prev) => ({
         ...prev,
-        [item.hash]: tr('src.burnDone'),
+        [item.hash]: pay ? tr('src.payPending') : tr('src.burnDone'),
       }));
     } catch (e) {
       const msg =
@@ -518,6 +584,82 @@ export default function TimelineScreen() {
       setSrcBurnItem(null);
     }
   }, [app, srcBurnItem]);
+
+  /* ---------- Author-payment debt (v0.6.3) ----------
+   * The shared retry for a SuperLike / SuperRecaw whose burn
+   * landed but whose author payment did not: this sheet can
+   * only send the plain transfer — never a burn, never a
+   * recaw. Reached from the ⭐ tap (SuperLike) or the Recaw
+   * tap (SuperRecaw) in place of the fresh action. */
+  const [payTarget, setPayTarget] = useState<{
+    item: TimelineItem;
+    kind: AuthorPayKind;
+    amountRaw: bigint;
+    author: string;
+  } | null>(null);
+  const [payName, setPayName] = useState('');
+  const [payAddr, setPayAddr] = useState('');
+  const [payBusy, setPayBusy] = useState(false);
+
+  const openPaySheet = useCallback(
+    (
+      item: TimelineItem,
+      kind: AuthorPayKind,
+      amountRaw: bigint,
+      author: string,
+    ) => {
+      // Before any retry the balance is re-checked; short of
+      // the owed amount the sheet never opens and the status
+      // line says so honestly.
+      if (app.oTok !== null && app.oTok.raw < amountRaw) {
+        setStatusByHash((prev) => ({
+          ...prev,
+          [item.hash]: tr('pay.shortfall'),
+        }));
+        return;
+      }
+      resolveName(item.senderId)
+        .then((n) => setPayName(n ? '@' + n : ''))
+        .catch(() => setPayName(''));
+      // The sheet names the recipient: the address pinned in
+      // the debt record wins; an unresolved record falls back
+      // to a fresh owner read for display.
+      const short = (a: string) =>
+        a ? a.slice(0, 6) + '…' + a.slice(-4) : '';
+      setPayAddr(short(author));
+      if (!author) {
+        nameOwner(item.senderId)
+          .then((o) => setPayAddr(short(o)))
+          .catch(() => setPayAddr(''));
+      }
+      setPayTarget({ item, kind, amountRaw, author });
+    },
+    [app],
+  );
+
+  const confirmAuthorPay = useCallback(async () => {
+    if (!payTarget) return;
+    const { item, kind } = payTarget;
+    setPayBusy(true);
+    setBusyByHash((prev) => ({ ...prev, [item.hash]: true }));
+    try {
+      await performAuthorPay(app, { target: item, kind });
+      setStatusByHash((prev) => ({
+        ...prev,
+        [item.hash]: tr('pay.done'),
+      }));
+    } catch (e) {
+      const msg =
+        e instanceof Error && e.message === 'shortfall'
+          ? tr('pay.shortfall')
+          : tr('act.failed');
+      setStatusByHash((prev) => ({ ...prev, [item.hash]: msg }));
+    } finally {
+      setPayBusy(false);
+      setBusyByHash((prev) => ({ ...prev, [item.hash]: false }));
+      setPayTarget(null);
+    }
+  }, [app, payTarget]);
 
   /* ---------- Tip (v0.5.0) ---------- */
   const [tipItem, setTipItem] = useState<TimelineItem | null>(null);
@@ -766,7 +908,9 @@ export default function TimelineScreen() {
             ? tr('sl.body', {
                 name: slName || '—',
                 addr: slOwner || '—',
-                price: fmtAmountCardDec(SUPERLIKE_PRICE_RAW, 18),
+                total: fmtAmountCardDec(SUPERLIKE_TOTAL_RAW, 18),
+                author: fmtAmountCardDec(SUPERLIKE_AUTHOR_RAW, 18),
+                burn: fmtAmountCardDec(SUPERLIKE_BURN_RAW, 18),
                 balance: oBalanceText(),
               })
             : ''
@@ -782,10 +926,17 @@ export default function TimelineScreen() {
         title={tr('src.title')}
         body={
           srcItem
-            ? tr('src.body', {
-                price: fmtAmountCardDec(MARKED_BURN_PRICE_RAW, 18),
-                balance: oBalanceText(),
-              })
+            ? app.myTokens.some((t) => t.id === srcItem.senderId)
+              ? tr('src.bodySelf', {
+                  burn: fmtAmountCardDec(SUPERRECAW_BURN_RAW, 18),
+                  balance: oBalanceText(),
+                })
+              : tr('src.body', {
+                  total: fmtAmountCardDec(SUPERRECAW_TOTAL_RAW, 18),
+                  author: fmtAmountCardDec(SUPERRECAW_AUTHOR_RAW, 18),
+                  burn: fmtAmountCardDec(SUPERRECAW_BURN_RAW, 18),
+                  balance: oBalanceText(),
+                })
             : ''
         }
         confirmLabel={tr('src.confirm')}
@@ -800,7 +951,7 @@ export default function TimelineScreen() {
         body={
           srcBurnItem
             ? tr('src.burnBody', {
-                price: fmtAmountCardDec(MARKED_BURN_PRICE_RAW, 18),
+                price: fmtAmountCardDec(SUPERRECAW_BURN_RAW, 18),
                 balance: oBalanceText(),
               })
             : ''
@@ -810,6 +961,31 @@ export default function TimelineScreen() {
         onConfirm={confirmSrcBurn}
         onCancel={() => setSrcBurnItem(null)}
         busy={srcBurnBusy}
+      />
+      <ConfirmSheet
+        visible={!!payTarget}
+        title={tr('pay.title')}
+        body={
+          payTarget
+            ? tr('pay.body', {
+                amount: fmtAmountCardDec(payTarget.amountRaw, 18),
+                name: payName || '—',
+                addr: payAddr || '—',
+                balance: oBalanceText(),
+              })
+            : ''
+        }
+        confirmLabel={
+          payTarget
+            ? tr('pay.confirm', {
+                amount: fmtAmountCardDec(payTarget.amountRaw, 18),
+              })
+            : tr('pay.title')
+        }
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmAuthorPay}
+        onCancel={() => setPayTarget(null)}
+        busy={payBusy}
       />
       <TipSheet
         visible={!!tipItem}
@@ -847,10 +1023,15 @@ export default function TimelineScreen() {
                 const it = recawChoice;
                 setRecawChoice(null);
                 if (it) {
-                  if (
-                    app.oTok !== null &&
-                    app.oTok.raw < MARKED_BURN_PRICE_RAW
-                  ) {
+                  // v0.6.3: the gate mirrors the flow — the
+                  // full 25,000,000 total, or the burn alone
+                  // for one's own post (no author leg exists).
+                  const need = app.myTokens.some(
+                    (t) => t.id === it.senderId,
+                  )
+                    ? SUPERRECAW_BURN_RAW
+                    : SUPERRECAW_TOTAL_RAW;
+                  if (app.oTok !== null && app.oTok.raw < need) {
                     setStatusByHash((prev) => ({
                       ...prev,
                       [it.hash]: tr('src.shortfall'),
@@ -865,7 +1046,7 @@ export default function TimelineScreen() {
                 <StarIcon size={16} color="#fff" filled />
                 <Text style={S.bigBtnText}>
                   {tr('tl.superRecaw')}（
-                  {fmtAmountCardDec(MARKED_BURN_PRICE_RAW, 18)} O）
+                  {fmtAmountCardDec(SUPERRECAW_TOTAL_RAW, 18)} O）
                 </Text>
               </View>
             </Pressable>

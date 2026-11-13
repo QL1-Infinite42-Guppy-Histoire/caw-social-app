@@ -2,30 +2,44 @@
  * Marked burns — the shared on-chain index behind SuperLike
  * (v0.5.0) and SuperRecaw (v0.5.0).
  *
- * Both features are paid for the same way: burn exactly
- * 1,000,000 O (the QL1 token "Childhoods End") to the burn
- * address, with a marker appended as TRAILING CALLDATA after
- * the ordinary transfer arguments:
+ * Both features carry a BURN leg paid the same way: O (the
+ * QL1 token "Childhoods End") transferred to the burn address,
+ * with a marker appended as TRAILING CALLDATA after the
+ * ordinary transfer arguments:
  *
  *     transfer calldata (68 bytes)
  *     + MAGIC  (4 bytes: "SLK1" for a SuperLike,
  *                      "SRC1" for a SuperRecaw)
  *     + cawId (32 bytes, the post's CAW id)
  *
+ * The economics changed in v0.6.3 (user decision 2026-11-13):
+ * each action now costs 25,000,000 O IN TOTAL — a burn leg
+ * plus a plain (unmarked) author-payment leg (see
+ * lib/authorPay.ts and lib/actionFlow.ts):
+ *   SuperLike: 15,000,000 to the author + 10,000,000 burned
+ *   SuperRecaw: 5,000,000 to the author + 20,000,000 burned
+ * Under the v0.5.0–v0.6.2 spec both actions were a single
+ * 1,000,000 O burn. Those legacy burns were genuine under
+ * the spec of their time, so the detection sets below accept
+ * BOTH the current burn amount and the legacy 1,000,000 for
+ * each magic — no cut-off, no lost history.
+ *
  * The recipient is the burn address for everyone, so counts
  * cannot be gathered per author (the v0.4.8/9 design); instead
  * ONE chain-wide scan of the O token's Transfer events TO the
  * burn address is indexed by cawId (and, for SuperRecaw, by
  * cawId + sender). A transfer counts only when its input
- * carries a marker, its amount is exactly the price, and the
- * Transfer log's own value agrees — the same strictness the
- * CAT42 scanner used.
+ * carries a marker, its amount is in the marker's accepted
+ * set, and the Transfer log's own value agrees — the same
+ * strictness the CAT42 scanner used.
  *
  * Why trailing calldata is safe for O was verified with the
  * REAL token BEFORE this design was adopted (2026-11-10,
  * read-only, QL1 head 13,435,401):
- *   - eth_call of a 1,000,000 O burn transfer, simulated from
- *     the QomSwap O/WQOM pair (a holder of ~13.28 trillion O):
+ *   - eth_call of a burn transfer at the then-current
+ *     1,000,000 O (the mechanics are amount-independent),
+ *     simulated from the QomSwap O/WQOM pair (a holder of
+ *     ~13.28 trillion O):
  *     returns true (0x…01) IDENTICALLY with and without the
  *     36-byte marker.
  *   - eth_estimateGas: plain 35,077 vs marked 35,281 — the
@@ -58,10 +72,55 @@ import type { KVStorage } from './myActions';
 /** The burn address (the project's established one). */
 export const BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD';
 
-/** The shared price of a SuperLike and of a SuperRecaw:
- *  exactly 1,000,000 O, burned. */
-export const MARKED_BURN_PRICE_O = 1_000_000;
-export const MARKED_BURN_PRICE_RAW = BigInt(MARKED_BURN_PRICE_O) * 10n ** 18n;
+/* ---------- the money (v0.6.3) ----------
+ * ONE source of truth for every SuperLike / SuperRecaw
+ * amount. The prechecks, the confirmation sheets, the send
+ * flows, the detection sets and the pending-leg records all
+ * read from here — no other file may hard-code these. */
+
+const o = (whole: number): bigint => BigInt(whole) * 10n ** 18n;
+
+/** SuperLike (v0.6.3): 25,000,000 O total. */
+export const SUPERLIKE_TOTAL_O = 25_000_000;
+export const SUPERLIKE_TOTAL_RAW = o(SUPERLIKE_TOTAL_O);
+export const SUPERLIKE_AUTHOR_O = 15_000_000;
+export const SUPERLIKE_AUTHOR_RAW = o(SUPERLIKE_AUTHOR_O);
+export const SUPERLIKE_BURN_O = 10_000_000;
+export const SUPERLIKE_BURN_RAW = o(SUPERLIKE_BURN_O);
+
+/** SuperRecaw (v0.6.3): 25,000,000 O total (plus the Recaw). */
+export const SUPERRECAW_TOTAL_O = 25_000_000;
+export const SUPERRECAW_TOTAL_RAW = o(SUPERRECAW_TOTAL_O);
+export const SUPERRECAW_AUTHOR_O = 5_000_000;
+export const SUPERRECAW_AUTHOR_RAW = o(SUPERRECAW_AUTHOR_O);
+export const SUPERRECAW_BURN_O = 20_000_000;
+export const SUPERRECAW_BURN_RAW = o(SUPERRECAW_BURN_O);
+
+/**
+ * The v0.5.0–v0.6.2 burn price: exactly 1,000,000 O for BOTH
+ * actions. Detection-only now — nothing new is ever sent at
+ * this amount, but burns made under the old spec stay valid
+ * forever (they were real when they were made).
+ */
+export const LEGACY_MARKED_BURN_O = 1_000_000;
+export const LEGACY_MARKED_BURN_RAW = o(LEGACY_MARKED_BURN_O);
+
+/** Burn amounts that COUNT for each marker (current + legacy). */
+export const SUPERLIKE_BURN_AMOUNTS: readonly bigint[] = [
+  SUPERLIKE_BURN_RAW,
+  LEGACY_MARKED_BURN_RAW,
+];
+export const SUPERRECAW_BURN_AMOUNTS: readonly bigint[] = [
+  SUPERRECAW_BURN_RAW,
+  LEGACY_MARKED_BURN_RAW,
+];
+
+/** The accepted burn-amount set for a parsed marker's magic. */
+export function burnAmountsForMagic(magic: string): readonly bigint[] {
+  return magic === SUPERLIKE_MAGIC
+    ? SUPERLIKE_BURN_AMOUNTS
+    : SUPERRECAW_BURN_AMOUNTS;
+}
 
 /** Trailing-calldata magics (ASCII). */
 export const SUPERLIKE_MAGIC = '534c4b31'; // "SLK1"
@@ -90,16 +149,22 @@ export function normCawIdHex(cawId: string): string | null {
 
 /**
  * The full transaction data for a marked burn: an ordinary
- * transfer of exactly the price to the burn address, with the
- * marker (magic + cawId) appended. Null when the cawId is
- * malformed.
+ * transfer of exactly `amountRaw` to the burn address, with
+ * the marker (magic + cawId) appended. The amount is a
+ * required parameter — a caller must name WHICH burn it is
+ * building (the SuperLike burn and the SuperRecaw burn
+ * differ since v0.6.3). Null when the cawId is malformed.
  */
-export function buildMarkedBurnData(magic: string, cawId: string): string | null {
+export function buildMarkedBurnData(
+  magic: string,
+  cawId: string,
+  amountRaw: bigint,
+): string | null {
   const id = normCawIdHex(cawId);
   if (!id) return null;
   const base = ERC20_IFACE.encodeFunctionData('transfer', [
     BURN_ADDRESS,
-    MARKED_BURN_PRICE_RAW,
+    amountRaw,
   ]);
   return base + magic + id;
 }
@@ -137,6 +202,10 @@ export function parseMarkedBurnInput(data: string): MarkedBurnMark | null {
 
 /* ---------- the index (store + scanner) ---------- */
 
+/* The persisted index needs no version bump for v0.6.3:
+ * records written by v0.5.0–v0.6.2 can only contain legacy
+ * 1,000,000 burns, which both detection sets still accept,
+ * and the scan cursor simply continues from where it was. */
 const KV_KEY = 'caw-marked-burns-v1';
 
 interface MbRecord {
@@ -240,10 +309,12 @@ async function absorb(logs: RawLog[]): Promise<void> {
     if (!input) throw new Error('missing input'); // rescan chunk later
     const mark = parseMarkedBurnInput(input);
     if (!mark) continue;
-    if (mark.amount !== MARKED_BURN_PRICE_RAW) continue;
+    // The amount must be one the marker accepts: the current
+    // burn for that action, or the legacy 1,000,000 (v0.6.3).
+    if (!burnAmountsForMagic(mark.magic).includes(mark.amount)) continue;
     // The log's own value word must agree with the marked amount.
     try {
-      if (BigInt(log.data) !== MARKED_BURN_PRICE_RAW) continue;
+      if (BigInt(log.data) !== mark.amount) continue;
     } catch {
       continue;
     }

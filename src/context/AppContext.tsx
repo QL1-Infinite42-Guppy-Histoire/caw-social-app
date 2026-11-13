@@ -37,6 +37,7 @@ import {
   loadExchangeAddress,
 } from '../lib/exchange';
 import { initSuperRecawStore } from '../lib/superRecaw';
+import { initAuthorPayStore } from '../lib/authorPay';
 import {
   directoryName,
   hydrateNameDirectory,
@@ -267,6 +268,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     initDrafts(storeKV);
     initSuperlikeStore(storeKV);
     initSuperRecawStore(storeKV);
+    initAuthorPayStore(storeKV);
     initExchangeStore(storeKV);
     loadExchangeAddress().catch(() => {});
     return () => {

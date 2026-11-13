@@ -71,7 +71,9 @@ scripts/.build-qomstart/
 scripts/.build-batch/
 scripts/.build-superlike/
 scripts/.build-superlike-fail/
+scripts/.build-superlike-restart/
 scripts/.build-superrecaw/
+scripts/.build-superrecaw-old/
 scripts/.build-tip/
 scripts/.build-exchange/
 scripts/.build-exchange-i18n/
