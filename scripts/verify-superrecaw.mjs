@@ -632,8 +632,10 @@ const BYSTANDER = '0x2222222222222222222222222222222222222222';
     !ui.includes('superFrame') &&
       !ui.includes('LinearGradient') &&
       ui.includes("tr('tl.superRecaw')") &&
-      ui.includes('SUPERLIKE_ON'),
-    'RecawCard renders FLAT with the gold SuperRecaw attribution line (v0.6.1; the gradient frame + badge are gone)',
+      ui.includes('SUPERLIKE_ON') &&
+      ui.includes('isSuper && { backgroundColor: SUPER_RECAW_WASH }') &&
+      (ui.match(/backgroundColor: SUPER_RECAW_WASH/g) || []).length === 1,
+    'RecawCard renders FLAT with the gold SuperRecaw attribution line (v0.6.1) PLUS the gold row wash bound to isSuper (v0.6.4; the gradient frame + badge stay gone, and the wash is applied in exactly one place — the recaw row)',
   );
   const ctx = readFileSync(ROOT + '/src/context/AppContext.tsx', 'utf8');
   ok(ctx.includes('initSuperRecawStore(storeKV)'), 'AppContext inits the burn-debt store');

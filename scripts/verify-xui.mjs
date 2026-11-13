@@ -27,7 +27,7 @@
  *     no setTab() calls to removed tabs anywhere; the
  *     compose chip + cost line wiring; the PostCard action
  *     row element order (Reply < Recaw < Like < Views <
- *     SuperLike < Tip < Bookmark); accent = X blue; the
+ *     SuperLike < Tip < Bookmark < Share); accent = X blue; the
  *     SuperLike star = gold; the Settings About carries the
  *     views-aggregation note in the source language.
  *
@@ -507,7 +507,7 @@ console.log('\n-- structure / reachability --');
 
   // PostCard action row: element order + views gating + gold star.
   const rowStart = uiSrc.indexOf('X-style action row (v0.6.0)');
-  const row = uiSrc.slice(rowStart, rowStart + 9000);
+  const row = uiSrc.slice(rowStart, rowStart + 12000);
   const order = [
     'ReplyIcon',
     'RepeatIcon',
@@ -516,11 +516,30 @@ console.log('\n-- structure / reachability --');
     'StarIcon',
     'TipIcon',
     'BookmarkIcon',
+    'ShareIcon',
   ].map((n) => row.indexOf(n));
   ok(
     order.every((v) => v >= 0) &&
       order.every((v, i) => i === 0 || v > order[i - 1]),
-    'action row order: Reply < Recaw < Like < Views < SuperLike < Tip < Bookmark',
+    'action row order: Reply < Recaw < Like < Views < SuperLike < Tip < Bookmark < Share',
+  );
+  // Share (v0.6.4): the OS share sheet, plain text only.
+  const shareAt = uiSrc.indexOf('const onSharePost');
+  const shareSlice = uiSrc.slice(shareAt, shareAt + 400);
+  ok(
+    shareAt >= 0 &&
+      shareSlice.includes('Share.share({ message })') &&
+      shareSlice.includes('bodyText') &&
+      shareSlice.includes('who') &&
+      shareSlice.includes("' · CAW Social'") &&
+      !shareSlice.includes('http') && !shareSlice.includes('txUrl'),
+    'share composes the OS sheet message from the post body + author (— @handle · CAW Social); no URL is fabricated and no record link is attached',
+  );
+  ok(
+    uiSrc.includes('export function ShareIcon') &&
+      uiSrc.includes("accessibilityLabel={tr('tl.share')}") &&
+      row.indexOf('ShareIcon') > row.indexOf('BookmarkIcon'),
+    'share button: vector ShareIcon at the very end of the action row, after Bookmark, with the tl.share accessibility label',
   );
   ok(
     row.includes('VIEWS_ENABLED && viewCount !== null'),
@@ -605,6 +624,14 @@ console.log('\n-- structure / reachability --');
     'SuperRecaw renders FLAT: no gradient frame, no badge, no star emoji in ui.tsx',
   );
   ok(
+    uiSrc.includes('const SUPER_RECAW_WASH = X_SUPER_WASH_LIGHT') &&
+      uiSrc.includes('isSuper && { backgroundColor: SUPER_RECAW_WASH }') &&
+      (uiSrc.match(/backgroundColor: SUPER_RECAW_WASH/g) || []).length === 1 &&
+      configSrc.includes("X_SUPER_WASH_LIGHT = 'rgba(255,172,51,0.10)'") &&
+      configSrc.includes("X_SUPER_WASH_DARK = 'rgba(255,172,51,0.16)'"),
+    'SuperRecaw glow (v0.6.4): the row wash is the X_GOLD-derived config token pair (light 0.10 / dark 0.16), bound to isSuper in exactly one place — the recaw row; plain rows stay untinted',
+  );
+  ok(
     (uiSrc.match(/tr\('tl\.viewTx'\)/g) || []).length === 2 &&
       uiSrc
         .slice(uiSrc.indexOf('{!nested ? ('), uiSrc.indexOf('{!nested ? (') + 500)
@@ -616,8 +643,9 @@ console.log('\n-- structure / reachability --');
       !uiSrc.includes("flexWrap: 'wrap'") &&
       uiSrc.includes('formatViewCount(Number(likes))') &&
       uiSrc.includes('formatViewCount(replyCount)') &&
-      uiSrc.includes('formatViewCount(recawCount)'),
-    'action row: single line (space-between, no wrap) with compact counts',
+      uiSrc.includes('formatViewCount(recawCount)') &&
+      /actionBtn: \{[^}]*paddingHorizontal: 4/.test(uiSrc),
+    'action row: single line (space-between, no wrap) with compact counts; v0.6.4 button padding tightened to 4 so the eighth element (Share) holds the line at 360dp',
   );
   ok(
     mineSrc.includes('fmtCardDisplay(token.balance') &&

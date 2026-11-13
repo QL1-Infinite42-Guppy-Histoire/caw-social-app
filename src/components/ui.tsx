@@ -6,6 +6,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -15,7 +16,7 @@ import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
 import { SvgXml } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ACCENT, X_GOLD } from '../config';
+import { ACCENT, X_GOLD, X_SUPER_WASH_LIGHT } from '../config';
 import { LOCALES, isLang, tr } from '../i18n';
 import {
   avatarFor,
@@ -270,6 +271,19 @@ export function BookmarkIcon({ size = 18, color = '#536471', filled = false }: {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill={filled ? color : 'none'} stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+    </Svg>
+  );
+}
+/** Share (v0.6.4): the feather upload glyph — X's share mark,
+ *  last in the action row. It opens the OS share sheet with
+ *  plain text (see onSharePost in PostCardBase); there is no
+ *  per-post URL to attach and none is invented. */
+export function ShareIcon({ size = 18, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <Polyline points="17 8 12 3 7 8" />
+      <Line x1="12" y1="3" x2="12" y2="15" />
     </Svg>
   );
 }
@@ -718,6 +732,13 @@ const RECAW_ON = '#00ba7c';
  *  v0.6.0: the X gold token (#FFAC33 family), reserved for
  *  the SuperLike star and the tip coin, nothing else. */
 const SUPERLIKE_ON = X_GOLD;
+/** SuperRecaw row wash (v0.6.4): the light-surface value of
+ *  the config token pair — screens read the light values
+ *  today, exactly as with the post surface '#fff' below; the
+ *  stronger X_SUPER_WASH_DARK is defined alongside for the
+ *  dark surface. Applied ONLY while a recaw row's isSuper
+ *  detection state is true. */
+const SUPER_RECAW_WASH = X_SUPER_WASH_LIGHT;
 
 /** The original post a like / share points at, shown as a quote box. */
 function TargetPostQuote({
@@ -1002,11 +1023,11 @@ function RecawCard({
       <View style={{ flex: 1, marginStart: 10 }}>
         {/* Attribution line. A SuperRecaw renders FLAT like
             every other row (v0.6.1 finish — the v0.5.0 cream
-            card, gradient frame and magenta badge are gone);
-            the burn proof the badge carried is now this line
-            alone: a gold star and gold text naming the recaw
-            a SuperRecaw, in the same slot as the plain recaw
-            line. */}
+            card, gradient frame and magenta badge stay gone);
+            the treatment is this line — a gold star and gold
+            text naming the recaw a SuperRecaw, in the same
+            slot as the plain recaw line — plus, since v0.6.4,
+            the gold row wash on the outer View below. */}
         <View style={S.row}>
           {isSuper ? (
             <StarIcon size={14} color={SUPERLIKE_ON} filled />
@@ -1064,11 +1085,25 @@ function RecawCard({
       </View>
     </>
   );
-  /* SuperRecaws take the same flat row as plain recaws
-   * (v0.6.1): the gold attribution line inside `row` is the
-   * only distinction — no frame, no tint, no badge. */
+  /* SuperRecaws take the same FLAT row as plain recaws
+   * (v0.6.1: no frame, no badge, no rounded card) — but
+   * since v0.6.4 the row itself glows: while `isSuper` is
+   * true (chain detection only, incl. the cached fast path —
+   * never as a loading placeholder) the whole row carries
+   * the soft gold wash, so a SuperRecaw is visibly LIT at a
+   * glance, which the attribution line alone never achieved
+   * (v0.6.3 on-device check: 「光ってない」). Plain recaws
+   * stay untinted; the nested original shows through the
+   * wash via its transparent surface. */
   return (
-    <View style={nested ? postStyles.postNested : postStyles.post}>{row}</View>
+    <View
+      style={[
+        nested ? postStyles.postNested : postStyles.post,
+        isSuper && { backgroundColor: SUPER_RECAW_WASH },
+      ]}
+    >
+      {row}
+    </View>
   );
 }
 
@@ -1249,6 +1284,20 @@ function PostCardBase({
    * line (replies / quote Recaws, lib/postRef.ts). */
   const parsed = item.type === 0 ? parsePostText(item.text) : null;
   const bodyText = parsed ? parsed.body : item.text;
+  /* Share (v0.6.4): the OS share sheet carrying the post's
+   * own words and its author — plain text only. No per-post
+   * URL exists (there is no verified deep link), so none is
+   * attached, and the explorer record link stays the separate
+   * in-app row below. Read-only: no signing, no chain. In a
+   * recaw row this button renders on the nested ORIGINAL
+   * post, so it shares the original's text and author — the
+   * same target as the row's other actions. */
+  const onSharePost = () => {
+    const message = bodyText
+      ? bodyText + '\n— ' + who + ' · CAW Social'
+      : '— ' + who + ' · CAW Social';
+    Share.share({ message }).catch(() => {});
+  };
   return (
     <View style={nested ? postStyles.postNested : postStyles.post}>
       <Avatar
@@ -1301,7 +1350,8 @@ function PostCardBase({
         ) : null}
         {/* X-style action row (v0.6.0): icon + count, no word
             labels except Tip — Reply / Recaw / Like / Views /
-            SuperLike (gold star) / Tip / Bookmark. Every
+            SuperLike (gold star) / Tip / Bookmark / Share
+            (v0.6.4, icon-only, at the end — X's position). Every
             handler, menu and sheet behind these buttons is
             the pre-overhaul one; only the buttons moved. Views
             renders only when the counter is configured AND has
@@ -1451,6 +1501,19 @@ function PostCardBase({
               />
             </Pressable>
           ) : null}
+          {item.type === 0 ? (
+            <Pressable
+              onPress={onSharePost}
+              accessibilityLabel={tr('tl.share')}
+              style={({ pressed }) => [
+                S.row,
+                postStyles.actionBtn,
+                pressed && postStyles.actionBtnOn,
+              ]}
+            >
+              <ShareIcon size={16} color="#536471" />
+            </Pressable>
+          ) : null}
         </View>
         ) : null}
         {/* The ONE record link per post (v0.6.1): through
@@ -1569,9 +1632,12 @@ const postStyles = StyleSheet.create({
   quoteText: { fontSize: 14, color: '#0f1419', lineHeight: 20, marginTop: 4 },
   /* The action row (v0.6.1): ONE line, always — space-between
    * across the content column, no wrap, compact counts. At
-   * 360dp the column is ~274dp wide; seven buttons at these
-   * metrics (16px icon + up to 5 chars of count, Tip's word
-   * label the widest) fit with room to spare. */
+   * 360dp the column is ~274dp wide. v0.6.4 adds the EIGHTH
+   * element (Share, icon-only like Bookmark, at the row's
+   * end); the button padding tightened 5 → 4 to hold the
+   * line: eight buttons at these metrics (16px icon + up to
+   * 5 chars of count, Tip's word label the widest, the two
+   * icon-only buttons ~24dp each) still fit the column. */
   actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1580,16 +1646,19 @@ const postStyles = StyleSheet.create({
   },
   // X-style action buttons: a soft pill highlight while pressed.
   actionBtn: {
-    paddingHorizontal: 5,
+    paddingHorizontal: 4,
     paddingVertical: 5,
     marginStart: -5,
     borderRadius: 999,
   },
   actionBtnOn: { backgroundColor: '#f7f9f9' },
   /* (v0.6.1: the SuperRecaw gradient frame / tinted card /
-   * badge styles were removed with the flat rendering — the
-   * gold attribution line in RecawCard is the whole treatment
-   * now.) */
+   * badge styles were removed with the flat rendering, and
+   * they stay removed. The treatment since v0.6.4 is the
+   * gold attribution line plus the gold row wash, applied
+   * inline in RecawCard via SUPER_RECAW_WASH — deliberately
+   * NOT a style here: the row keeps these flat styles, the
+   * wash is a backgroundColor laid over them while isSuper.) */
 });
 
 /* ---------- bottom-sheet style confirm dialog ---------- */

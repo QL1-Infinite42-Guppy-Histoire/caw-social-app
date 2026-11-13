@@ -120,3 +120,12 @@ export const X_SECONDARY = '#536471';
 export const X_HAIRLINE = '#EFF3F4';
 export const X_BG_LIGHT = '#FFFFFF';
 export const X_BG_DARK = '#000000';
+/* SuperRecaw row wash (v0.6.4): X_GOLD (rgb 255,172,51) at
+ * low alpha, laid under a SuperRecaw row so it reads as LIT
+ * while staying a flat X row — no frame, no gradient, no
+ * card. The LIGHT value is the one screens read today (the
+ * same arrangement as X_BG_LIGHT / X_BG_DARK above); the
+ * DARK value runs stronger so the wash survives on the pure-
+ * black surface when a dark UI lands. */
+export const X_SUPER_WASH_LIGHT = 'rgba(255,172,51,0.10)';
+export const X_SUPER_WASH_DARK = 'rgba(255,172,51,0.16)';
