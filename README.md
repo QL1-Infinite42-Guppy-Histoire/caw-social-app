@@ -17,9 +17,18 @@ first one is its end-to-end check.
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.6.5** — released 2026-11-16.
+- **現在版 / Current: v0.6.6** — released 2026-11-16.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.6.5/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.6.6/caw-social.apk
+  v0.6.6 makes the share button share a LINK: the OS share
+  sheet now carries the post's words, its author line, and
+  the post's page on the community web viewer
+  (…/caw-social-ql1/en.html?post=<cawId> — the viewer's own
+  post-page format; with the app in Japanese the link points
+  at ja.html instead). In a Recaw row the button sits on the
+  nested original post, so the link names the ORIGINAL post.
+  A post without a well-formed cawId falls back to the
+  text-only message — no link is ever fabricated.
   v0.6.5 adds links to posts: when you post, a long URL in
   the text is shortened first through the community link
   service (cawl — short links look like
