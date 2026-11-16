@@ -17,9 +17,21 @@ first one is its end-to-end check.
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.6.6** — released 2026-11-16.
+- **現在版 / Current: v0.6.7** — released 2026-11-16.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.6.6/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.6.7/caw-social.apk
+  v0.6.7 makes sharing link-only, shortened: the OS share
+  sheet now carries exactly ONE link — the post's page on
+  the community web viewer, shortened through cawl
+  (https://cawl.nepicobsv.workers.dev/<code> → the viewer's
+  …/caw-social-ql1/en.html?post=<cawId> page; ja.html when
+  the app is in Japanese). No post text, no author line.
+  If the shortener is unreachable the full viewer URL is
+  shared; a post without a well-formed cawId shares the
+  viewer's top page — a post link is never fabricated. The
+  web viewer (v18) shares the same way. In a Recaw row the
+  button sits on the nested original post, so the link
+  names the ORIGINAL post.
   v0.6.6 makes the share button share a LINK: the OS share
   sheet now carries the post's words, its author line, and
   the post's page on the community web viewer
