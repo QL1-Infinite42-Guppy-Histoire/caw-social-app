@@ -55,6 +55,7 @@ import { displayTextOf, parsePostText } from '../lib/postRef';
 import {
   extractUrls,
   fetchPreview,
+  shortenUrl,
   splitLinkSegments,
   type LinkPreview,
 } from '../lib/linkify';
@@ -65,7 +66,7 @@ import {
   subscribeViews,
   viewCountCached,
 } from '../lib/views';
-import { composeShareMessage } from '../lib/share';
+import { resolveShareUrl } from '../lib/share';
 import type { TimelineItem } from '../lib/cawApi';
 import type { ProfileCustom } from '../lib/profileCustom';
 
@@ -281,10 +282,10 @@ export function BookmarkIcon({ size = 18, color = '#536471', filled = false }: {
     </Svg>
   );
 }
-/** Share (v0.6.4; link added v0.6.6): the feather upload glyph
- *  — X's share mark, last in the action row. It opens the OS
- *  share sheet with the post's text, its author line and a link
- *  to the post's page on the community web viewer (see
+/** Share (v0.6.4; link-only since v0.6.7): the feather upload
+ *  glyph — X's share mark, last in the action row. It opens the
+ *  OS share sheet carrying ONLY a link: the post's page on the
+ *  community web viewer, shortened through cawl (see
  *  onSharePost in PostCardBase and lib/share.ts). */
 export function ShareIcon({ size = 18, color = '#536471' }: { size?: number; color?: string }) {
   return (
@@ -1408,20 +1409,21 @@ function PostCardBase({
    * renders as a tappable link inside the body (LinkifiedText). */
   const firstUrl =
     item.type === 0 && bodyText ? (extractUrls(bodyText)[0] ?? null) : null;
-  /* Share (v0.6.4; link added v0.6.6): the OS share sheet
-   * carrying the post's own words, its author, and a link to
-   * the post's page on the community web viewer — the
-   * viewer's ?post=<cawId> page (lib/share.ts composes the
-   * message; the page follows the app's language). A post
-   * without a well-formed cawId falls back to the text-only
-   * message — no link is ever fabricated. The explorer record
-   * link stays the separate in-app row below. Read-only: no
+  /* Share (v0.6.4; link-only since v0.6.7): the OS share
+   * sheet carrying ONLY a link — the post's page on the
+   * community web viewer (the viewer's ?post=<cawId> page,
+   * following the app's language), shortened through cawl
+   * (lib/share.ts resolves the one URL; lib/linkify.ts talks
+   * to the shortener). If shortening fails the full viewer
+   * URL is shared; a post without a well-formed cawId links
+   * the viewer's top page — a post link is never fabricated,
+   * and no text is shared anymore. The explorer record link
+   * stays the separate in-app row below. Read-only: no
    * signing, no chain. In a recaw row this button renders on
    * the nested ORIGINAL post, so it shares the original's
-   * text, author and link — the same target as the row's
-   * other actions. */
-  const onSharePost = () => {
-    const message = composeShareMessage(bodyText, who, item.cawId, lang);
+   * link — the same target as the row's other actions. */
+  const onSharePost = async () => {
+    const message = await resolveShareUrl(item.cawId, lang, shortenUrl);
     Share.share({ message }).catch(() => {});
   };
   return (

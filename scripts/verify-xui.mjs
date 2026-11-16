@@ -523,24 +523,25 @@ console.log('\n-- structure / reachability --');
       order.every((v, i) => i === 0 || v > order[i - 1]),
     'action row order: Reply < Recaw < Like < Views < SuperLike < Tip < Bookmark < Share',
   );
-  // Share (v0.6.4; link added v0.6.6): the OS share sheet —
-  // body + author line + the web viewer's post-page link,
-  // composed by lib/share from THIS card's item.
+  // Share (v0.6.4; link-only since v0.6.7): the OS share sheet
+  // carries exactly ONE link — this card's post page on the web
+  // viewer, shortened through cawl — resolved by lib/share from
+  // THIS card's item and shortened via lib/linkify.
   const shareAt = uiSrc.indexOf('const onSharePost');
   const shareSlice = uiSrc.slice(shareAt, shareAt + 400);
   ok(
     shareAt >= 0 &&
       shareSlice.includes('Share.share({ message })') &&
       shareSlice.includes(
-        'composeShareMessage(bodyText, who, item.cawId, lang)',
+        'resolveShareUrl(item.cawId, lang, shortenUrl)',
       ) &&
       !shareSlice.includes('txUrl'),
-    'share composes the OS sheet message via lib/share (post body + author + the viewer post-page link for this card\u2019s cawId and language); no explorer record link is attached',
+    'share resolves the OS sheet payload via lib/share + lib/linkify (one shortened viewer link for this card\u2019s cawId and language); no explorer record link is attached',
   );
   ok(
     (uiSrc.match(/Share\.share\(/g) || []).length === 1 &&
       uiSrc.includes("from '../lib/share'"),
-    'share has exactly one composition site (PostCardBase — the card a Recaw row renders for its nested ORIGINAL post, so a Recaw share names the original)',
+    'share has exactly one resolution site (PostCardBase — the card a Recaw row renders for its nested ORIGINAL post, so a Recaw share names the original)',
   );
   ok(
     uiSrc.includes('export function ShareIcon') &&

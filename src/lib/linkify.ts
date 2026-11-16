@@ -153,6 +153,19 @@ async function shortenOne(
 }
 
 /**
+ * The short form of ONE URL, or null on any failure. Exported
+ * for flows that shorten a single link rather than a text —
+ * the share payload (lib/share.ts) is one link.
+ */
+export function shortenUrl(
+  url: string,
+  fetchFn: FetchFn = fetch,
+): Promise<string | null> {
+  if (!LINK_SERVICE_URL || !url) return Promise.resolve(null);
+  return shortenOne(fetchFn, url);
+}
+
+/**
  * Replace every URL in the text that is longer than its short
  * form by the short form. URLs that fail to shorten (or whose
  * short form is not actually shorter) stay exactly as written.
