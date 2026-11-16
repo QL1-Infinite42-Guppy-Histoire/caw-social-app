@@ -26,6 +26,7 @@ import {
 import { fmtAmountCard, textBytes, type CawAction } from '../lib/cawCore';
 import { composeCostRaw } from '../lib/actionCosts';
 import { clearDraft, loadDraft, saveDraft } from '../lib/drafts';
+import { shortenUrlsInText } from '../lib/linkify';
 import { noteOwnPost } from '../lib/feedSync';
 import {
   appendPostRef,
@@ -62,6 +63,7 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
   }, [target]);
 
   const [text, setText] = useState('');
+  const [prepping, setPrepping] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [sending, setSending] = useState(false);
@@ -150,6 +152,28 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
    * type-0 post on-chain at the same price (actionCosts). */
   const costKind = target ? target.kind : 'post';
 
+  /* Proceeding to post (v0.6.5): before the confirmation sheet
+   * opens, long URLs in the BODY are shortened through the cawl
+   * service and the result is WRITTEN BACK into the editor, so
+   * the text the user reviews and signs is exactly the text
+   * inscribed on-chain (and the byte counter above re-reads the
+   * shortened text). Only the body is shortened — the reply /
+   * quote marker line is appended later by doPost and is never
+   * touched. Shortening is best-effort (lib/linkify.ts): on any
+   * failure the original text stands and posting proceeds. */
+  const prepareAndConfirm = async () => {
+    if (prepping || sending) return;
+    setPrepping(true);
+    try {
+      const shortened = await shortenUrlsInText(trimmed);
+      if (shortened !== trimmed) setText(shortened);
+    } catch {
+      /* posting must go on with the original text */
+    }
+    setPrepping(false);
+    setConfirmOpen(true);
+  };
+
   const doPost = async () => {
     if (!acting || !app.address) {
       setConfirmOpen(false);
@@ -230,12 +254,16 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
           <Text style={styles.closeX}>✕</Text>
         </Pressable>
         <Pressable
-          style={[styles.postPill, !canPost && S.disabled]}
-          disabled={!canPost}
-          onPress={() => setConfirmOpen(true)}
+          style={[styles.postPill, (!canPost || prepping) && S.disabled]}
+          disabled={!canPost || prepping}
+          onPress={prepareAndConfirm}
           accessibilityRole="button"
         >
-          <Text style={styles.postPillText}>{tr('compose.post')}</Text>
+          {prepping ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <Text style={styles.postPillText}>{tr('compose.post')}</Text>
+          )}
         </Pressable>
       </View>
 

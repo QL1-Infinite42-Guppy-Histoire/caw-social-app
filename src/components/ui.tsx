@@ -53,6 +53,12 @@ import {
 } from '../lib/cawCore';
 import { displayTextOf, parsePostText } from '../lib/postRef';
 import {
+  extractUrls,
+  fetchPreview,
+  splitLinkSegments,
+  type LinkPreview,
+} from '../lib/linkify';
+import {
   VIEWS_ENABLED,
   formatViewCount,
   registerView,
@@ -786,9 +792,11 @@ function TargetPostQuote({
           {formatTime(post.ts, lang)}
         </Text>
       </View>
-      <Text style={postStyles.quoteText} numberOfLines={4}>
-        {post.text}
-      </Text>
+      <LinkifiedText
+        text={post.text}
+        style={postStyles.quoteText}
+        numberOfLines={4}
+      />
     </Pressable>
   );
 }
@@ -842,9 +850,11 @@ export function QuotedPostFrame({
           {formatTime(post.ts, lang)}
         </Text>
       </View>
-      <Text style={postStyles.quoteText} numberOfLines={4}>
-        {displayTextOf(post.text)}
-      </Text>
+      <LinkifiedText
+        text={displayTextOf(post.text)}
+        style={postStyles.quoteText}
+        numberOfLines={4}
+      />
     </Pressable>
   );
 }
@@ -899,6 +909,113 @@ export function OriginalFrame({
       onOpenProfile={onOpenProfile}
       onOpenPost={onOpenPost}
     />
+  );
+}
+
+/**
+ * Post body text with tappable links (v0.6.5): URL segments
+ * render in the accent colour and open the URL on tap; every
+ * other segment is plain text. With no URL in the text this is
+ * exactly the plain <Text> it replaces.
+ */
+export function LinkifiedText({
+  text,
+  style,
+  numberOfLines,
+}: {
+  text: string;
+  style?: React.ComponentProps<typeof Text>['style'];
+  numberOfLines?: number;
+}) {
+  const segments = splitLinkSegments(text);
+  if (!segments.some((s) => s.url)) {
+    return (
+      <Text style={style} numberOfLines={numberOfLines}>
+        {text}
+      </Text>
+    );
+  }
+  return (
+    <Text style={style} numberOfLines={numberOfLines}>
+      {segments.map((s, i) =>
+        s.url ? (
+          <Text
+            key={i}
+            style={{ color: ACCENT }}
+            onPress={() => Linking.openURL(s.url as string)}
+          >
+            {s.text}
+          </Text>
+        ) : (
+          <Text key={i}>{s.text}</Text>
+        ),
+      )}
+    </Text>
+  );
+}
+
+/**
+ * The link snippet card under a post (v0.6.5): the preview of
+ * the post body's FIRST URL, served by the cawl Worker — image,
+ * title and description exactly as found on the target page,
+ * plus the domain of the resolved destination (for our short
+ * links, the original site's domain, never the shortener's).
+ * While the preview loads, and whenever it is unavailable,
+ * NOTHING renders — no placeholder, no fabricated data; the
+ * tappable link in the body text remains either way. Tapping
+ * the card opens the resolved (original) URL.
+ */
+export function LinkSnippetCard({ url }: { url: string }) {
+  const [preview, setPreview] = useState<LinkPreview | null | undefined>(
+    undefined,
+  );
+  const [imgOk, setImgOk] = useState(true);
+  useEffect(() => {
+    let live = true;
+    setPreview(undefined);
+    setImgOk(true);
+    fetchPreview(url)
+      .then((p) => live && setPreview(p))
+      .catch(() => live && setPreview(null));
+    return () => {
+      live = false;
+    };
+  }, [url]);
+  if (!preview) return null;
+  if (!preview.title && !preview.description && !preview.image) {
+    return null;
+  }
+  const openTarget = preview.url || url;
+  return (
+    <Pressable
+      style={postStyles.snippet}
+      onPress={() => Linking.openURL(openTarget)}
+    >
+      {preview.image && imgOk ? (
+        <Image
+          source={{ uri: preview.image }}
+          style={postStyles.snippetImg}
+          onError={() => setImgOk(false)}
+        />
+      ) : null}
+      <View style={postStyles.snippetBody}>
+        {preview.title ? (
+          <Text style={postStyles.snippetTitle} numberOfLines={2}>
+            {preview.title}
+          </Text>
+        ) : null}
+        {preview.description ? (
+          <Text style={postStyles.snippetDesc} numberOfLines={2}>
+            {preview.description}
+          </Text>
+        ) : null}
+        {preview.domain ? (
+          <Text style={postStyles.snippetDomain} numberOfLines={1}>
+            {preview.domain}
+          </Text>
+        ) : null}
+      </View>
+    </Pressable>
   );
 }
 
@@ -1284,6 +1401,11 @@ function PostCardBase({
    * line (replies / quote Recaws, lib/postRef.ts). */
   const parsed = item.type === 0 ? parsePostText(item.text) : null;
   const bodyText = parsed ? parsed.body : item.text;
+  /* Link snippet (v0.6.5): the body's first URL gets a preview
+   * card under the text (LinkSnippetCard) — the URL itself also
+   * renders as a tappable link inside the body (LinkifiedText). */
+  const firstUrl =
+    item.type === 0 && bodyText ? (extractUrls(bodyText)[0] ?? null) : null;
   /* Share (v0.6.4): the OS share sheet carrying the post's
    * own words and its author — plain text only. No per-post
    * URL exists (there is no verified deep link), so none is
@@ -1331,12 +1453,13 @@ function PostCardBase({
         {item.type === 0 && bodyText ? (
           onOpenPost ? (
             <Pressable onPress={() => onOpenPost(item)}>
-              <Text style={postStyles.text}>{bodyText}</Text>
+              <LinkifiedText text={bodyText} style={postStyles.text} />
             </Pressable>
           ) : (
-            <Text style={postStyles.text}>{bodyText}</Text>
+            <LinkifiedText text={bodyText} style={postStyles.text} />
           )
         ) : null}
+        {firstUrl ? <LinkSnippetCard url={firstUrl} /> : null}
         {parsed?.ref?.kind === 'quote' ? (
           <OriginalFrame
             cawId={parsed.ref.parentCawId}
@@ -1630,6 +1753,23 @@ const postStyles = StyleSheet.create({
   },
   quoteName: { fontSize: 13.5, fontWeight: '700', color: '#0f1419' },
   quoteText: { fontSize: 14, color: '#0f1419', lineHeight: 20, marginTop: 4 },
+  /* Link snippet card (v0.6.5): the quote frame's hairline
+   * shell, with the preview image as a top band when the page
+   * provides one. No labels inside — image, title, description
+   * and the resolved domain speak for themselves. */
+  snippet: {
+    borderWidth: 1,
+    borderColor: '#cfd9de',
+    borderRadius: 12,
+    marginTop: 8,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+  },
+  snippetImg: { width: '100%', height: 150, backgroundColor: '#f7f9f9' },
+  snippetBody: { padding: 10 },
+  snippetTitle: { fontSize: 14.5, fontWeight: '700', color: '#0f1419' },
+  snippetDesc: { fontSize: 13.5, color: '#536471', lineHeight: 19, marginTop: 3 },
+  snippetDomain: { fontSize: 12.5, color: '#536471', marginTop: 5 },
   /* The action row (v0.6.1): ONE line, always — space-between
    * across the content column, no wrap, compact counts. At
    * 360dp the column is ~274dp wide. v0.6.4 adds the EIGHTH
