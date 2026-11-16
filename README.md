@@ -17,9 +17,24 @@ first one is its end-to-end check.
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.6.4** — released 2026-11-13.
+- **現在版 / Current: v0.6.5** — released 2026-11-16.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.6.4/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.6.5/caw-social.apk
+  v0.6.5 adds links to posts: when you post, a long URL in
+  the text is shortened first through the community link
+  service (cawl — short links look like
+  https://cawl.nepicobsv.workers.dev/<code> and redirect to
+  the original page). The shortened text is written back
+  into the editor before you confirm, so what you sign is
+  exactly what is inscribed on-chain — and it spends fewer
+  of the post's 420 bytes. Shortening is best-effort: if the
+  service is unreachable, the original URL is posted
+  unchanged. In the timeline, URLs in a post are tappable,
+  and the first URL shows a snippet card — the page's own
+  image, title and description, with the destination's
+  domain (for short links, the original site's domain). A
+  page that offers no preview simply shows no card; nothing
+  is ever filled in or guessed.
   v0.6.4 is the X-style UI overhaul release: the whole app
   is redesigned to look and feel like X (formerly Twitter) —
   Home / Search / Notifications / Profile tabs, a drawer
