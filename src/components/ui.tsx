@@ -65,6 +65,7 @@ import {
   subscribeViews,
   viewCountCached,
 } from '../lib/views';
+import { composeShareMessage } from '../lib/share';
 import type { TimelineItem } from '../lib/cawApi';
 import type { ProfileCustom } from '../lib/profileCustom';
 
@@ -280,10 +281,11 @@ export function BookmarkIcon({ size = 18, color = '#536471', filled = false }: {
     </Svg>
   );
 }
-/** Share (v0.6.4): the feather upload glyph — X's share mark,
- *  last in the action row. It opens the OS share sheet with
- *  plain text (see onSharePost in PostCardBase); there is no
- *  per-post URL to attach and none is invented. */
+/** Share (v0.6.4; link added v0.6.6): the feather upload glyph
+ *  — X's share mark, last in the action row. It opens the OS
+ *  share sheet with the post's text, its author line and a link
+ *  to the post's page on the community web viewer (see
+ *  onSharePost in PostCardBase and lib/share.ts). */
 export function ShareIcon({ size = 18, color = '#536471' }: { size?: number; color?: string }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -1406,18 +1408,20 @@ function PostCardBase({
    * renders as a tappable link inside the body (LinkifiedText). */
   const firstUrl =
     item.type === 0 && bodyText ? (extractUrls(bodyText)[0] ?? null) : null;
-  /* Share (v0.6.4): the OS share sheet carrying the post's
-   * own words and its author — plain text only. No per-post
-   * URL exists (there is no verified deep link), so none is
-   * attached, and the explorer record link stays the separate
-   * in-app row below. Read-only: no signing, no chain. In a
-   * recaw row this button renders on the nested ORIGINAL
-   * post, so it shares the original's text and author — the
-   * same target as the row's other actions. */
+  /* Share (v0.6.4; link added v0.6.6): the OS share sheet
+   * carrying the post's own words, its author, and a link to
+   * the post's page on the community web viewer — the
+   * viewer's ?post=<cawId> page (lib/share.ts composes the
+   * message; the page follows the app's language). A post
+   * without a well-formed cawId falls back to the text-only
+   * message — no link is ever fabricated. The explorer record
+   * link stays the separate in-app row below. Read-only: no
+   * signing, no chain. In a recaw row this button renders on
+   * the nested ORIGINAL post, so it shares the original's
+   * text, author and link — the same target as the row's
+   * other actions. */
   const onSharePost = () => {
-    const message = bodyText
-      ? bodyText + '\n— ' + who + ' · CAW Social'
-      : '— ' + who + ' · CAW Social';
+    const message = composeShareMessage(bodyText, who, item.cawId, lang);
     Share.share({ message }).catch(() => {});
   };
   return (
