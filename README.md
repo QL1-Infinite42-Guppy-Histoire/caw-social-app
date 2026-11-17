@@ -17,9 +17,26 @@ first one is its end-to-end check.
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.6.7** — released 2026-11-16.
+- **現在版 / Current: v0.7.0** — released 2026-11-18.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.6.7/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.7.0/caw-social.apk
+  v0.7.0 switches the tip currency from CAT42 to PHOENIX
+  (presets 10 / 50 / 100 PHOENIX + a custom amount; a plain
+  transfer to the author) and reprices SuperLike /
+  SuperRecaw to 5,000,000 O each (SuperRecaw = 3,000,000
+  marked burn + 2,000,000 to the creator; SuperLike =
+  1,000,000 marked burn + 4,000,000 to the creator; burns
+  at the older amounts are still detected). It also adds
+  @ mentions (profile links in posts, name candidates
+  while composing), Latest / Following switching by
+  horizontal swipe on Home, a rebuilt HuntersDEX (a
+  normal DEX swap screen limited to QOM / O / qCAW / KET /
+  HAWK / PHOENIX; pairs without a live route stay disabled
+  with a reason), a wallet display limited to those six
+  tokens (the CAW-in-names line is unchanged), and
+  BurnHawk — an in-app HAWK burn (100 HAWK → 1 PHOENIX via
+  the PHOENIX contract's burnToMint). The web viewer (v21)
+  matches the new Super prices and mention rendering.
   v0.6.7 makes sharing link-only, shortened: the OS share
   sheet now carries exactly ONE link — the post's page on
   the community web viewer, shortened through cawl
