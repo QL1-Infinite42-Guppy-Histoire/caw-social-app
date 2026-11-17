@@ -17,9 +17,14 @@ first one is its end-to-end check.
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.7.0** — released 2026-11-18.
+- **現在版 / Current: v0.7.1** — released 2026-11-18.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.7.0/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.7.1/caw-social.apk
+  v0.7.1 fixes the Latest / Following swipe on Home
+  (v0.7.0's swipe did not switch on real devices) and
+  drops the QL1 gas keep: the 346,500,000 QOM reserve is
+  no longer held back, so the full QOM balance is
+  spendable, matching the web version.
   v0.7.0 switches the tip currency from CAT42 to PHOENIX
   (presets 10 / 50 / 100 PHOENIX + a custom amount; a plain
   transfer to the author) and reprices SuperLike /
