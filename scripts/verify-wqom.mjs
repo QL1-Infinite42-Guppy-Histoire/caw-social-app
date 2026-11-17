@@ -11,6 +11,12 @@
  * approve ~46,900 -> unit 250,000 gas; unwrap 36,042 by
  * estimateGas. Keep = (150,000x100 + 250,000x10) x 1.10
  * = 19,250,000 gas = 346,500,000 QOM at 18 QOM/gas.
+ * POLICY (2026-11-18, user decision): the production keep is
+ * now 0 (no reserve held back). The sizing basis above is the
+ * historical record; K1-K3 pin the zeroed production values,
+ * and the plan scenarios below run against a synthetic keep
+ * fixture (the old 346,500,000 QOM) so the keep math itself
+ * stays covered if the counts are ever raised again.
  *
  * Everything is stubbed or pure: no live chain calls, no
  * keys, no sends. Run: node scripts/verify-wqom.mjs
@@ -49,17 +55,17 @@ const ADDR = '0x90359C6913915B9824b9ce8Abf4b85B30A5cF8cC';
 const E18 = 10n ** 18n;
 const qom = (whole) => BigInt(whole) * E18;
 const GAS_PRICE = 18n * E18; // measured QL1 floor: 18 QOM/gas
-const KEEP = H.ql1GasKeepWei(GAS_PRICE);
+const KEEP = qom(346500000); // synthetic fixture (the pre-2026-11-18 keep); production keep is 0 — see K1-K3
 const UNWRAP_COST = GAS_PRICE * H.QL1_UNWRAP_GAS_UNITS;
 
 /* ============ keep sizing (the reported basis) ============ */
 console.log('\n--- keep sizing from the measured basis ---');
-check('K1 keep gas units = (150k x 100 + 250k x 10) x 1.10 = 19,250,000',
-  H.QL1_KEEP_GAS_UNITS === 19250000n, `units=${H.QL1_KEEP_GAS_UNITS}`);
-check('K2 keep at 18 QOM/gas = 346,500,000 QOM',
-  KEEP === qom(346500000), `keep=${KEEP / E18} QOM`);
+check('K1 policy: production keep gas units are 0 (no-reserve decision, 2026-11-18)',
+  H.QL1_KEEP_GAS_UNITS === 0n, `units=${H.QL1_KEEP_GAS_UNITS}`);
+check('K2 policy: production keep at 18 QOM/gas = 0 QOM',
+  H.ql1GasKeepWei(GAS_PRICE) === 0n, `keep=${H.ql1GasKeepWei(GAS_PRICE) / E18} QOM`);
 check('K3 floor fallback equals the same figure (single definition)',
-  H.QL1_GAS_KEEP_FLOOR_WEI === KEEP);
+  H.QL1_GAS_KEEP_FLOOR_WEI === H.ql1GasKeepWei(GAS_PRICE));
 check('K4 the per-swap estimate uses the shared swap unit',
   H.QL1_SWAP_GAS_UNITS === 250000n && H.QL1_ACTION_GAS_UNITS === 150000n);
 

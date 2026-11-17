@@ -567,11 +567,22 @@ export async function fetchQl1GasShort(owner: string): Promise<boolean | null> {
  * the surplus over the secured keep is spendable principal;
  * a plan that cannot secure the keep stops at the faucet
  * guidance — never a partial execution, never principal
- * planned against the reserve. */
+ * planned against the reserve.
+ *
+ * POLICY CHANGE (user decision, 2026-11-18, v0.7.1): no QOM
+ * reserve is held back anymore — the counts below are 0, so
+ * the keep evaluates to 0 in every plan and the full balance
+ * is spendable, matching the web viewer's DEX (which never
+ * applied the keep). The machinery stays (plans still carry
+ * keepWei and the keep-securing branches still work if the
+ * counts are ever raised again), and each transaction still
+ * needs its own gas at execution: the planner's per-plan
+ * gas-cost checks (e.g. the faucet stop when the native
+ * balance cannot cover a swap's own gas) are unchanged. */
 export const QL1_ACTION_GAS_UNITS = 150000n;
 export const QL1_SWAP_GAS_UNITS = 250000n;
-export const QL1_KEEP_ACTIONS = 100n;
-export const QL1_KEEP_SWAP_OPS = 10n;
+export const QL1_KEEP_ACTIONS = 0n;
+export const QL1_KEEP_SWAP_OPS = 0n;
 /** Unwrap gas budget: measured 36,042, with margin. */
 export const QL1_UNWRAP_GAS_UNITS = 50000n;
 /** Wrap (WQOM.deposit) gas budget: same class as the
@@ -585,8 +596,9 @@ export const QL1_KEEP_GAS_UNITS =
   100n;
 /** Measured QL1 gas-price floor (wei per gas): 18 QOM. */
 export const QL1_GAS_PRICE_FLOOR = 18n * 10n ** 18n;
-/** Keep at the floor price: 346,500,000 QOM in wei. Used
- *  when live fee data cannot be read. */
+/** Keep at the floor price, in wei. Used when live fee data
+ *  cannot be read. Since the 2026-11-18 policy change the
+ *  keep is 0, so this is 0n. */
 export const QL1_GAS_KEEP_FLOOR_WEI = QL1_KEEP_GAS_UNITS * QL1_GAS_PRICE_FLOOR;
 
 /** The keep in wei at a given gas price (wei/gas). */

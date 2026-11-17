@@ -58,7 +58,7 @@ const ADDR = '0x90359C6913915B9824b9ce8Abf4b85B30A5cF8cC';
 const E18 = 10n ** 18n;
 const qom = (whole) => BigInt(whole) * E18;
 const GAS_PRICE = 18n * E18;
-const KEEP = H.ql1GasKeepWei(GAS_PRICE);
+const KEEP = qom(346_500_000); // synthetic fixture (the pre-2026-11-18 keep); production keep is 0 since the 2026-11-18 no-reserve decision
 const UNWRAP_COST = GAS_PRICE * H.QL1_UNWRAP_GAS_UNITS;
 const WQOM_ADDR = H.WQOM_ADDR;
 

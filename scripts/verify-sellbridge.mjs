@@ -135,9 +135,9 @@ console.log('\n--- (a) sell QL1 swap leg: payout representation ---');
 /* ============ (b) the reporter's parked state reconciles ============ */
 console.log('\n--- (b) bridge reconcile plan: reporter\'s exact state ---');
 {
-  const KEEP = H.QL1_GAS_KEEP_FLOOR_WEI;
-  check('b0 keep floor is 346,500,000 QOM (unchanged arithmetic)',
-    KEEP === qom(346500000));
+  const KEEP = qom(346500000); // synthetic fixture (the pre-2026-11-18 keep); production floor is 0 — see b0
+  check('b0 policy: production keep floor is 0 since the 2026-11-18 no-reserve decision',
+    H.QL1_GAS_KEEP_FLOOR_WEI === 0n);
   const wrapCost = H.QL1_GAS_PRICE_FLOOR * H.QL1_WRAP_GAS_UNITS;
   check('b1 wrap cost at floor price is 900,000 QOM', wrapCost === qom(900000));
 
@@ -189,7 +189,7 @@ console.log('\n--- (b) bridge reconcile plan: reporter\'s exact state ---');
 /* ============ (c) batch executor: one sequence, wrap once ============ */
 console.log('\n--- (c) runQl1BridgeBatch sequences ---');
 {
-  const KEEP = H.QL1_GAS_KEEP_FLOOR_WEI;
+  const KEEP = qom(346500000); // synthetic fixture (the pre-2026-11-18 keep); production floor is 0 — see b0
   const wrapCost = H.QL1_GAS_PRICE_FLOOR * H.QL1_WRAP_GAS_UNITS;
   const reporterPlan = H.ql1BridgePlan({
     amt: qom(11000000000), erc20: true, wrappedNative: true,

@@ -24,8 +24,10 @@
  * more than 5% against the user, the send stops with the
  * price-moved note instead of signing the worse price.
  * Slippage for the swap tx itself is 1%. When the from-token
- * is native QOM, the QL1 gas keep (346,500,000 QOM) is held
- * back exactly as everywhere else in the app.
+ * is native QOM, the spendable amount nets out the QL1 gas
+ * keep — which since the user's 2026-11-18 decision is 0
+ * (no reserve is held back; see src/lib/hunters.ts), so the
+ * full QOM balance is spendable here, as on the web DEX.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {

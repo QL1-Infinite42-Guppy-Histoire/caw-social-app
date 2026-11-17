@@ -71,7 +71,7 @@ const ADDR = '0x90359C6913915B9824b9ce8Abf4b85B30A5cF8cC';
 const E18 = 10n ** 18n;
 const qom = (whole) => BigInt(whole) * E18;
 const GP = 18n * E18; // measured QL1 gas price: 18 QOM/gas
-const KEEP = H.ql1GasKeepWei(GP);
+const KEEP = qom(346500000); // synthetic fixture (the pre-2026-11-18 keep); production keep is 0 — see k0
 const UCOST = GP * H.QL1_UNWRAP_GAS_UNITS;
 const SCOST = GP * H.QL1_SWAP_GAS_UNITS;
 /* The withdraw gas the reporter's wallet actually paid per
@@ -81,8 +81,8 @@ const WITHDRAW_GAS = 649188n * E18;
 const WQOM = H.WQOM_ADDR;
 const BABY_QL1 = AGG.tokenById('ql1', 'baby').address;
 
-check('k0 the shared keep is 346,500,000 QOM at the measured price',
-  KEEP === qom(346500000), `keep=${KEEP / E18}`);
+check('k0 policy: the shared production keep is 0 since the 2026-11-18 no-reserve decision',
+  H.ql1GasKeepWei(GP) === 0n, `keep=${H.ql1GasKeepWei(GP) / E18}`);
 
 /* ---------- plan-level cases ---------- */
 const plan = (over) =>
