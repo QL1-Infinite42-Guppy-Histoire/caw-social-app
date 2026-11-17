@@ -4,12 +4,12 @@ import {
   FlatList,
   I18nManager,
   Modal,
+  PanResponder,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
   View,
-  type GestureResponderEvent,
 } from 'react-native';
 
 import {
@@ -36,6 +36,7 @@ import {
   subscribeOwnPosts,
   visibleFeedItems,
 } from '../lib/feedSync';
+import { swipeShouldClaim, swipeTargetMode } from '../lib/feedSwipe';
 import {
   performAction,
   performAuthorPay,
@@ -725,34 +726,40 @@ export default function TimelineScreen() {
     [app, tipItem],
   );
 
-  /* ---------- feed swipe (v0.7.0) ----------
+  /* ---------- feed swipe (v0.7.1) ----------
    * A horizontal swipe anywhere on the feed switches
-   * Latest ⇄ Following, in sync with the segment row below
-   * (both drive the same `mode` state). The gesture is
-   * recognised from touch start/end points only — it never
-   * intercepts the scroll: a swipe counts when it travels
-   * ≥60px horizontally and is clearly horizontal-dominant
-   * (≥1.6× the vertical travel). Direction follows the
-   * reading direction: in LTR a leftward swipe moves to the
-   * next segment (Following), a rightward swipe back to
-   * Latest; RTL inverts. */
-  const swipeStartRef = React.useRef<{ x: number; y: number } | null>(null);
-  const onFeedTouchStart = (e: GestureResponderEvent) => {
-    swipeStartRef.current = {
-      x: e.nativeEvent.pageX,
-      y: e.nativeEvent.pageY,
-    };
-  };
-  const onFeedTouchEnd = (e: GestureResponderEvent) => {
-    const s = swipeStartRef.current;
-    swipeStartRef.current = null;
-    if (!s) return;
-    const dx = e.nativeEvent.pageX - s.x;
-    const dy = e.nativeEvent.pageY - s.y;
-    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
-    const toFollowing = I18nManager.isRTL ? dx > 0 : dx < 0;
-    setMode(toFollowing ? 'following' : 'latest');
-  };
+   * Latest ⇄ Following, in sync with the segment row (both
+   * drive the same `mode` state). v0.7.0 recognised the swipe
+   * from onTouchStart / onTouchEnd coordinates attached to the
+   * FlatList; on the user's device it never switched (field
+   * report 2026-11-18): when the native scroller owns the
+   * gesture, JS receives a touch cancel instead of an end, or
+   * an end whose coordinates never moved, so the start/end
+   * diff came out ~0 and nothing happened (reproduced in
+   * scripts/verify-swipe.mjs). v0.7.1 uses a PanResponder on
+   * the screen root instead: it evaluates every move in the
+   * capture phase and claims only clearly-horizontal drags
+   * (decisions in src/lib/feedSwipe.ts), then switches from
+   * the gesture's accumulated travel on release — no reliance
+   * on touch-end delivery. Vertical drags are never claimed,
+   * so scrolling and pull-to-refresh behave as before, and
+   * taps never claim, so the post buttons are unaffected.
+   * Direction follows the reading direction, as in v0.7.0:
+   * in LTR a leftward swipe moves to Following, a rightward
+   * swipe back to Latest; RTL inverts. */
+  const feedPanHandlers = React.useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponderCapture: (_e, g) =>
+          swipeShouldClaim(g.dx, g.dy),
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderRelease: (_e, g) => {
+          const target = swipeTargetMode(g.dx, I18nManager.isRTL);
+          if (target) setMode(target);
+        },
+      }).panHandlers,
+    [],
+  );
 
   /* ---------- header (v0.6.0) ----------
    * X-style: the Home header is ONLY the Latest / Following
@@ -793,11 +800,7 @@ export default function TimelineScreen() {
 
   if (mode === 'latest' && loading && items.length === 0) {
     return (
-      <View
-        style={S.screen}
-        onTouchStart={onFeedTouchStart}
-        onTouchEnd={onFeedTouchEnd}
-      >
+      <View style={S.screen} {...feedPanHandlers}>
         {header}
         <View style={styles.center}>
           <ActivityIndicator color={ACCENT} />
@@ -809,11 +812,7 @@ export default function TimelineScreen() {
 
   if (mode === 'latest' && loadFailed && items.length === 0) {
     return (
-      <View
-        style={S.screen}
-        onTouchStart={onFeedTouchStart}
-        onTouchEnd={onFeedTouchEnd}
-      >
+      <View style={S.screen} {...feedPanHandlers}>
         {header}
         <View style={styles.center}>
           <Text style={S.err}>{tr('tl.loadFail')}</Text>
@@ -844,13 +843,11 @@ export default function TimelineScreen() {
   };
 
   return (
-    <View style={S.screen}>
+    <View style={S.screen} {...feedPanHandlers}>
       <FlatList
         data={shownItems}
         keyExtractor={(item, idx) => item.hash + ':' + idx}
         ListHeaderComponent={header}
-        onTouchStart={onFeedTouchStart}
-        onTouchEnd={onFeedTouchEnd}
         refreshControl={
           <RefreshControl
             refreshing={mode === 'latest' ? refreshing : fLoading}

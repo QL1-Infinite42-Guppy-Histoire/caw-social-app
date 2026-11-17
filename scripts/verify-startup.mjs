@@ -279,8 +279,8 @@ const PW = await import(OUT + '/lib/pwVerifier.js');
 {
   const appJson = JSON.parse(read('/app.json'));
   ok(
-    appJson.expo.version === '0.7.0' && appJson.expo.android.versionCode === 48,
-    'release: versionName 0.7.0, versionCode 48 (v0.7.0: PHOENIX tips, new Super prices, mentions, swipe, HuntersDEX, BurnHawk)',
+    appJson.expo.version === '0.7.1' && appJson.expo.android.versionCode === 49,
+    'release: versionName 0.7.1, versionCode 49 (v0.7.1: feed swipe rebuilt on PanResponder — v0.7.0 shipped the v0.7.0 feature set: PHOENIX tips, new Super prices, mentions, swipe, HuntersDEX, BurnHawk)',
   );
 }
 

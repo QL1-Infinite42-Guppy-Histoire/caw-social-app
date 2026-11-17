@@ -86,3 +86,4 @@ scripts/.build-dex/
 
 # Audit quote package — LOCAL ONLY, never commit/publish (user rule, 2026-11-09)
 docs/audit/
+scripts/.build-swipe/
