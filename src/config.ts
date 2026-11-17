@@ -52,7 +52,7 @@ export const VIEWS_COUNTER_URL = '';
 /**
  * Link service base URL (v0.6.5): the cawl Worker — shortens
  * long URLs in a post before it is signed (short links look
- * like https://cawl.nepicobsv.workers.dev/<code> and redirect
+ * like https://c.qql1.com/<code> and redirect
  * to the original) and serves the preview (title / description
  * / image) rendered as a snippet card under a post. Deployed
  * 2026-11-16 ahead of this release, so unlike the two URLs
@@ -60,7 +60,11 @@ export const VIEWS_COUNTER_URL = '';
  * if the service is unreachable the original URL is posted
  * unchanged (lib/linkify.ts).
  */
-export const LINK_SERVICE_URL = 'https://cawl.nepicobsv.workers.dev';
+export const LINK_SERVICE_URL = 'https://c.qql1.com';
+// (The worker also still serves its original host,
+// cawl.nepicobsv.workers.dev; short links issued there keep
+// resolving — codes are stored host-independently. The
+// custom domain became the issuing base on 2026-11-18.)
 export const MINTER = '0xFC2f8743E3b09a6c973B114c3a082433e974eD9f';
 export const QCAW = '0xd2140E16aDf37194036865E90BbCA1139b739d0D';
 /** CAT42 on 42 Chain (18 decimals) — the SuperLike currency.

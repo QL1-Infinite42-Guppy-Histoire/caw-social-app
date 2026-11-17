@@ -66,7 +66,7 @@ const EN_URL = VIEWER_BASE_URL + '/en.html?post=' + POST_ID;
 const JA_URL = VIEWER_BASE_URL + '/ja.html?post=' + POST_ID;
 const EN_TOP = VIEWER_BASE_URL + '/en.html';
 const JA_TOP = VIEWER_BASE_URL + '/ja.html';
-const SHORT = 'https://cawl.nepicobsv.workers.dev/AbC123';
+const SHORT = 'https://c.qql1.com/AbC123'; // issuing base since 2026-11-18 (was cawl.nepicobsv.workers.dev)
 
 /* Fake shorteners: one that records what it was asked to
  * shorten and answers a fixed short URL, one that fails soft

@@ -8,7 +8,7 @@
  * on the community web viewer (caw-social-ql1), shortened
  * through the community link service (cawl), CAW style:
  *
- *     https://cawl.nepicobsv.workers.dev/<code>
+ *     https://c.qql1.com/<code>
  *       → 302 → <viewer>/en.html?post=<cawId>
  *
  * The full viewer URL format is the viewer's own: its postUrl()

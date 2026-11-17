@@ -5,7 +5,7 @@
  *
  * Shortening: when the user proceeds to post, each URL in the
  * draft that is LONGER than its short form is replaced by
- * https://cawl.nepicobsv.workers.dev/<code> BEFORE the action is
+ * https://c.qql1.com/<code> BEFORE the action is
  * assembled, and the result is written back into the editor, so
  * the exact text that will be inscribed on-chain is what the
  * user sees and signs. It also genuinely saves the 420-BYTE
