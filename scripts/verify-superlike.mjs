@@ -1,20 +1,24 @@
 #!/usr/bin/env node
 /**
- * SuperLike verification (v0.6.3 — the two-leg design).
+ * SuperLike verification (v0.6.3 — the two-leg design;
+ * v0.7.0 prices).
  *
- * Since v0.6.3 (user decision 2026-11-13) a SuperLike costs
- * 25,000,000 O IN TOTAL, in two QL1 transactions:
- *   leg 1 — the BURN: 10,000,000 O to 0x…dEaD with trailing
+ * Since v0.7.0 (user decision 2026-11-18) a SuperLike costs
+ * 5,000,000 O IN TOTAL, in two QL1 transactions:
+ *   leg 1 — the BURN: 1,000,000 O to 0x…dEaD with trailing
  *           calldata "SLK1" + the post's cawId (defines the
  *           action; the ⭐ count reads these burns);
  *   leg 2 — the AUTHOR PAYMENT: a plain, unmarked transfer of
- *           15,000,000 O to the post author's owner.
- * From v0.5.0 to v0.6.2 a SuperLike was ONE transaction: a
- * burn of exactly 1,000,000 O. Those legacy burns were
- * genuine under their spec and STAY counted: the detection
- * set for SLK1 is {10,000,000, 1,000,000}. (The CAT42 path of
- * v0.4.8/9 left no legacy at all — no SuperLike was ever sent
- * at the CAT42 prices.)
+ *           4,000,000 O to the post author's owner.
+ * History: v0.6.3–v0.6.7 charged 25,000,000 in total
+ * (10,000,000 burn + 15,000,000 author); from v0.5.0 to
+ * v0.6.2 a SuperLike was ONE transaction: a burn of exactly
+ * 1,000,000 O. Burns at every era's price were genuine under
+ * their spec and STAY counted: the detection set for SLK1 is
+ * {1,000,000 (current AND v0.5.0 legacy — the same value),
+ * 10,000,000 (v0.6.3)}. (The CAT42 path of v0.4.8/9 left no
+ * legacy at all — no SuperLike was ever sent at the CAT42
+ * prices.)
  *
  * This suite tests BEHAVIOUR, not just shapes: the marked-burn
  * codec, the scanner's detection sets against a stubbed QL1
@@ -163,10 +167,13 @@ const WALLET = await import(OUT + '/lib/wallet.js');
 const CFG = await import(OUT + '/config.js');
 
 const O = (n) => BigInt(n) * 10n ** 18n;
-const SL_BURN = O(10_000_000);
-const SL_AUTHOR = O(15_000_000);
-const SL_TOTAL = O(25_000_000);
-const SRC_BURN = O(20_000_000);
+const SL_BURN = O(1_000_000);
+const SL_AUTHOR = O(4_000_000);
+const SL_TOTAL = O(5_000_000);
+const SRC_BURN = O(3_000_000);
+const SRC_AUTHOR = O(2_000_000);
+const V063_SL_BURN = O(10_000_000);
+const V063_SRC_BURN = O(20_000_000);
 const LEGACY = O(1_000_000);
 const P1 = '0x' + '11'.repeat(32);
 const P2 = '0x' + '22'.repeat(32);
@@ -180,36 +187,41 @@ const P2 = '0x' + '22'.repeat(32);
       SL.SUPERLIKE_TOTAL_RAW === SL_TOTAL &&
       SL.SUPERLIKE_BURN_RAW === SL_BURN &&
       SL.SUPERLIKE_AUTHOR_RAW === SL_AUTHOR,
-    'constants: SuperLike total 25,000,000 = author 15,000,000 + burn 10,000,000 (markedBurns + superlike agree)',
+    'constants: SuperLike total 5,000,000 = author 4,000,000 + burn 1,000,000 (markedBurns + superlike agree)',
   );
   ok(
     MB.SUPERRECAW_TOTAL_RAW === SL_TOTAL &&
       MB.SUPERRECAW_BURN_RAW === SRC_BURN &&
-      MB.SUPERRECAW_AUTHOR_RAW === O(5_000_000),
-    'constants: SuperRecaw total 25,000,000 = author 5,000,000 + burn 20,000,000',
+      MB.SUPERRECAW_AUTHOR_RAW === SRC_AUTHOR,
+    'constants: SuperRecaw total 5,000,000 = author 2,000,000 + burn 3,000,000',
   );
   ok(
-    MB.LEGACY_MARKED_BURN_RAW === LEGACY,
-    'constants: the legacy burn (v0.5.0–v0.6.2) is exactly 1,000,000 O',
+    MB.LEGACY_MARKED_BURN_RAW === LEGACY &&
+      MB.V063_SUPERLIKE_BURN_RAW === V063_SL_BURN &&
+      MB.V063_SUPERRECAW_BURN_RAW === V063_SRC_BURN,
+    'constants: the legacy burn (v0.5.0–v0.6.2) is exactly 1,000,000 O; the v0.6.3 burns (10M / 20M) are kept as detection-only constants',
   );
   ok(
-    MB.SUPERLIKE_BURN_AMOUNTS.length === 2 &&
+    MB.SUPERLIKE_BURN_AMOUNTS.length === 3 &&
       MB.SUPERLIKE_BURN_AMOUNTS.includes(SL_BURN) &&
+      MB.SUPERLIKE_BURN_AMOUNTS.includes(V063_SL_BURN) &&
       MB.SUPERLIKE_BURN_AMOUNTS.includes(LEGACY) &&
-      !MB.SUPERLIKE_BURN_AMOUNTS.includes(SRC_BURN),
-    'detection set SLK1 = {10,000,000 current, 1,000,000 legacy} — the SuperRecaw burn is NOT in it',
+      !MB.SUPERLIKE_BURN_AMOUNTS.includes(SRC_BURN) &&
+      !MB.SUPERLIKE_BURN_AMOUNTS.includes(V063_SRC_BURN),
+    'detection set SLK1 = {1,000,000 current (= the legacy value), 10,000,000 v0.6.3, 1,000,000 legacy} — no SuperRecaw burn is in it',
   );
   ok(
-    MB.SUPERRECAW_BURN_AMOUNTS.length === 2 &&
+    MB.SUPERRECAW_BURN_AMOUNTS.length === 3 &&
       MB.SUPERRECAW_BURN_AMOUNTS.includes(SRC_BURN) &&
+      MB.SUPERRECAW_BURN_AMOUNTS.includes(V063_SRC_BURN) &&
       MB.SUPERRECAW_BURN_AMOUNTS.includes(LEGACY) &&
-      !MB.SUPERRECAW_BURN_AMOUNTS.includes(SL_BURN),
-    'detection set SRC1 = {20,000,000 current, 1,000,000 legacy} — the SuperLike burn is NOT in it',
+      !MB.SUPERRECAW_BURN_AMOUNTS.includes(V063_SL_BURN),
+    'detection set SRC1 = {3,000,000 current, 20,000,000 v0.6.3, 1,000,000 legacy} — the v0.6.3 SuperLike burn is NOT in it (the 1,000,000 entry is the shared legacy value; the MAGIC separates the actions)',
   );
   ok(
     AP.authorPayAmountFor('sl') === SL_AUTHOR &&
-      AP.authorPayAmountFor('src') === O(5_000_000),
-    'authorPay legs price from the same constants (15M / 5M)',
+      AP.authorPayAmountFor('src') === SRC_AUTHOR,
+    'authorPay legs price from the same constants (4M / 2M)',
   );
   ok(
     MB.BURN_ADDRESS === '0x000000000000000000000000000000000000dEaD',
@@ -248,7 +260,7 @@ const P2 = '0x' + '22'.repeat(32);
   );
   ok(
     BigInt('0x' + data.slice(74, 138)) === SL_BURN,
-    'the burn leg is exactly 10,000,000 O (v0.6.3 — no longer 1,000,000)',
+    'the burn leg is exactly 1,000,000 O (v0.7.0 — the v0.6.3 10,000,000 stays counted as legacy)',
   );
   const mark = SL.parseSuperlikeInput(data);
   ok(!!mark, 'parse accepts the built data');
@@ -293,7 +305,7 @@ const P2 = '0x' + '22'.repeat(32);
   );
   ok(
     BigInt('0x' + pay.slice(74, 138)) === SL_AUTHOR,
-    'the author leg carries exactly 15,000,000 O',
+    'the author leg carries exactly 4,000,000 O',
   );
 }
 
@@ -328,9 +340,9 @@ const P2 = '0x' + '22'.repeat(32);
     }) === null,
     'guard: someone else’s post allowed',
   );
-  ok(SL.superlikeShortfall(SL_TOTAL - 1n) === true, 'precheck: 24,999,999.99… O blocked (the TOTAL gates, not one leg)');
-  ok(SL.superlikeShortfall(SL_TOTAL) === false, 'precheck: exactly 25,000,000 O ok');
-  ok(SL.superlikeShortfall(SL_BURN) === true, 'precheck: burn-only money (10M) is NOT enough anymore');
+  ok(SL.superlikeShortfall(SL_TOTAL - 1n) === true, 'precheck: 4,999,999.99… O blocked (the TOTAL gates, not one leg)');
+  ok(SL.superlikeShortfall(SL_TOTAL) === false, 'precheck: exactly 5,000,000 O ok');
+  ok(SL.superlikeShortfall(SL_BURN) === true, 'precheck: burn-only money (1M) is NOT enough');
   ok(SL.superlikeShortfall(0n) === true, 'precheck: 0 blocked');
 }
 
@@ -383,19 +395,19 @@ const burnData = (magic, cawId, amount) => {
   const START = MB.MARKED_BURN_START_BLOCK;
   const HEAD = START + 9500; // two chunks: 9000 + 500
   const txInputs = {
-    txA: SL.buildSuperlikeData(P1), // SLK1 10M — counts (current)
-    txB: SL.buildSuperlikeData(P1), // SLK1 10M input but the LOG value disagrees -> excluded
-    txC: SL.buildSuperlikeData(P2), // SLK1 10M for P2 — counts
+    txA: SL.buildSuperlikeData(P1), // SLK1 1M — counts (current)
+    txB: SL.buildSuperlikeData(P1), // SLK1 1M input but the LOG value disagrees -> excluded
+    txC: SL.buildSuperlikeData(P2), // SLK1 1M for P2 — counts
     txD:
       '0xa9059cbb' +
       '0'.repeat(24) +
       '000000000000000000000000000000000000dead' +
       SL_BURN.toString(16).padStart(64, '0'), // plain burn, no marker -> excluded
     txE: burnData(MB.SUPERLIKE_MAGIC, P1, O(999_999)), // SLK1 at a non-set amount -> excluded
-    txF: burnData(MB.SUPERRECAW_MAGIC, P1, SRC_BURN), // SRC1 20M -> src index, not a SuperLike
-    txG: burnData(MB.SUPERLIKE_MAGIC, P1, LEGACY), // SLK1 legacy 1M -> COUNTS (no cut-off)
+    txF: burnData(MB.SUPERRECAW_MAGIC, P1, SRC_BURN), // SRC1 3M -> src index, not a SuperLike
+    txG: burnData(MB.SUPERLIKE_MAGIC, P1, V063_SL_BURN), // SLK1 v0.6.3 10M -> COUNTS (no cut-off)
     txH: burnData(MB.SUPERLIKE_MAGIC, P1, SRC_BURN), // SLK1 at the SRC amount -> excluded (wrong set)
-    txI: burnData(MB.SUPERRECAW_MAGIC, P1, SL_BURN), // SRC1 at the SL amount -> excluded everywhere
+    txI: burnData(MB.SUPERRECAW_MAGIC, P1, V063_SL_BURN), // SRC1 at the v0.6.3 SL amount (10M) -> excluded everywhere
     txJ: burnData(MB.SUPERRECAW_MAGIC, P1, LEGACY), // SRC1 legacy 1M -> src index
   };
   const chunks = new Map([
@@ -408,9 +420,9 @@ const burnData = (magic, cawId, amount) => {
         logFor('txD', SENDER, SL_BURN),
         logFor('txE', SENDER, O(999_999)),
         logFor('txF', SENDER, SRC_BURN),
-        logFor('txG', OTHER, LEGACY),
+        logFor('txG', OTHER, V063_SL_BURN),
         logFor('txH', SENDER, SRC_BURN),
-        logFor('txI', SENDER, SL_BURN),
+        logFor('txI', SENDER, V063_SL_BURN),
         logFor('txJ', SENDER, LEGACY),
       ],
     ],
@@ -424,7 +436,7 @@ const burnData = (magic, cawId, amount) => {
   const n1 = await SL.superlikeCount(P1);
   ok(
     n1 === 2,
-    'scanner: P1 counts the current 10M burn AND the legacy 1M burn (log-mismatch, plain, wrong-amount, SRC-amount and SRC1 all excluded)',
+    'scanner: P1 counts the current 1M burn AND the v0.6.3 10M burn (log-mismatch, plain, wrong-amount, SRC-amount and SRC1 all excluded)',
   );
   const n2 = await SL.superlikeCount(P2);
   ok(n2 === 1, 'scanner: P2 counted from the same scan');
@@ -432,7 +444,7 @@ const burnData = (magic, cawId, amount) => {
   ok(
     MB.superRecawCached(P1, SENDER) === true &&
       MB.superRecawCached(P1, OTHER) === false,
-    'scanner: SRC1 marks (20M current + 1M legacy) index by (cawId, sender); the SRC1-at-10M mark counts for nobody',
+    'scanner: SRC1 marks (3M current + 1M legacy) index by (cawId, sender); the SRC1-at-10M mark counts for nobody',
   );
   const before = stub.getLogsCalls;
   await SL.superlikeCount(P1);
@@ -609,7 +621,7 @@ const burnData = (magic, cawId, amount) => {
     const s = WALLET.__state.sends;
     ok(s.length === 2, 'flow: a SuperLike sends exactly two transactions');
     const m = SL.parseSuperlikeInput(s[0].data);
-    ok(!!m && m.amount === SL_BURN, 'flow: leg 1 is the marked 10M burn');
+    ok(!!m && m.amount === SL_BURN, 'flow: leg 1 is the marked 1M burn');
     ok(
       (s[1].data.length - 2) / 2 === 68 &&
         toOf(s[1].data).toLowerCase() === AUTHOR.toLowerCase() &&
@@ -662,7 +674,7 @@ const burnData = (magic, cawId, amount) => {
     ok(
       !!pend && pend.amountRaw === SL_AUTHOR &&
         pend.author.toLowerCase() === AUTHOR.toLowerCase(),
-      'flow: the debt pins the author + the 15M amount',
+      'flow: the debt pins the author + the 4M amount',
     );
     WALLET.__reset();
     await FLOW.performAuthorPay(app, { target, kind: 'sl' });
@@ -718,8 +730,8 @@ const burnData = (magic, cawId, amount) => {
       'flow: performAuthorPay refuses without a recorded debt',
     );
   }
-  // short precheck: 24M refuses before auth/sends
-  oBal = O(24_000_000);
+  // short precheck: 4M refuses before auth/sends
+  oBal = O(4_000_000);
   WALLET.__reset();
   {
     let err = null;
@@ -730,7 +742,7 @@ const burnData = (magic, cawId, amount) => {
     }
     ok(
       !!err && err.message === 'shortfall' && WALLET.__state.sendCount === 0,
-      'flow: 24M (< the 25M total) refuses before anything is signed',
+      'flow: 4M (< the 5M total) refuses before anything is signed',
     );
   }
   oBal = O(100_000_000);

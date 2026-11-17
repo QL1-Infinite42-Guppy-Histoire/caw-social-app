@@ -769,8 +769,8 @@ contract MockERC20 {
     'formal: no goal cards remain',
   );
   ok(
-    screen.includes('<ExchangeSection />'),
-    'formal: the screen is the deposit-address strip + the Exchange section',
+    screen.includes('<DexSwapSection />') && !screen.includes('<ExchangeSection />'),
+    'formal: v0.7.0 — the HuntersDEX screen mounts the normal DEX swap section; the Exchange section (order book + guided deposit/withdraw) is retained in the repo but no longer mounted',
   );
   ok(
     !xs.includes('quoteBackHalf') && !xs.includes('buildEntrySwapTx') && !xs.includes('quoteEntrySwap'),

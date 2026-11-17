@@ -5,7 +5,7 @@
  */
 import { decodeBase64, toUtf8String } from 'ethers';
 
-import { API, CAT42, CAW_ACTIONS, CAW_NAME, EXPLORER, KET42, MINTER, O_TOKEN, QCAW, RPC, RPC_ALT, SEL } from '../config';
+import { API, CAT42, CAW_ACTIONS, CAW_NAME, EXPLORER, HAWK, KET42, MINTER, O_TOKEN, PHOENIX, QCAW, RPC, RPC_ALT, SEL } from '../config';
 import { HS_CHAINS } from './chains';
 import {
   CawAction,
@@ -661,6 +661,12 @@ export interface WalletBalances {
   cat42: bigint | null;
   oTok: TokenBalance | null;
   ket: TokenBalance | null;
+  /** HAWK and PHOENIX on QL1 (v0.7.0), read like oTok. The
+   *  wallet screen shows these two; f42 / cat42 above stay
+   *  read for their remaining consumers but are no longer
+   *  displayed there (user decision 2026-11-18). */
+  hawk: TokenBalance | null;
+  phoenix: TokenBalance | null;
 }
 
 async function fetchWalletBalances(
@@ -711,7 +717,7 @@ async function fetchWalletBalances(
       ? null
       : { raw, decimals: Number(dec) };
   };
-  const [qom, qcaw, f42, cat42, oTok, ket] = await Promise.all([
+  const [qom, qcaw, f42, cat42, oTok, ket, hawk, phoenix] = await Promise.all([
     withRetry(() =>
       rpc('eth_getBalance', [address, 'latest']).then((h: string) =>
         BigInt(h),
@@ -730,8 +736,10 @@ async function fetchWalletBalances(
     ).catch(() => null),
     tokenQl1(O_TOKEN),
     token42(KET42),
+    tokenQl1(HAWK),
+    tokenQl1(PHOENIX),
   ]);
-  return { qom, qcaw, f42, cat42, oTok, ket };
+  return { qom, qcaw, f42, cat42, oTok, ket, hawk, phoenix };
 }
 
 /* In-flight dedupe (v0.5.1, F2): unlock and the timeline

@@ -1,20 +1,24 @@
 /**
- * HuntersExchange (v0.5.0 formal) — the order book screen.
+ * HuntersDEX (v0.7.0; HuntersExchange through v0.6.7) — the
+ * DEX screen.
  *
- * The instant swap is GONE (user decision 2026-11-10:
- * 「いますぐ交換はいらない、板だけにして」): no goal cards, no
- * buy/sell toggle, no guided instant-swap flow. The screen
- * opens directly on the order book (ExchangeSection), which
- * also carries the guided DEPOSIT / WITHDRAW flows —
- * "deposit" in the user's own naming: the coin is bridged
- * to 42 Chain and held in the Exchange contract (BSC USDT
- * or QL1 qCAW in; withdrawals mirror back out).
+ * v0.7.0 (user decision 2026-11-18): the feature is renamed
+ * HuntersDEX and the order book is replaced by a NORMAL DEX
+ * flow — pick from/to, amount, live quote, swap — over the
+ * app's aggregator engine (lib/aggEngine) on QL1, limited
+ * to six tokens (QOM / O / qCAW / KET / HAWK / PHOENIX). The
+ * new body is DexSwapSection. The order-book component
+ * (ExchangeSection, with its guided deposit/withdraw flows)
+ * is no longer mounted here; its code stays in the repo,
+ * unmounted, and the swap/bridge LIBRARIES (lib/hunters.ts,
+ * lib/aggEngine.ts, lib/flows.ts) are untouched and stay
+ * verified by their own suites.
  *
- * The swap/bridge LIBRARIES (lib/hunters.ts, lib/aggEngine.ts,
- * lib/flows.ts) are untouched and stay verified by their own
- * suites; only the instant-swap UX was removed. Internal ids
- * and storage keys still say HuntersSwap, as with every
- * display rename before this one.
+ * History: v0.5.0 removed the instant swap in favour of the
+ * book (user decision 2026-11-10); v0.7.0 reverses that
+ * shape on the user's new instruction. Internal ids and
+ * storage keys still say HuntersSwap, as with every display
+ * rename before this one.
  */
 import React, { useState } from 'react';
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
@@ -22,7 +26,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 
 import { HAIRLINE, MONO, S } from '../components/ui';
-import ExchangeSection from './ExchangeSection';
+import DexSwapSection from './DexSwapSection';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
@@ -107,9 +111,9 @@ export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) 
   const [sendOpen, setSendOpen] = useState(false);
   return (
     <View style={[S.screen, { paddingTop: insets.top }]}>
-      {/* Brand header: the feature's name is HuntersExchange
+      {/* Brand header: the feature's name is HuntersDEX
        * (a proper noun, never translated); the localized
-       * "Buy / sell CAW" line stays as its caption. */}
+       * "Swap on QL1" line is its caption. */}
       <View
         style={{
           paddingHorizontal: 16,
@@ -131,9 +135,9 @@ export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) 
           adjustsFontSizeToFit
           minimumFontScale={0.7}
         >
-          Hunters<Text style={{ color: ACCENT }}>Exchange</Text>
+          Hunters<Text style={{ color: ACCENT }}>DEX</Text>
         </Text>
-        <Text style={[S.small, { marginTop: 1 }]}>{tr('hs.title')}</Text>
+        <Text style={[S.small, { marginTop: 1 }]}>{tr('dex.caption')}</Text>
         <View>
           <View style={[S.row, { gap: 8, marginTop: 10 }]}>
             <FaucetPillButton />
@@ -169,17 +173,16 @@ export default function HuntersSwapScreen({ onClose }: { onClose: () => void }) 
       >
         <SendScreen onClose={() => setSendOpen(false)} />
       </Modal>
-      {/* The order book, directly — no mode toggle. The
-       * deposit address card rides on top of the book: an
-       * outside deposit to this same address is the manual
-       * way in, the guided flows in the book are the
-       * in-app way. */}
+      {/* The DEX swap section, directly — no mode toggle.
+       * The deposit address card rides on top: an outside
+       * deposit to this same address stays the manual way
+       * in. */}
       <ScrollView
         style={S.screen}
         contentContainerStyle={{ paddingBottom: 32 + insets.bottom }}
       >
         <DepositAddressRow address={app.address ?? ''} />
-        <ExchangeSection />
+        <DexSwapSection />
       </ScrollView>
     </View>
   );

@@ -17,6 +17,7 @@ import {
   Avatar,
   BellIcon,
   BookmarkIcon,
+  FlameIcon,
   RepeatIcon,
   S,
   SettingsIcon,
@@ -28,6 +29,7 @@ import { followerCount } from '../lib/cawApi';
 import { followListsOf, subscribeFollowIndex } from '../lib/followIndex';
 import BookmarksScreen from '../screens/BookmarksScreen';
 import { HuntersSwapModal } from '../screens/HuntersSwapScreen';
+import { BurnHawkModal } from '../screens/BurnHawkScreen';
 
 /**
  * The X-style left drawer (v0.6.2, user instruction
@@ -61,8 +63,10 @@ import { HuntersSwapModal } from '../screens/HuntersSwapScreen';
  *     (own profile page) / ウォレット (the wallet section) /
  *     自分の名前 (My names; the row's icon is the name's own
  *     avatar — names ARE avatars everywhere in this app) /
- *     名前を取る (Get a name) / HuntersExchange (the same
- *     modal as ever) / ブックマーク (the bookmarks modal) /
+ *     名前を取る (Get a name) / HuntersDEX (the same
+ *     modal as ever; renamed from HuntersExchange in
+ *     v0.7.0) / BurnHawk (v0.7.0: the in-app HAWK burn
+ *     screen) / ブックマーク (the bookmarks modal) /
  *     あなたへの反応 (the reactions inbox — the same one the
  *     tab-bar bell opens, via App).
  *  3. A hairline, then 設定 low (X places settings low).
@@ -95,6 +99,7 @@ export default function Drawer({
 
   const [mounted, setMounted] = useState(false);
   const [hsOpen, setHsOpen] = useState(false);
+  const [burnHawkOpen, setBurnHawkOpen] = useState(false);
   const [bookmarksOpen, setBookmarksOpen] = useState(false);
   const anim = useRef(new Animated.Value(0)).current;
 
@@ -163,6 +168,10 @@ export default function Drawer({
   const openExchange = () => {
     onClose();
     setHsOpen(true);
+  };
+  const openBurnHawk = () => {
+    onClose();
+    setBurnHawkOpen(true);
   };
   const openBookmarks = () => {
     onClose();
@@ -291,8 +300,13 @@ export default function Drawer({
             />
             <DrawerRow
               icon={<RepeatIcon size={23} color="#0f1419" />}
-              label="HuntersExchange"
+              label="HuntersDEX"
               onPress={openExchange}
+            />
+            <DrawerRow
+              icon={<FlameIcon size={23} color="#0f1419" />}
+              label={tr('bh.title')}
+              onPress={openBurnHawk}
             />
             <DrawerRow
               icon={<BookmarkIcon size={23} color="#0f1419" />}
@@ -322,6 +336,10 @@ export default function Drawer({
           drawer's close animation — the same overlays the hub
           mounted, unchanged. */}
       <HuntersSwapModal visible={hsOpen} onClose={() => setHsOpen(false)} />
+      <BurnHawkModal
+        visible={burnHawkOpen}
+        onClose={() => setBurnHawkOpen(false)}
+      />
       <Modal
         visible={bookmarksOpen}
         animationType="slide"

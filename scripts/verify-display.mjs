@@ -280,8 +280,8 @@ try {
     const at = src.indexOf('<BalanceList');
     const seg = src.slice(at, at + 1800);
     return [
-      "tr('home.qcaw')", "tr('home.qom')", "tr('card.inName')",
-      "tr('card.f42')", "tr('card.cat42')", "label: 'O'", "label: 'KET'",
+      "tr('home.qom')", "tr('home.qcaw')", "tr('card.inName')",
+      "label: 'O'", "label: 'KET'", "label: 'HAWK'", "label: 'PHOENIX'",
     ].map((k) => seg.indexOf(k));
   };
   /* v0.6.2: the list's only home is the wallet screen
@@ -290,7 +290,7 @@ try {
    * the list's home. */
   for (const [name, src] of [['wallet screen', tlSrc]]) {
     const idxs = labelIdx(src);
-    check(`list: ${name} renders ONE BalanceList, rows in order (CAW, QOM, in-name, 42, CAT42, O, KET)`,
+    check(`list: ${name} renders ONE BalanceList, rows in order (QOM, CAW, in-name, O, KET, HAWK, PHOENIX) — v0.7.0: 42/CAT42 rows removed`,
       (src.match(/<BalanceList/g) || []).length === 1 &&
       idxs.every((v) => v >= 0) &&
       idxs.every((v, i) => i === 0 || v > idxs[i - 1]),
@@ -400,14 +400,17 @@ try {
   /* --- live reads through the new code path (f8cc) --- */
   try {
     const b = await api.walletBalances(F8CC);
-    check('live: f8cc O read (QL1 token at the user address; decimals from the contract; 0 as of 2026-11-10)',
-      b.oTok !== null && b.oTok.decimals === 18 && b.oTok.raw === 0n,
+    // Balances are LIVE and change; pin the reader contract, not a snapshot
+    // (the 2026-11-10 pins — O raw 0, CAT42 1,011.56 — went stale on 2026-11-18:
+    // the wallet then held 300 O and 0 CAT42, and the reads were correct).
+    check('live: f8cc O read (QL1 token at the user address; decimals from the contract)',
+      b.oTok !== null && b.oTok.decimals === 18 && typeof b.oTok.raw === 'bigint' && b.oTok.raw >= 0n,
       'oTok=' + (b.oTok ? `raw ${b.oTok.raw} dec ${b.oTok.decimals}` : 'null'));
     check('live: f8cc KET read (42 Chain; decimals from the contract; 0 as of 2026-11-10)',
       b.ket !== null && b.ket.decimals === 18 && b.ket.raw === 0n,
       'ket=' + (b.ket ? `raw ${b.ket.raw} dec ${b.ket.decimals}` : 'null'));
-    check('live: f8cc CAT42 through the same reader (user screenshot: 1,011.56)',
-      b.cat42 !== null && core.fmtAmountCard(b.cat42) === '1,011.56',
+    check('live: f8cc CAT42 through the same reader (balance is live; shape only)',
+      b.cat42 !== null && typeof core.fmtAmountCard(b.cat42) === 'string',
       'cat42=' + (b.cat42 !== null ? core.fmtAmountCard(b.cat42) : 'null'));
   } catch (e) {
     check('live f8cc new-path reads', false, String((e && e.message) || e));
@@ -425,18 +428,18 @@ try {
 
   /* --- v0.5.0: HuntersExchange naming + 20 languages --- */
   const hsSrc = readFileSync(ROOT + '/src/screens/HuntersSwapScreen.tsx', 'utf8');
-  check('naming: the brand header renders "Hunters" + "Exchange"',
-    hsSrc.includes('>Exchange<') || hsSrc.includes('}Exchange{') || hsSrc.includes('Exchange</Text>'));
-  check('naming: no user-visible "HuntersDEX" remains (comments only)',
-    !/>\s*DEX\s*</.test(hsSrc) && !hsSrc.includes('"HuntersDEX"') &&
-    !hsSrc.includes("'HuntersDEX'"));
+  check('naming: the brand header renders "Hunters" + "DEX" (v0.7.0 rename; was "Exchange" through v0.6.7)',
+    hsSrc.includes('>DEX</Text>'));
+  check('naming: no user-visible "Exchange" brand remains (comments only)',
+    !hsSrc.includes('>Exchange<') && !hsSrc.includes('Exchange</Text>'));
   /* v0.5.0 formal: the candidate's swap/book mode toggle is
    * GONE (user: 「板だけにして」) — the screen renders the book
    * directly. The full reachability suite lives in
    * verify-exchange.mjs section 4. */
-  check('naming: NO mode toggle — the screen opens directly on the order book (v0.5.0 formal)',
+  check('naming: NO mode toggle — the screen opens directly on the DEX swap section (v0.7.0; the v0.5.0 order book is replaced)',
     !hsSrc.includes("tr('hx.modeSwap')") && !hsSrc.includes("tr('hx.modeBook')") &&
-    !hsSrc.includes('hsMode') && hsSrc.includes('<ExchangeSection />'));
+    !hsSrc.includes('hsMode') && hsSrc.includes('<DexSwapSection />') &&
+    !hsSrc.includes('<ExchangeSection />'));
   const langsBlock = i18nSrc.slice(i18nSrc.indexOf('export const LANGS'), i18nSrc.indexOf('];', i18nSrc.indexOf('export const LANGS')));
   check('languages: LANGS offers exactly 20 languages',
     (langsBlock.match(/\{ code: '/g) || []).length === 20,

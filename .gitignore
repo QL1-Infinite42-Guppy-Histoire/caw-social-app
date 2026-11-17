@@ -81,6 +81,8 @@ scripts/.build-exchange/
 scripts/.build-exchange-i18n/
 scripts/.build-seclock/
 scripts/.build-startup/
+scripts/.build-burnhawk/
+scripts/.build-dex/
 
 # Audit quote package — LOCAL ONLY, never commit/publish (user rule, 2026-11-09)
 docs/audit/

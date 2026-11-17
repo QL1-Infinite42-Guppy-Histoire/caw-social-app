@@ -1,4 +1,4 @@
-import { CAT42, O_TOKEN } from '../config';
+import { O_TOKEN, PHOENIX } from '../config';
 import type { AppContextValue } from '../context/AppContext';
 import {
   nameOwner,
@@ -33,7 +33,7 @@ import {
 } from './authorPay';
 import {
   buildTipData,
-  cat42BalanceOf,
+  phoenixBalanceOf,
   tipBlockReason,
   tipRecipientVerdict,
   tipShortfall,
@@ -43,7 +43,6 @@ import {
   randomCawId,
   sendCalldata,
   signerFor,
-  signerForHsChain,
   submitAction,
 } from './wallet';
 
@@ -481,14 +480,16 @@ export async function performAuthorPay(
 }
 
 /**
- * Tip （チップ, v0.5.0): a plain CAT42 transfer of the chosen
- * amount to the post author's owner address — CAT42's one job
- * since v0.5.0 (see lib/tip.ts). No marker, no counting.
+ * Tip （チップ, v0.5.0): a plain PHOENIX transfer of the
+ * chosen amount to the post author's owner address (see
+ * lib/tip.ts). PHOENIX is the tip currency since v0.7.0;
+ * through v0.6.7 the same flow sent CAT42 on 42 Chain.
+ * No marker, no counting.
  *
  * Guards, all BEFORE anything is signed: the author's owner
  * is resolved fresh (an unresolved author refuses the send
  * rather than paying a guessed address); self-tips are
- * blocked (Error('self-tip')); the CAT42 balance is re-read
+ * blocked (Error('self-tip')); the PHOENIX balance is re-read
  * fresh and short of the amount is a hard stop
  * (Error('shortfall'), the balance attached as `balance`).
  * Throws Error('auth') / Error('locked') like performAction.
@@ -522,7 +523,7 @@ export async function performTip(
     myAddress: app.address,
   });
   if (blocked) throw new Error('self-tip');
-  const balance = await cat42BalanceOf(app.address);
+  const balance = await phoenixBalanceOf(app.address);
   if (tipShortfall(balance, args.amountRaw)) {
     throw Object.assign(new Error('shortfall'), { balance });
   }
@@ -533,10 +534,13 @@ export async function performTip(
   const secret = app.getSecret();
   if (!secret) throw new Error('locked');
 
-  const signer = signerForHsChain(secret.kind, secret.secret, 'infinite');
+  /* PHOENIX is a QL1 token, so the tip signs with the QL1
+   * signer (through v0.6.7 the CAT42 tip used the 42 Chain
+   * signer, CAT42 living there). */
+  const signer = signerFor(secret.kind, secret.secret);
   const hash = await sendCalldata(
     signer,
-    CAT42,
+    PHOENIX,
     buildTipData(authorOwner, args.amountRaw),
   );
   app.refreshBalances().catch(() => {});

@@ -42,8 +42,10 @@
  * section host renders only while a section is open); the
  * wallet screen is MetaMask-shaped (profile section -> own
  * profile, Send/Deposit action buttons wired to the same
- * flows, the seven balances as an asset list); Send/Deposit
- * have no hub/drawer rows left.
+ * flows, the balances as an asset list — seven rows through
+ * v0.6.7, and since v0.7.0 the [42]/CAT42 rows are replaced
+ * by HAWK/PHOENIX: QOM / CAW / in-name CAW / O / KET / HAWK /
+ * PHOENIX); Send/Deposit have no hub/drawer rows left.
  */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
@@ -413,7 +415,8 @@ console.log('\n-- structure / reachability --');
     ["app.openHub('settings')", 'Settings row'],
     ['app.openProfile(acting.username)', 'Profile row + summary -> own profile page'],
     ['onOpenInbox', 'Inbox row -> the same inbox as the bell tab'],
-    ['<HuntersSwapModal', 'HuntersExchange modal'],
+    ['<HuntersSwapModal', 'HuntersDEX modal'],
+    ['<BurnHawkModal', 'BurnHawk modal'],
     ['<BookmarksScreen', 'Bookmarks modal'],
   ]) {
     ok(drawerSrc.includes(needle), 'drawer reaches: ' + label);
@@ -441,17 +444,24 @@ console.log('\n-- structure / reachability --');
     'Send/Deposit have NO drawer rows (consolidated into the wallet screen only)',
   );
   {
+    // v0.7.0 (user decision 2026-11-18): the [42] and CAT42
+    // rows are gone; the list is QOM / wallet CAW / in-name
+    // CAW (unchanged) / O / KET / HAWK / PHOENIX.
     const cellOrder = [
-      "tr('home.qcaw')",
       "tr('home.qom')",
+      "tr('home.qcaw')",
       "tr('card.inName')",
-      "tr('card.f42')",
-      "tr('card.cat42')",
+      "label: 'O'",
+      "label: 'KET'",
+      "label: 'HAWK'",
+      "label: 'PHOENIX'",
     ].map((n) => meSrc.indexOf(n));
     ok(
       cellOrder.every((v) => v >= 0) &&
-        cellOrder.every((v, i) => i === 0 || v > cellOrder[i - 1]),
-      'wallet asset list keeps the balance rows and their order',
+        cellOrder.every((v, i) => i === 0 || v > cellOrder[i - 1]) &&
+        !meSrc.includes("tr('card.f42')") &&
+        !meSrc.includes("tr('card.cat42')"),
+      'wallet asset list (v0.7.0): QOM / CAW / in-name CAW / O / KET / HAWK / PHOENIX rows in order; the [42] and CAT42 rows are removed',
     );
   }
   // No stale navigation to removed tabs anywhere in the app.
@@ -618,13 +628,15 @@ console.log('\n-- structure / reachability --');
       drawerSrc.includes("tr('hub.wallet')") &&
       drawerSrc.includes("tr('nav.myNames')") &&
       drawerSrc.includes("tr('nav.getName')") &&
-      drawerSrc.includes('HuntersExchange') &&
+      drawerSrc.includes('HuntersDEX') &&
+      !drawerSrc.includes('label="HuntersExchange"') &&
+      drawerSrc.includes("tr('bh.title')") &&
       drawerSrc.includes("tr('bm.title')") &&
       drawerSrc.includes("tr('inbox.title')") &&
       drawerSrc.includes("tr('nav.settings')") &&
       drawerSrc.includes('WalletIcon') && drawerSrc.includes('BellIcon') &&
       drawerSrc.includes('SettingsIcon'),
-    'drawer rows: profile / wallet / my names / get a name / exchange / bookmarks / inbox, then settings low',
+    'drawer rows: profile / wallet / my names / get a name / HuntersDEX / BurnHawk (v0.7.0, between the DEX and bookmarks) / bookmarks / inbox, then settings low',
   );
   ok(
     !uiSrc.includes('superFrame') && !uiSrc.includes('LinearGradient') &&

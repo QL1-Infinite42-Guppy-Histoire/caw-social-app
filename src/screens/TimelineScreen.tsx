@@ -2,12 +2,14 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  I18nManager,
   Modal,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
   View,
+  type GestureResponderEvent,
 } from 'react-native';
 
 import {
@@ -80,7 +82,7 @@ let feedCache: {
 export default function TimelineScreen() {
   const insets = useSafeAreaInsets();
   const app = useApp();
-  const { lang, address, qom, qcaw, f42, cat42, oTok, ket, myTokens, actingId } = app;
+  const { lang, address, qom, qcaw, f42, phoenix, oTok, ket, myTokens, actingId } = app;
 
   const [items, setItems] = useState<TimelineItem[]>(
     () => feedCache?.items ?? [],
@@ -723,6 +725,35 @@ export default function TimelineScreen() {
     [app, tipItem],
   );
 
+  /* ---------- feed swipe (v0.7.0) ----------
+   * A horizontal swipe anywhere on the feed switches
+   * Latest ⇄ Following, in sync with the segment row below
+   * (both drive the same `mode` state). The gesture is
+   * recognised from touch start/end points only — it never
+   * intercepts the scroll: a swipe counts when it travels
+   * ≥60px horizontally and is clearly horizontal-dominant
+   * (≥1.6× the vertical travel). Direction follows the
+   * reading direction: in LTR a leftward swipe moves to the
+   * next segment (Following), a rightward swipe back to
+   * Latest; RTL inverts. */
+  const swipeStartRef = React.useRef<{ x: number; y: number } | null>(null);
+  const onFeedTouchStart = (e: GestureResponderEvent) => {
+    swipeStartRef.current = {
+      x: e.nativeEvent.pageX,
+      y: e.nativeEvent.pageY,
+    };
+  };
+  const onFeedTouchEnd = (e: GestureResponderEvent) => {
+    const s = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (!s) return;
+    const dx = e.nativeEvent.pageX - s.x;
+    const dy = e.nativeEvent.pageY - s.y;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
+    const toFollowing = I18nManager.isRTL ? dx > 0 : dx < 0;
+    setMode(toFollowing ? 'following' : 'latest');
+  };
+
   /* ---------- header (v0.6.0) ----------
    * X-style: the Home header is ONLY the Latest / Following
    * segment row (blue underline on the active segment). The
@@ -762,7 +793,11 @@ export default function TimelineScreen() {
 
   if (mode === 'latest' && loading && items.length === 0) {
     return (
-      <View style={S.screen}>
+      <View
+        style={S.screen}
+        onTouchStart={onFeedTouchStart}
+        onTouchEnd={onFeedTouchEnd}
+      >
         {header}
         <View style={styles.center}>
           <ActivityIndicator color={ACCENT} />
@@ -774,7 +809,11 @@ export default function TimelineScreen() {
 
   if (mode === 'latest' && loadFailed && items.length === 0) {
     return (
-      <View style={S.screen}>
+      <View
+        style={S.screen}
+        onTouchStart={onFeedTouchStart}
+        onTouchEnd={onFeedTouchEnd}
+      >
         {header}
         <View style={styles.center}>
           <Text style={S.err}>{tr('tl.loadFail')}</Text>
@@ -810,6 +849,8 @@ export default function TimelineScreen() {
         data={shownItems}
         keyExtractor={(item, idx) => item.hash + ':' + idx}
         ListHeaderComponent={header}
+        onTouchStart={onFeedTouchStart}
+        onTouchEnd={onFeedTouchEnd}
         refreshControl={
           <RefreshControl
             refreshing={mode === 'latest' ? refreshing : fLoading}
@@ -991,7 +1032,7 @@ export default function TimelineScreen() {
         visible={!!tipItem}
         authorLabel={tipName}
         recipient={tipRecipient}
-        balanceRaw={cat42}
+        balanceRaw={phoenix ? phoenix.raw : null}
         busy={tipBusy}
         onConfirm={confirmTip}
         onCancel={() => setTipItem(null)}

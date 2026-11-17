@@ -1,16 +1,18 @@
 /**
  * SuperRecaw (v0.5.0) — a Recaw set apart in the feed.
  *
- * Since v0.6.3 (user decision 2026-11-13) a SuperRecaw
- * costs 25,000,000 O IN TOTAL after the Recaw itself: a
- * burn of 20,000,000 O (QL1) with an "SRC1"
+ * Since v0.7.0 (user decision 2026-11-18) a SuperRecaw
+ * costs 5,000,000 O IN TOTAL after the Recaw itself: a
+ * burn of 3,000,000 O (QL1) with an "SRC1"
  * trailing-calldata marker naming the ORIGINAL post's
- * cawId, plus a plain, unmarked transfer of 5,000,000 O to
+ * cawId, plus a plain, unmarked transfer of 2,000,000 O to
  * the original author (see lib/markedBurns.ts for the
  * shared marked-burn index and the money constants, and
  * lib/authorPay.ts for the author leg). Under the
- * v0.5.0–v0.6.2 spec the burn alone was 1,000,000 O; those
- * legacy burns stay detected forever.
+ * v0.5.0–v0.6.2 spec the burn alone was 1,000,000 O, and
+ * under v0.6.3 the split was 20,000,000 burned + 5,000,000
+ * to the author; burns from both eras stay detected
+ * forever.
  *
  * The order of operations mirrors the v0.4.9 SuperLike debt
  * discipline: the NORMAL Recaw action lands FIRST (it is
@@ -43,7 +45,7 @@ import type { KVStorage } from './myActions';
 export { SUPERRECAW_MAGIC };
 
 /** The full transaction data for a SuperRecaw burn
- *  (20,000,000 O since v0.6.3). */
+ *  (3,000,000 O since v0.7.0). */
 export function buildSuperRecawData(cawId: string): string | null {
   return buildMarkedBurnData(SUPERRECAW_MAGIC, cawId, SUPERRECAW_BURN_RAW);
 }

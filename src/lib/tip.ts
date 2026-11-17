@@ -1,26 +1,40 @@
 /**
- * Tip （チップ, v0.5.0) — CAT42's one clear job: a plain
- * CAT42 transfer from the reader to a post's author. As of
- * v0.5.0 CAT42 is the tip currency only (SuperLike moved to
- * O burns — see lib/superlike.ts), so a tip is deliberately
- * JUST a transfer: no marker, no counting, no split, no burn.
- * The amount is the tipper's choice: presets of 10 / 50 / 100
- * CAT42, or a custom amount (the sheet's custom input carries
- * the app's usual 25 / 50 / 75 / MAX balance chips).
+ * Tip （チップ) — a plain PHOENIX transfer from the reader to
+ * a post's author. PHOENIX is the tip currency since v0.7.0
+ * (user decision 2026-11-18), replacing CAT42, which held the
+ * role from v0.5.0 through v0.6.7. A tip is deliberately JUST
+ * a transfer: no marker, no counting, no split, no burn. The
+ * amount is the tipper's choice: presets (TIP_PRESETS below)
+ * or a custom amount (the sheet's custom input carries the
+ * app's usual 25 / 50 / 75 / MAX balance chips).
+ *
+ * Chain note: CAT42 lives on 42 Chain, so the old tip was
+ * sent there; PHOENIX lives on QL1 (config.ts), so the tip
+ * now travels on QL1 like the SuperLike / SuperRecaw legs —
+ * same wallet address on both chains, so the recipient (the
+ * author's owner address) is unchanged.
  */
 import { Interface } from 'ethers';
 
-import { CAT42, SEL } from '../config';
-import { ethCall42 } from './cawApi';
+import { PHOENIX, SEL } from '../config';
+import { ethCall } from './cawApi';
 import { decUintRet, encAddr, parseAmount } from './cawCore';
 
-export const TIP_PRESETS_CAT42 = [10, 50, 100] as const;
+/**
+ * The tip preset amounts, in whole PHOENIX — ONE central
+ * constant; the tip sheet renders exactly these.
+ *
+ * DECIDED (user, 2026-11-18): 10 / 50 / 100 PHOENIX — the
+ * same numbers the CAT42 tip used. (An assistant-suggested
+ * 1 / 5 / 10 was NOT chosen.) Custom amounts are unchanged.
+ */
+export const TIP_PRESETS = [10, 50, 100] as const;
 
 const ERC20_IFACE = new Interface([
   'function transfer(address to, uint256 amount) returns (bool)',
 ]);
 
-/** Parse a custom tip amount (CAT42, 18 decimals) into raw
+/** Parse a custom tip amount (PHOENIX, 18 decimals) into raw
  *  units. Null for anything malformed or not positive. */
 export function parseTipAmount(text: string): bigint | null {
   const raw = parseAmount(text);
@@ -28,20 +42,20 @@ export function parseTipAmount(text: string): bigint | null {
   return raw;
 }
 
-/** The raw units for one preset (whole CAT42). */
-export function tipPresetRaw(cat42: number): bigint {
-  return BigInt(cat42) * 10n ** 18n;
+/** The raw units for one preset (whole PHOENIX). */
+export function tipPresetRaw(phoenix: number): bigint {
+  return BigInt(phoenix) * 10n ** 18n;
 }
 
 /** The amount a balance chip selects: pct% of the balance
  *  (100 = MAX, the whole balance — a tip pays no separate fee
- *  in CAT42, so MAX needs no reserve). */
+ *  in PHOENIX, so MAX needs no reserve). */
 export function tipChipAmount(balance: bigint, pct: number): bigint {
   if (pct >= 100) return balance;
   return (balance * BigInt(pct)) / 100n;
 }
 
-/** Plain CAT42 transfer calldata for a tip. */
+/** Plain PHOENIX transfer calldata for a tip. */
 export function buildTipData(to: string, amountRaw: bigint): string {
   return ERC20_IFACE.encodeFunctionData('transfer', [to, amountRaw]);
 }
@@ -100,11 +114,11 @@ export function tipRecipientVerdict(
   return primary.toLowerCase() === alt.toLowerCase() ? 'ok' : 'mismatch';
 }
 
-/** A trustworthy CAT42 balance read on 42 Chain (throws on
- *  RPC failure). Kept here (not in lib/superlike.ts, whose
- *  CAT42 reads left with the old design) for the tip flow. */
-export async function cat42BalanceOf(owner: string): Promise<bigint> {
+/** A trustworthy PHOENIX balance read on QL1 (throws on RPC
+ *  failure). Kept here (not in lib/superlike.ts) for the tip
+ *  flow, mirroring oBalanceOf there. */
+export async function phoenixBalanceOf(owner: string): Promise<bigint> {
   return decUintRet(
-    await ethCall42(CAT42, SEL.balanceOf + encAddr(owner)),
+    await ethCall(PHOENIX, SEL.balanceOf + encAddr(owner)),
   );
 }

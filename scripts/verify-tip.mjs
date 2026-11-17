@@ -1,16 +1,22 @@
 #!/usr/bin/env node
 /**
- * Tip （チップ) verification (v0.5.0).
+ * Tip （チップ) verification (v0.5.0; v0.7.0 currency change).
  *
- * A tip is deliberately JUST a plain CAT42 transfer to the
- * post author's owner address — no marker, no counting
- * (SuperLike moved to O burns; CAT42's one job is now tips).
- * This suite pins: the presets (10 / 50 / 100), the custom
- * amount parsing, the 25 / 50 / 75 / MAX balance chips, the
- * plainness of the calldata (a tip must never parse as a
- * marked burn of any kind), the self-tip and shortfall
- * guards, and the wiring statics for performTip + the three
- * surfaces (feed, profile, post detail) + the TipSheet.
+ * A tip is deliberately JUST a plain token transfer to the
+ * post author's owner address — no marker, no counting.
+ * Through v0.6.7 the token was CAT42 on 42 Chain; since
+ * v0.7.0 (user decision 2026-11-18) it is PHOENIX on QL1
+ * (CAT42's tip role ended; the CAT42 claim site is a
+ * separate surface and is untouched). This suite pins: the
+ * presets (10 / 50 / 100 PHOENIX — DECIDED by the user
+ * 2026-11-18, the same numbers as the CAT42 era, kept in
+ * the one TIP_PRESETS constant),
+ * the custom amount parsing, the 25 / 50 / 75 / MAX balance
+ * chips, the plainness of the calldata (a tip must never
+ * parse as a marked burn of any kind), the self-tip and
+ * shortfall guards, and the wiring statics for performTip +
+ * the three surfaces (feed, profile, post detail) + the
+ * TipSheet.
  */
 import { execFileSync } from 'node:child_process';
 import {
@@ -78,11 +84,11 @@ const E18 = 10n ** 18n;
 /* ---------- presets, parsing, chips ---------- */
 {
   ok(
-    JSON.stringify(TIP.TIP_PRESETS_CAT42) === '[10,50,100]',
-    'presets are 10 / 50 / 100 CAT42',
+    JSON.stringify(TIP.TIP_PRESETS) === '[10,50,100]',
+    'presets are 10 / 50 / 100 PHOENIX (user-decided 2026-11-18)',
   );
-  ok(TIP.tipPresetRaw(10) === 10n * E18, 'preset raw: 10 CAT42');
-  ok(TIP.tipPresetRaw(100) === 100n * E18, 'preset raw: 100 CAT42');
+  ok(TIP.tipPresetRaw(10) === 10n * E18, 'preset raw: 10 PHOENIX');
+  ok(TIP.tipPresetRaw(100) === 100n * E18, 'preset raw: 100 PHOENIX');
   ok(TIP.parseTipAmount('10') === 10n * E18, 'parse: whole amount');
   ok(TIP.parseTipAmount('0.5') === E18 / 2n, 'parse: fractional amount');
   ok(TIP.parseTipAmount('0') === null, 'parse: zero refused');
@@ -116,8 +122,8 @@ const E18 = 10n ** 18n;
   );
   ok(SL.parseSuperlikeInput(data) === null, 'a tip is never a SuperLike');
   ok(
-    CFG.CAT42 === '0x7386719EBbBeB4d810fF89027Bfb8A1CDf696310',
-    'tips move CAT42 on 42 Chain',
+    CFG.PHOENIX === '0xDFe660C5a29c8AADF1daA096543D249135e1938A',
+    'tips move PHOENIX on QL1 (the burnToMint contract, not the 6-holder namesake)',
   );
 }
 
@@ -153,7 +159,7 @@ const E18 = 10n ** 18n;
   );
   ok(TIP.tipShortfall(49n * E18, 50n * E18) === true, 'shortfall: balance below the tip');
   ok(TIP.tipShortfall(50n * E18, 50n * E18) === false, 'shortfall: exact balance ok');
-  ok(TIP.tipShortfall(101156n * E18 / 100n, 100n * E18) === false, 'shortfall: the f8cc balance (1,011.56) covers the biggest preset');
+  ok(TIP.tipShortfall(101n * E18, 100n * E18) === false, 'shortfall: a balance above the biggest preset (100) covers it');
 }
 
 /* ---------- wiring statics ---------- */
@@ -166,10 +172,12 @@ const E18 = 10n ** 18n;
   ok(iSelf > 0 && iSelf < iSend, 'performTip: self block precedes the send');
   ok(iShort > 0 && iShort < iSend, 'performTip: shortfall stop precedes the send');
   ok(flow.includes('nameOwner'), 'performTip: author owner resolved fresh');
-  ok(flow.includes('cat42BalanceOf'), 'performTip: fresh CAT42 balance read');
+  ok(flow.includes('phoenixBalanceOf'), 'performTip: fresh PHOENIX balance read');
   ok(
-    flow.includes("signerForHsChain(secret.kind, secret.secret, 'infinite')"),
-    'performTip: signs on 42 Chain',
+    flow.includes('signerFor(secret.kind, secret.secret)') &&
+      flow.includes('PHOENIX') &&
+      !flow.includes('signerForHsChain'),
+    'performTip: signs on QL1 (PHOENIX lives there) and sends to the PHOENIX contract',
   );
   ok(flow.includes('buildTipData(authorOwner'), 'performTip: pays the author owner');
   ok(
@@ -194,8 +202,9 @@ const E18 = 10n ** 18n;
   const ui = readFileSync(ROOT + '/src/components/ui.tsx', 'utf8');
   ok(ui.includes('export function TipSheet'), 'ui.tsx exports the TipSheet');
   ok(
-    ui.includes('TIP_PRESETS_CAT42') && ui.includes('tipChipAmount'),
-    'TipSheet uses the presets and the balance chips',
+    ui.includes('TIP_PRESETS') && ui.includes('tipChipAmount') &&
+      ui.includes('PHOENIX'),
+    'TipSheet uses the presets and the balance chips, labelled PHOENIX',
   );
   ok(ui.includes('onTip'), 'PostCard exposes the tip action');
 }

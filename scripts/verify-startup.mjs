@@ -9,7 +9,7 @@
  *      PasswordPrompt/answerPwPrompt flow), and pin that the
  *      prompt stays mounted (busy) while verification runs.
  *  F2  walletBalances in-flight dedupe — behavioral, with a
- *      stubbed fetch: two concurrent calls cost ONE 8-RPC set,
+ *      stubbed fetch: two concurrent calls cost ONE 12-RPC set (8 through v0.6.x; +HAWK/PHOENIX reads in v0.7.0),
  *      a post-settle call fetches fresh (in-flight only, not a
  *      result cache), and one token's failed read stays that
  *      token's null (v0.4.7 discipline preserved per field).
@@ -114,15 +114,17 @@ const PW = await import(OUT + '/lib/pwVerifier.js');
   };
   try {
     // Two concurrent calls (the unlock + timeline double-fire)
-    // must collapse into ONE underlying 8-RPC fetch set.
+    // must collapse into ONE underlying fetch set. The set was 8 RPC
+    // calls through v0.6.x; v0.7.0 added the HAWK and PHOENIX reads
+    // (balanceOf + decimals each), so one set is now 12.
     fetches = 0;
     const [a, b] = await Promise.all([
       CAW.walletBalances(ADDR),
       CAW.walletBalances(ADDR.toLowerCase()),
     ]);
     ok(
-      fetches === 8,
-      `F2: two concurrent walletBalances calls = one 8-RPC fetch set (got ${fetches})`,
+      fetches === 12,
+      `F2: two concurrent walletBalances calls = one 12-RPC fetch set (got ${fetches})`,
     );
     ok(
       a.qom === 1000n && a.qcaw === 111n && a.f42 === 2000n &&
@@ -138,7 +140,7 @@ const PW = await import(OUT + '/lib/pwVerifier.js');
     fetches = 0;
     const c = await CAW.walletBalances(ADDR);
     ok(
-      fetches === 8 && c.qcaw === 111n,
+      fetches === 12 && c.qcaw === 111n,
       `F2: a post-settle call fetches fresh (in-flight dedupe, not a result cache) — ${fetches} fetches`,
     );
     // Per-token failure isolation: the qCAW read fails (a
@@ -277,8 +279,8 @@ const PW = await import(OUT + '/lib/pwVerifier.js');
 {
   const appJson = JSON.parse(read('/app.json'));
   ok(
-    appJson.expo.version === '0.6.4' && appJson.expo.android.versionCode === 44,
-    'release: versionName 0.6.4, versionCode 44 (the F1/F2/F4/F5 fixes ride along from v0.5.1)',
+    appJson.expo.version === '0.7.0' && appJson.expo.android.versionCode === 48,
+    'release: versionName 0.7.0, versionCode 48 (v0.7.0: PHOENIX tips, new Super prices, mentions, swipe, HuntersDEX, BurnHawk)',
   );
 }
 

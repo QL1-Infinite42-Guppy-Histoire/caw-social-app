@@ -3,13 +3,15 @@
  * SuperRecaw verification (v0.6.3 — Recaw + two money legs).
  *
  * A SuperRecaw = the NORMAL Recaw action first; only after it
- * lands, the money legs: a burn of 20,000,000 O (QL1) carrying
+ * lands, the money legs: a burn of 3,000,000 O (QL1) carrying
  * the "SRC1" trailing-calldata marker for the ORIGINAL post's
- * cawId, then a plain, unmarked transfer of 5,000,000 O to
- * the original author. Total 25,000,000 O. From v0.5.0 to
- * v0.6.2 the burn alone was 1,000,000 O; those legacy burns
- * stay detected (the SRC1 detection set is
- * {20,000,000, 1,000,000}).
+ * cawId, then a plain, unmarked transfer of 2,000,000 O to
+ * the original author. Total 5,000,000 O (v0.7.0 prices —
+ * user decision 2026-11-18; v0.6.3–v0.6.7 charged a
+ * 20,000,000 burn + 5,000,000 author = 25,000,000 total).
+ * From v0.5.0 to v0.6.2 the burn alone was 1,000,000 O; burns
+ * at every era's price stay detected (the SRC1 detection set
+ * is {3,000,000, 20,000,000, 1,000,000}).
  *
  * This suite pins:
  *  - the SRC1 codec at the new burn amount (shared marked-burn
@@ -25,7 +27,7 @@
  *  - BEHAVIOUR of the real flows against a stubbed wallet +
  *    RPC: recaw failure stops everything; burn failure leaves
  *    the burn debt only; the burn retry hands the debt over
- *    to a 5M author-pay record; payment failure leaves the
+ *    to a 2M author-pay record; payment failure leaves the
  *    pay debt only; a SELF SuperRecaw (never blocked) skips
  *    the author leg and gates on the burn alone;
  *  - the wiring statics that enforce ORDER in the screens.
@@ -143,9 +145,10 @@ const FLOW = await import(OUT + '/lib/actionFlow.js');
 const WALLET = await import(OUT + '/lib/wallet.js');
 
 const O = (n) => BigInt(n) * 10n ** 18n;
-const SRC_BURN = O(20_000_000);
-const SRC_AUTHOR = O(5_000_000);
-const SL_BURN = O(10_000_000);
+const SRC_BURN = O(3_000_000);
+const SRC_AUTHOR = O(2_000_000);
+const SL_BURN = O(1_000_000);
+const V063_SL_BURN = O(10_000_000);
 const LEGACY = O(1_000_000);
 const P1 = '0x' + '11'.repeat(32);
 const P2 = '0x' + '22'.repeat(32);
@@ -164,7 +167,7 @@ const P2 = '0x' + '22'.repeat(32);
   ok(
     !!mark && mark.magic === MB.SUPERRECAW_MAGIC && mark.cawId === P1 &&
       mark.amount === SRC_BURN,
-    'shared codec parses it as an SRC1 burn of exactly 20,000,000 O (v0.6.3)',
+    'shared codec parses it as an SRC1 burn of exactly 3,000,000 O (v0.7.0)',
   );
   ok(SL.parseSuperlikeInput(data) === null, 'an SRC1 burn is NOT a SuperLike');
   const slk = SL.buildSuperlikeData(P1);
@@ -186,18 +189,18 @@ const BYSTANDER = '0x2222222222222222222222222222222222222222';
   const START = MB.MARKED_BURN_START_BLOCK;
   const HEAD = START + 100;
   const txInputs = {
-    txS: SR.buildSuperRecawData(P1), // SRC1 20M by RECAWER for P1 (current)
-    txL: SL.buildSuperlikeData(P1), // SLK1 10M by RECAWER for P1 (not a recaw mark)
-    txO: SR.buildSuperRecawData(P2), // SRC1 20M by BYSTANDER for P2
+    txS: SR.buildSuperRecawData(P1), // SRC1 3M by RECAWER for P1 (current)
+    txL: SL.buildSuperlikeData(P1), // SLK1 1M by RECAWER for P1 (not a recaw mark)
+    txO: SR.buildSuperRecawData(P2), // SRC1 3M by BYSTANDER for P2
     txG: MB.buildMarkedBurnData(MB.SUPERRECAW_MAGIC, P1, LEGACY), // SRC1 legacy 1M by BYSTANDER for P1
-    txX: MB.buildMarkedBurnData(MB.SUPERRECAW_MAGIC, P1, SL_BURN), // SRC1 at the SL amount — counts for nobody
+    txX: MB.buildMarkedBurnData(MB.SUPERRECAW_MAGIC, P1, V063_SL_BURN), // SRC1 at the v0.6.3 SL amount (10M) — counts for nobody
   };
   const logs = [
     { transactionHash: 'txS', topics: [TRANSFER_TOPIC, topicAddr(RECAWER), topicAddr(MB.BURN_ADDRESS)], data: word(SRC_BURN) },
     { transactionHash: 'txL', topics: [TRANSFER_TOPIC, topicAddr(RECAWER), topicAddr(MB.BURN_ADDRESS)], data: word(SL_BURN) },
     { transactionHash: 'txO', topics: [TRANSFER_TOPIC, topicAddr(BYSTANDER), topicAddr(MB.BURN_ADDRESS)], data: word(SRC_BURN) },
     { transactionHash: 'txG', topics: [TRANSFER_TOPIC, topicAddr(BYSTANDER), topicAddr(MB.BURN_ADDRESS)], data: word(LEGACY) },
-    { transactionHash: 'txX', topics: [TRANSFER_TOPIC, topicAddr(RECAWER), topicAddr(MB.BURN_ADDRESS)], data: word(SL_BURN) },
+    { transactionHash: 'txX', topics: [TRANSFER_TOPIC, topicAddr(RECAWER), topicAddr(MB.BURN_ADDRESS)], data: word(V063_SL_BURN) },
   ];
   const kvMem = new Map();
   MB.initMarkedBurnStore({
@@ -227,7 +230,7 @@ const BYSTANDER = '0x2222222222222222222222222222222222222222';
   };
   ok(
     (await SR.hasSuperRecawFor(P1, RECAWER)) === true,
-    'detection: the recawer’s current 20M SRC1 mark shows the SuperRecaw treatment',
+    'detection: the recawer’s current 3M SRC1 mark shows the SuperRecaw treatment',
   );
   ok(
     SR.superRecawCachedFor(P1, BYSTANDER) === true,
@@ -352,7 +355,7 @@ const BYSTANDER = '0x2222222222222222222222222222222222222222';
   const isSrcBurn = (d) =>
     d.toLowerCase().includes(MB.SUPERRECAW_MAGIC) && amtOf(d) === SRC_BURN;
 
-  // happy path: recaw, then the marked 20M burn, then the plain 5M payment
+  // happy path: recaw, then the marked 3M burn, then the plain 2M payment
   WALLET.__reset();
   await FLOW.performSuperRecaw(app, { target });
   {
@@ -360,11 +363,11 @@ const BYSTANDER = '0x2222222222222222222222222222222222222222';
     ok(s.submitCalls.length === 1, 'flow: the Recaw is submitted exactly once');
     ok(
       s.sends.length === 2 && isSrcBurn(s.sends[0].data),
-      'flow: money leg 1 is the marked 20M burn',
+      'flow: money leg 1 is the marked 3M burn',
     );
     ok(
       (s.sends[1].data.length - 2) / 2 === 68 && amtOf(s.sends[1].data) === SRC_AUTHOR,
-      'flow: money leg 2 is a plain 5M transfer to the author',
+      'flow: money leg 2 is a plain 2M transfer to the author',
     );
     ok(
       (await SR.pendingSrcBurnFor(ME, P1)) === null &&
@@ -433,7 +436,7 @@ const BYSTANDER = '0x2222222222222222222222222222222222222222';
     ok(
       !!pay && pay.amountRaw === SRC_AUTHOR &&
         pay.author.toLowerCase() === AUTHOR.toLowerCase(),
-      'flow: the landed burn hands the debt over — the 5M author payment is now owed',
+      'flow: the landed burn hands the debt over — the 2M author payment is now owed',
     );
     WALLET.__reset();
     await FLOW.performAuthorPay(app, { target, kind: 'src' });
@@ -471,7 +474,7 @@ const BYSTANDER = '0x2222222222222222222222222222222222222222';
   // SELF SuperRecaw: allowed (never blocked); the author leg
   // is skipped and the gate drops to the burn alone
   ownerAddr = ME;
-  oBal = O(21_000_000);
+  oBal = O(4_000_000);
   WALLET.__reset();
   {
     await FLOW.performSuperRecaw(app, { target });
@@ -485,7 +488,7 @@ const BYSTANDER = '0x2222222222222222222222222222222222222222';
       'flow: a self SuperRecaw can never leave a pay debt',
     );
   }
-  oBal = O(19_000_000);
+  oBal = O(2_000_000);
   WALLET.__reset();
   {
     let err = null;
@@ -496,12 +499,12 @@ const BYSTANDER = '0x2222222222222222222222222222222222222222';
     }
     ok(
       !!err && err.message === 'shortfall' && WALLET.__state.submitCalls.length === 0,
-      'flow: a self SuperRecaw still needs the 20M burn — 19M refuses before the Recaw',
+      'flow: a self SuperRecaw still needs the 3M burn — 2M refuses before the Recaw',
     );
   }
-  // non-self shortfall: 24M refuses the whole Super path
+  // non-self shortfall: 4M refuses the whole Super path
   ownerAddr = AUTHOR;
-  oBal = O(24_000_000);
+  oBal = O(4_000_000);
   WALLET.__reset();
   {
     let err = null;
@@ -512,7 +515,7 @@ const BYSTANDER = '0x2222222222222222222222222222222222222222';
     }
     ok(
       !!err && err.message === 'shortfall' && WALLET.__state.submitCalls.length === 0,
-      'flow: 24M (< the 25M total) refuses before the Recaw is signed',
+      'flow: 4M (< the 5M total) refuses before the Recaw is signed',
     );
   }
   oBal = O(100_000_000);

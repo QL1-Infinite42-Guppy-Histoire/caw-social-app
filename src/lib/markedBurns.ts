@@ -13,16 +13,26 @@
  *     + cawId (32 bytes, the post's CAW id)
  *
  * The economics changed in v0.6.3 (user decision 2026-11-13):
- * each action now costs 25,000,000 O IN TOTAL — a burn leg
- * plus a plain (unmarked) author-payment leg (see
- * lib/authorPay.ts and lib/actionFlow.ts):
+ * each action cost 25,000,000 O IN TOTAL — a burn leg plus a
+ * plain (unmarked) author-payment leg (see lib/authorPay.ts
+ * and lib/actionFlow.ts):
  *   SuperLike: 15,000,000 to the author + 10,000,000 burned
  *   SuperRecaw: 5,000,000 to the author + 20,000,000 burned
  * Under the v0.5.0–v0.6.2 spec both actions were a single
  * 1,000,000 O burn. Those legacy burns were genuine under
  * the spec of their time, so the detection sets below accept
- * BOTH the current burn amount and the legacy 1,000,000 for
+ * the current burn amount AND every earlier era's amount for
  * each magic — no cut-off, no lost history.
+ *
+ * v0.7.0 (user decision 2026-11-18) repriced both actions to
+ * 5,000,000 O IN TOTAL:
+ *   SuperLike: 4,000,000 to the author + 1,000,000 burned
+ *   SuperRecaw: 2,000,000 to the author + 3,000,000 burned
+ * The new SuperLike burn (1,000,000) coincides with the
+ * v0.5.0–v0.6.2 legacy amount, which the SLK1 detection set
+ * already accepted; the v0.6.3 burns (10,000,000 SLK1 /
+ * 20,000,000 SRC1) join the detection sets as legacy amounts
+ * so burns made under that price stay counted forever.
  *
  * The recipient is the burn address for everyone, so counts
  * cannot be gathered per author (the v0.4.8/9 design); instead
@@ -72,7 +82,7 @@ import type { KVStorage } from './myActions';
 /** The burn address (the project's established one). */
 export const BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD';
 
-/* ---------- the money (v0.6.3) ----------
+/* ---------- the money (v0.7.0) ----------
  * ONE source of truth for every SuperLike / SuperRecaw
  * amount. The prechecks, the confirmation sheets, the send
  * flows, the detection sets and the pending-leg records all
@@ -80,38 +90,52 @@ export const BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD';
 
 const o = (whole: number): bigint => BigInt(whole) * 10n ** 18n;
 
-/** SuperLike (v0.6.3): 25,000,000 O total. */
-export const SUPERLIKE_TOTAL_O = 25_000_000;
+/** SuperLike (v0.7.0): 5,000,000 O total. */
+export const SUPERLIKE_TOTAL_O = 5_000_000;
 export const SUPERLIKE_TOTAL_RAW = o(SUPERLIKE_TOTAL_O);
-export const SUPERLIKE_AUTHOR_O = 15_000_000;
+export const SUPERLIKE_AUTHOR_O = 4_000_000;
 export const SUPERLIKE_AUTHOR_RAW = o(SUPERLIKE_AUTHOR_O);
-export const SUPERLIKE_BURN_O = 10_000_000;
+export const SUPERLIKE_BURN_O = 1_000_000;
 export const SUPERLIKE_BURN_RAW = o(SUPERLIKE_BURN_O);
 
-/** SuperRecaw (v0.6.3): 25,000,000 O total (plus the Recaw). */
-export const SUPERRECAW_TOTAL_O = 25_000_000;
+/** SuperRecaw (v0.7.0): 5,000,000 O total (plus the Recaw). */
+export const SUPERRECAW_TOTAL_O = 5_000_000;
 export const SUPERRECAW_TOTAL_RAW = o(SUPERRECAW_TOTAL_O);
-export const SUPERRECAW_AUTHOR_O = 5_000_000;
+export const SUPERRECAW_AUTHOR_O = 2_000_000;
 export const SUPERRECAW_AUTHOR_RAW = o(SUPERRECAW_AUTHOR_O);
-export const SUPERRECAW_BURN_O = 20_000_000;
+export const SUPERRECAW_BURN_O = 3_000_000;
 export const SUPERRECAW_BURN_RAW = o(SUPERRECAW_BURN_O);
 
 /**
  * The v0.5.0–v0.6.2 burn price: exactly 1,000,000 O for BOTH
- * actions. Detection-only now — nothing new is ever sent at
- * this amount, but burns made under the old spec stay valid
- * forever (they were real when they were made).
+ * actions. For SuperRecaw it is detection-only now; for
+ * SuperLike it coincides with the v0.7.0 burn price above.
+ * Burns made under the old spec stay valid forever (they
+ * were real when they were made).
  */
 export const LEGACY_MARKED_BURN_O = 1_000_000;
 export const LEGACY_MARKED_BURN_RAW = o(LEGACY_MARKED_BURN_O);
 
+/**
+ * The v0.6.3 burn prices (SuperLike 10,000,000 / SuperRecaw
+ * 20,000,000). Detection-only since v0.7.0 — nothing new is
+ * sent at these amounts, but burns made under that price
+ * stay counted forever.
+ */
+export const V063_SUPERLIKE_BURN_O = 10_000_000;
+export const V063_SUPERLIKE_BURN_RAW = o(V063_SUPERLIKE_BURN_O);
+export const V063_SUPERRECAW_BURN_O = 20_000_000;
+export const V063_SUPERRECAW_BURN_RAW = o(V063_SUPERRECAW_BURN_O);
+
 /** Burn amounts that COUNT for each marker (current + legacy). */
 export const SUPERLIKE_BURN_AMOUNTS: readonly bigint[] = [
   SUPERLIKE_BURN_RAW,
+  V063_SUPERLIKE_BURN_RAW,
   LEGACY_MARKED_BURN_RAW,
 ];
 export const SUPERRECAW_BURN_AMOUNTS: readonly bigint[] = [
   SUPERRECAW_BURN_RAW,
+  V063_SUPERRECAW_BURN_RAW,
   LEGACY_MARKED_BURN_RAW,
 ];
 
@@ -310,7 +334,7 @@ async function absorb(logs: RawLog[]): Promise<void> {
     const mark = parseMarkedBurnInput(input);
     if (!mark) continue;
     // The amount must be one the marker accepts: the current
-    // burn for that action, or the legacy 1,000,000 (v0.6.3).
+    // burn for that action, or a legacy era's amount.
     if (!burnAmountsForMagic(mark.magic).includes(mark.amount)) continue;
     // The log's own value word must agree with the marked amount.
     try {

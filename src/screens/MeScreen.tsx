@@ -49,18 +49,21 @@ import SendScreen from './SendScreen';
  *     deposit into, and the section above offers Get-a-name
  *     instead). The address chip in (1) covers receive/copy,
  *     as it did on the hub.
- *  3. ASSET LIST — the seven balances as a vertical list
- *     (BalanceList), same order and same raw sources as the
- *     grid it replaces: wallet CAW / QOM (fees) / in-name
- *     CAW (the acting name's deposited balance) / [42] /
- *     CAT42 (tips) / O / KET. Unread stays the dash, real
- *     zero stays 0; tapping an amount toggles the exact
- *     figure; no prices, no fiat totals (no trusted price
- *     source exists, so none is invented).
+ *  3. ASSET LIST — the balances as a vertical list
+ *     (BalanceList): QOM (fees) / wallet CAW / in-name CAW
+ *     (the acting name's deposited balance) / O / KET /
+ *     HAWK / PHOENIX. Through v0.6.7 the list also carried
+ *     [42] and CAT42 rows; v0.7.0 removes both (user
+ *     decision 2026-11-18 — CAT42's tip role moved to
+ *     PHOENIX) and adds the HAWK / PHOENIX rows. The in-name
+ *     CAW row stays exactly as it was. Unread stays the
+ *     dash, real zero stays 0; tapping an amount toggles the
+ *     exact figure; no prices, no fiat totals (no trusted
+ *     price source exists, so none is invented).
  */
 function WalletDetail() {
   const app = useApp();
-  const { actingId, myTokens, address, qom, qcaw, f42, cat42, oTok, ket } =
+  const { actingId, myTokens, address, qom, qcaw, oTok, ket, hawk, phoenix } =
     app;
   const [sendOpen, setSendOpen] = useState(false);
   const [addrCopied, setAddrCopied] = useState(false);
@@ -173,20 +176,20 @@ function WalletDetail() {
           ) : null}
         </View>
 
-        {/* (3) Asset list — the seven balances, grid order,
-            grid sources, as rows. */}
+        {/* (3) Asset list — QOM / wallet CAW / in-name CAW /
+            O / KET / HAWK / PHOENIX (v0.7.0: the [42] and
+            CAT42 rows are gone; the in-name CAW row is
+            unchanged). */}
         <View style={{ paddingHorizontal: 16, marginTop: 20 }}>
           <BalanceList
             rows={[
-              { label: tr('home.qcaw'), unit: 'CAW', raw: qcaw },
               { label: tr('home.qom'), unit: 'QOM', raw: qom },
+              { label: tr('home.qcaw'), unit: 'CAW', raw: qcaw },
               {
                 label: tr('card.inName'),
                 unit: 'CAW',
                 raw: acting ? acting.balance : null,
               },
-              { label: tr('card.f42'), unit: '42', raw: f42 },
-              { label: tr('card.cat42'), unit: 'CAT42', raw: cat42 },
               {
                 label: 'O',
                 unit: 'O',
@@ -198,6 +201,18 @@ function WalletDetail() {
                 unit: 'KET',
                 raw: ket ? ket.raw : null,
                 decimals: ket ? ket.decimals : 18,
+              },
+              {
+                label: 'HAWK',
+                unit: 'HAWK',
+                raw: hawk ? hawk.raw : null,
+                decimals: hawk ? hawk.decimals : 18,
+              },
+              {
+                label: 'PHOENIX',
+                unit: 'PHOENIX',
+                raw: phoenix ? phoenix.raw : null,
+                decimals: phoenix ? phoenix.decimals : 18,
               },
             ]}
           />

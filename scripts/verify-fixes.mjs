@@ -432,12 +432,13 @@ try {
   check('v0.4.8: refreshBalances stores the 42 Chain reads only on success',
     /if \(b\.f42 !== null\) setF42\(b\.f42\)/.test(ctxSrc) &&
     /if \(b\.cat42 !== null\) setCat42\(b\.cat42\)/.test(ctxSrc));
-  check('v0.4.8 (grid form, v0.4.10; list form since v0.6.2): wallet list [42] + CAT42 rows take live state as raw (null -> dash)',
-    /unit: '42', raw: f42/.test(meSrc) &&
-    /unit: 'CAT42', raw: cat42/.test(meSrc));
-  check('v0.4.8 (grid form, v0.4.10; v0.6.1): App.tsx carries no [42]/CAT42 cells (name card retired); the wallet list keeps the shared CAT42 label key',
+  check('v0.4.8 (grid form, v0.4.10; list form since v0.6.2; v0.7.0 rows): wallet list HAWK + PHOENIX rows take live state as raw (null -> dash); the [42] + CAT42 rows were removed in v0.7.0',
+    /unit: 'HAWK',\s*raw: hawk \? hawk\.raw : null/.test(meSrc) &&
+    /unit: 'PHOENIX',\s*raw: phoenix \? phoenix\.raw : null/.test(meSrc) &&
+    !/unit: '42',/.test(meSrc) && !/unit: 'CAT42',/.test(meSrc));
+  check('v0.4.8 (grid form, v0.4.10; v0.6.1): App.tsx carries no [42]/CAT42 cells (name card retired); v0.7.0: the wallet list no longer renders the card.f42 / card.cat42 rows at all',
     !/unit: '42'/.test(appSrc) && !/unit: 'CAT42'/.test(appSrc) &&
-    /tr\('card\.cat42'\)/.test(meSrc));
+    !/tr\('card\.cat42'\)/.test(meSrc) && !/tr\('card\.f42'\)/.test(meSrc));
   check('v0.4.8: new label keys exist in all 20 language dicts',
     (i18nSrc.match(/'card\.cat42'/g) || []).length === 20 &&
     (i18nSrc.match(/'card\.f42'/g) || []).length === 20);

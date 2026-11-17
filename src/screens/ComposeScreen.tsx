@@ -26,7 +26,12 @@ import {
 import { fmtAmountCard, textBytes, type CawAction } from '../lib/cawCore';
 import { composeCostRaw } from '../lib/actionCosts';
 import { clearDraft, loadDraft, saveDraft } from '../lib/drafts';
-import { shortenUrlsInText } from '../lib/linkify';
+import { mentionFragmentAt, shortenUrlsInText } from '../lib/linkify';
+import {
+  ensureDirectory,
+  searchDirectory,
+  type NameEntry,
+} from '../lib/nameDirectory';
 import { noteOwnPost } from '../lib/feedSync';
 import {
   appendPostRef,
@@ -63,6 +68,35 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
   }, [target]);
 
   const [text, setText] = useState('');
+  /* @mention candidates (v0.7.0): the cursor position is
+   * tracked so the fragment being typed at the cursor can be
+   * matched against the name directory; dirTick re-renders
+   * when the directory finishes loading so candidates appear
+   * once names are available. */
+  const [sel, setSel] = useState({ start: 0, end: 0 });
+  const [, setDirTick] = useState(0);
+  useEffect(() => {
+    ensureDirectory()
+      .then(() => setDirTick((t) => t + 1))
+      .catch(() => {});
+  }, []);
+  const mentionFrag =
+    sel.start === sel.end
+      ? mentionFragmentAt(text.slice(0, sel.start))
+      : null;
+  const mentionCandidates: NameEntry[] =
+    mentionFrag && mentionFrag.partial.length >= 1
+      ? searchDirectory(mentionFrag.partial, 6)
+      : [];
+  const completeMention = (name: string) => {
+    if (!mentionFrag) return;
+    const insert = '@' + name + ' ';
+    const next =
+      text.slice(0, mentionFrag.atIndex) + insert + text.slice(sel.start);
+    setText(next);
+    const pos = mentionFrag.atIndex + insert.length;
+    setSel({ start: pos, end: pos });
+  };
   const [prepping, setPrepping] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -350,11 +384,43 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
                 autoFocus
                 value={text}
                 onChangeText={setText}
+                selection={sel}
+                onSelectionChange={(e) =>
+                  setSel(e.nativeEvent.selection)
+                }
                 onFocus={scrollComposerIntoView}
                 placeholder={tr('compose.ph')}
                 placeholderTextColor="#536471"
               />
             </View>
+            {/* @mention candidates (v0.7.0): while an @name
+                fragment is being typed at the cursor, matching
+                names from the directory ride under the field;
+                tapping one completes the mention in place. */}
+            {mentionCandidates.length > 0 ? (
+              <ScrollView
+                horizontal
+                keyboardShouldPersistTaps="handled"
+                showsHorizontalScrollIndicator={false}
+                style={{ marginTop: 10 }}
+                contentContainerStyle={{ gap: 8, paddingEnd: 8 }}
+              >
+                {mentionCandidates.map((c) => (
+                  <Pressable
+                    key={c.id.toString()}
+                    onPress={() => completeMention(c.name)}
+                    style={({ pressed }) => [
+                      styles.mentionChip,
+                      pressed && { backgroundColor: '#e3e8ea' },
+                    ]}
+                    accessibilityRole="button"
+                  >
+                    <Avatar nameId={c.id} size={24} />
+                    <Text style={styles.mentionChipText}>@{c.name}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : null}
             {/* Cost line (v0.6.0): what this post costs and
                 what the ACTIVE name holds — the two numbers a
                 poster needs at the moment of posting, and
@@ -532,6 +598,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   nameChipText: { fontSize: 13.5, color: ACCENT, fontWeight: '700' },
+  mentionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    backgroundColor: '#eff3f4',
+    borderRadius: 999,
+    paddingStart: 5,
+    paddingEnd: 12,
+    paddingVertical: 5,
+  },
+  mentionChipText: { fontSize: 14, fontWeight: '700', color: '#0f1419' },
   pickerBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',

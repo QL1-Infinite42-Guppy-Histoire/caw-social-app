@@ -125,6 +125,11 @@ export interface AppContextValue {
    *  Same null rule: null is "no successful read yet". */
   oTok: TokenBalance | null;
   ket: TokenBalance | null;
+  /** HAWK and PHOENIX balances on QL1 (v0.7.0), each with the
+   *  decimals its contract reports. Same null rule. PHOENIX
+   *  also backs the tip sheet (it is the tip currency). */
+  hawk: TokenBalance | null;
+  phoenix: TokenBalance | null;
   refreshBalances: () => Promise<void>;
   /* acting (posting) name, remembered per account like the web version */
   actingId: bigint | null;
@@ -226,6 +231,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [cat42, setCat42] = useState<bigint | null>(null);
   const [oTok, setOTok] = useState<TokenBalance | null>(null);
   const [ket, setKet] = useState<TokenBalance | null>(null);
+  const [hawk, setHawk] = useState<TokenBalance | null>(null);
+  const [phoenix, setPhoenix] = useState<TokenBalance | null>(null);
   const [actingId, setActingId] = useState<bigint | null>(null);
   const [myTokens, setMyTokens] = useState<NameToken[]>([]);
   const [myTokensReady, setMyTokensReady] = useState(false);
@@ -382,6 +389,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (b.cat42 !== null) setCat42(b.cat42);
     if (b.oTok !== null) setOTok(b.oTok);
     if (b.ket !== null) setKet(b.ket);
+    if (b.hawk !== null) setHawk(b.hawk);
+    if (b.phoenix !== null) setPhoenix(b.phoenix);
   }, []);
 
   const refreshMyTokens = useCallback(async (): Promise<NameToken[]> => {
@@ -775,6 +784,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     cat42,
     oTok,
     ket,
+    hawk,
+    phoenix,
     refreshBalances,
     actingId,
     myTokens,

@@ -39,7 +39,7 @@ import {
   superRecawCachedFor,
 } from '../lib/superRecaw';
 import {
-  TIP_PRESETS_CAT42,
+  TIP_PRESETS,
   parseTipAmount,
   tipChipAmount,
   tipPresetRaw,
@@ -56,7 +56,7 @@ import {
   extractUrls,
   fetchPreview,
   shortenUrl,
-  splitLinkSegments,
+  splitRichSegments,
   type LinkPreview,
 } from '../lib/linkify';
 import {
@@ -270,6 +270,15 @@ export function RepeatIcon({ size = 18, color = '#536471' }: { size?: number; co
       <Path d="M3 11V9a4 4 0 0 1 4-4h14" />
       <Polyline points="7 23 3 19 7 15" />
       <Path d="M21 13v2a4 4 0 0 1-4 4H3" />
+    </Svg>
+  );
+}
+/** Flame (v0.7.0): the BurnHawk drawer row's mark — a simple
+ *  flame outline in the same feather stroke style. */
+export function FlameIcon({ size = 18, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 22c4.1 0 7-2.9 7-6.8 0-3.2-2.1-5.4-3.6-7C14.2 6.9 13 5.2 13 2c-3 2-5.5 4.6-5.6 7.6-.3-.5-.6-1.2-.7-2C5.6 9.2 5 11.4 5 13.4 5 18.9 7.9 22 12 22z" />
     </Svg>
   );
 }
@@ -799,6 +808,7 @@ function TargetPostQuote({
         text={post.text}
         style={postStyles.quoteText}
         numberOfLines={4}
+        onMention={onOpenProfile}
       />
     </Pressable>
   );
@@ -857,6 +867,7 @@ export function QuotedPostFrame({
         text={displayTextOf(post.text)}
         style={postStyles.quoteText}
         numberOfLines={4}
+        onMention={onOpenProfile}
       />
     </Pressable>
   );
@@ -920,18 +931,27 @@ export function OriginalFrame({
  * render in the accent colour and open the URL on tap; every
  * other segment is plain text. With no URL in the text this is
  * exactly the plain <Text> it replaces.
+ *
+ * v0.7.0 adds @mentions: an @name segment renders in the
+ * accent colour too and, when the caller passes onMention,
+ * opens that name's profile on tap. Without a handler the
+ * mention is plain text — never a dead link. (Mentions are a
+ * display affordance only: no notification is sent — the
+ * standing QL1 decision omits notifications.)
  */
 export function LinkifiedText({
   text,
   style,
   numberOfLines,
+  onMention,
 }: {
   text: string;
   style?: React.ComponentProps<typeof Text>['style'];
   numberOfLines?: number;
+  onMention?: (username: string) => void;
 }) {
-  const segments = splitLinkSegments(text);
-  if (!segments.some((s) => s.url)) {
+  const segments = splitRichSegments(text);
+  if (!segments.some((s) => s.url || (s.mention && onMention))) {
     return (
       <Text style={style} numberOfLines={numberOfLines}>
         {text}
@@ -946,6 +966,14 @@ export function LinkifiedText({
             key={i}
             style={{ color: ACCENT }}
             onPress={() => Linking.openURL(s.url as string)}
+          >
+            {s.text}
+          </Text>
+        ) : s.mention && onMention ? (
+          <Text
+            key={i}
+            style={{ color: ACCENT }}
+            onPress={() => onMention(s.mention as string)}
           >
             {s.text}
           </Text>
@@ -1459,10 +1487,18 @@ function PostCardBase({
         {item.type === 0 && bodyText ? (
           onOpenPost ? (
             <Pressable onPress={() => onOpenPost(item)}>
-              <LinkifiedText text={bodyText} style={postStyles.text} />
+              <LinkifiedText
+                text={bodyText}
+                style={postStyles.text}
+                onMention={onOpenProfile}
+              />
             </Pressable>
           ) : (
-            <LinkifiedText text={bodyText} style={postStyles.text} />
+            <LinkifiedText
+              text={bodyText}
+              style={postStyles.text}
+              onMention={onOpenProfile}
+            />
           )
         ) : null}
         {firstUrl ? <LinkSnippetCard url={firstUrl} /> : null}
@@ -1907,7 +1943,7 @@ export function TipSheet({
   /**
    * The resolved recipient address (audit M1): a tip is a
    * plain transfer and cannot be recalled, so the sheet
-   * SHOWS where the CAT42 will actually go — shortened with
+   * SHOWS where the PHOENIX will actually go — shortened with
    * the last four characters emphasised, the app's usual
    * spot-check shape — instead of only naming the author.
    * Null while unresolved (the line is then omitted; the
@@ -1921,11 +1957,11 @@ export function TipSheet({
   onCancel: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const [preset, setPreset] = useState<number | null>(10);
+  const [preset, setPreset] = useState<number | null>(TIP_PRESETS[0]);
   const [custom, setCustom] = useState('');
   useEffect(() => {
     if (visible) {
-      setPreset(10);
+      setPreset(TIP_PRESETS[0]);
       setCustom('');
     }
   }, [visible]);
@@ -1968,7 +2004,7 @@ export function TipSheet({
             })}
           </Text>
           <View style={[S.row, { gap: 8, marginTop: 14 }]}>
-            {TIP_PRESETS_CAT42.map((p) => {
+            {TIP_PRESETS.map((p) => {
               const on = preset === p;
               return (
                 <Pressable
@@ -1989,7 +2025,7 @@ export function TipSheet({
                       color: on ? '#fff' : '#0f1419',
                     }}
                   >
-                    {p} CAT42
+                    {p} PHOENIX
                   </Text>
                 </Pressable>
               );

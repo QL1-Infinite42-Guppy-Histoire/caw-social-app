@@ -45,7 +45,8 @@ execFileSync(
   ],
   { stdio: 'inherit', cwd: ROOT },
 );
-const { extractUrls, splitLinkSegments, shortenUrlsInText, fetchPreview } =
+const { extractUrls, splitLinkSegments, shortenUrlsInText, fetchPreview,
+  splitRichSegments, mentionFragmentAt } =
   require(BUILD + '/lib/linkify.js');
 const { appendPostRef, parsePostText } = require(BUILD + '/lib/postRef.js');
 const { LINK_SERVICE_URL } = require(BUILD + '/config.js');
@@ -155,6 +156,36 @@ check('marker: shortened body round-trips through parsePostText',
     parsedBack.ref !== null &&
     parsedBack.ref.kind === 'reply' &&
     parsedBack.ref.parentCawId === parentCawId);
+
+/* ---------- 8. mentions (v0.7.0) ---------- */
+{
+  const segs = splitRichSegments('hello @alice world');
+  check('mention: @name in plain text becomes a mention segment',
+    segs.length === 3 && segs[1].mention === 'alice' && segs[1].text === '@alice');
+  check('mention: an email address yields NO mention',
+    splitRichSegments('mail me at foo@bar.com please').every((s) => !s.mention));
+  const paren = splitRichSegments('(@Bob) said hi');
+  check('mention: after punctuation, case-normalised to the CAW name form',
+    paren.some((s) => s.mention === 'bob'));
+  const inUrl = splitRichSegments('see https://example.com/@alice now');
+  check('mention: an @ inside a URL stays part of the URL',
+    inUrl.some((s) => s.url) && inUrl.every((s) => !s.mention));
+  const jp = splitRichSegments('やあ @neptune さん');
+  check('mention: a name stops at the first non-name character (Japanese text)',
+    jp.some((s) => s.mention === 'neptune'));
+  const frag = mentionFragmentAt('hey @al');
+  check('composer fragment: partial name + @ index at the cursor',
+    frag !== null && frag.partial === 'al' && frag.atIndex === 4);
+  const fragEmpty = mentionFragmentAt('hey @');
+  check('composer fragment: a just-typed @ gives an empty partial',
+    fragEmpty !== null && fragEmpty.partial === '' && fragEmpty.atIndex === 4);
+  check('composer fragment: an email @ is not a mention fragment',
+    mentionFragmentAt('foo@al') === null);
+  check('composer fragment: no @ before the cursor → null',
+    mentionFragmentAt('hey alice') === null);
+  check('composer fragment: cursor after a space ends the fragment',
+    mentionFragmentAt('hey @al ') === null);
+}
 
 /* ---------- 7. preview ---------- */
 const pv = await fetchPreview(LONG1, mockOk);

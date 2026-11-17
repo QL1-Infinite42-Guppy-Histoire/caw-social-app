@@ -77,6 +77,22 @@ export const CAT42 = '0x7386719EBbBeB4d810fF89027Bfb8A1CDf696310';
  *  named.) Decimals are still read from the contract at
  *  runtime, never assumed. */
 export const O_TOKEN = '0x6c39b68a28bA90F4EB80032ec0eB32ad81cbbEd4';
+/** PHOENIX on QL1 (18 decimals) — the tip currency since
+ *  v0.7.0 (user decision 2026-11-18), replacing CAT42 in that
+ *  role. This is the PHOENIX contract that also carries the
+ *  burnToMint HAWK→PHOENIX mechanism the BurnHawk screen uses
+ *  (see lib/burnHawk.ts): verified live on 2026-11-18 from
+ *  real burnToMint transactions (100 HAWK burned → 1 PHOENIX
+ *  minted, exactly 100:1). A second, unrelated PHOENIX exists
+ *  on QL1 (0xd0B6…6CCD, 6 holders); it is NOT this one.
+ *  Decimals are read from the contract at runtime wherever a
+ *  balance is shown, never assumed. */
+export const PHOENIX = '0xDFe660C5a29c8AADF1daA096543D249135e1938A';
+/** HAWK on QL1 (18 decimals) — the token the BurnHawk screen
+ *  burns. The same contract the aggregator's QL1 table lists
+ *  (aggEngine CHAINS.ql1.tokens, id "hawk"); a different HAWK
+ *  exists on 42 Chain (0x4e3e…1db2) and is not used here. */
+export const HAWK = '0xbC85F14059d60458b614052b4a84734E463878cc';
 /** KET on 42 Chain, resolved from the aggregator's 42 Chain
  *  token table (aggEngine CHAINS.infinite.tokens) and verified
  *  live 2026-11-10 (v0.4.10): code present on 42 Chain,

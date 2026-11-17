@@ -107,6 +107,108 @@ export function extractUrls(text: string): string[] {
     .map((s) => s.url as string);
 }
 
+/* ---------------- mentions (v0.7.0) ---------------- */
+
+/**
+ * A segment of post text after BOTH link and mention
+ * splitting: a URL segment (url set), an @mention segment
+ * (mention set to the CAW name, lowercased, without the @),
+ * or plain text.
+ */
+export interface RichSegment {
+  text: string;
+  url?: string;
+  mention?: string;
+}
+
+/**
+ * Is this `@` at position i the start of a mention? The @
+ * must not be glued to a preceding word character (so an
+ * email address like foo@bar never yields a mention), and
+ * at least one name character must follow. CAW names are
+ * lowercase letters + digits (see isMintableUsername in
+ * lib/cawCore.ts); typed text may use uppercase, which the
+ * match accepts and the segment value lowercases.
+ */
+function mentionNameAt(text: string, i: number): string | null {
+  if (text[i] !== '@') return null;
+  if (i > 0 && /[A-Za-z0-9]/.test(text[i - 1])) return null;
+  let j = i + 1;
+  while (j < text.length && /[A-Za-z0-9]/.test(text[j])) j++;
+  if (j === i + 1) return null;
+  return text.slice(i + 1, j).toLowerCase();
+}
+
+/** Split a plain (non-URL) run of text on @mentions. */
+function splitMentionSegments(text: string): RichSegment[] {
+  const out: RichSegment[] = [];
+  let buf = '';
+  let i = 0;
+  while (i < text.length) {
+    const name = text[i] === '@' ? mentionNameAt(text, i) : null;
+    if (name !== null) {
+      if (buf) {
+        out.push({ text: buf });
+        buf = '';
+      }
+      out.push({ text: text.slice(i, i + 1 + name.length), mention: name });
+      i += 1 + name.length;
+    } else {
+      buf += text[i];
+      i++;
+    }
+  }
+  if (buf) out.push({ text: buf });
+  return out;
+}
+
+/**
+ * Split post text into plain / URL / @mention segments, in
+ * order. URLs win first (an @ inside a URL stays part of the
+ * URL); mentions are only recognised in the plain runs
+ * between URLs.
+ */
+export function splitRichSegments(text: string): RichSegment[] {
+  const out: RichSegment[] = [];
+  for (const seg of splitLinkSegments(text)) {
+    if (seg.url) {
+      out.push({ text: seg.text, url: seg.url });
+    } else {
+      out.push(...splitMentionSegments(seg.text));
+    }
+  }
+  if (out.length === 0 && text.length > 0) out.push({ text });
+  return out;
+}
+
+/**
+ * The @mention being typed at the END of `textBeforeCursor`,
+ * or null: the run of name characters right before the
+ * cursor, when it is headed by an @ that starts a mention
+ * (same boundary rule as the renderer). Returns the partial
+ * name (lowercased, possibly '') and the index of the @, so
+ * the composer can offer candidates and complete the name.
+ * An empty partial (a just-typed @) yields { partial: '' } —
+ * the caller decides whether to list candidates for it.
+ */
+export function mentionFragmentAt(
+  textBeforeCursor: string,
+): { partial: string; atIndex: number } | null {
+  let i = textBeforeCursor.length;
+  while (i > 0 && /[A-Za-z0-9]/.test(textBeforeCursor[i - 1])) i--;
+  if (i === 0 || textBeforeCursor[i - 1] !== '@') return null;
+  const atIndex = i - 1;
+  // The @ must itself start a mention (not be glued to a
+  // preceding word character, e.g. inside an email address).
+  if (atIndex > 0 && /[A-Za-z0-9]/.test(textBeforeCursor[atIndex - 1])) {
+    return null;
+  }
+  return {
+    partial: textBeforeCursor.slice(i).toLowerCase(),
+    atIndex,
+  };
+}
+
 /* ---------------- shortening ---------------- */
 
 type FetchFn = typeof fetch;
