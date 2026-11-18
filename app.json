@@ -1,7 +1,7 @@
 {
   "expo": {
     "android": {
-      "versionCode": 50,
+      "versionCode": 51,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -39,10 +39,17 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "CAW Social uses a picture you choose as your profile picture, stored only on this phone."
+          "photosPermission": "CAW Social uses a picture you choose as your profile picture. A picture you set is shared with other users."
         }
       ],
-      "./plugins/withAllowBackupFalse.js"
+      "./plugins/withAllowBackupFalse.js",
+      [
+        "expo-audio",
+        {
+          "recordAudioAndroid": false,
+          "enableBackgroundPlayback": false
+        }
+      ]
     ],
     "scheme": "cawsocial",
     "slug": "caw-social-app",
@@ -52,7 +59,7 @@
       "backgroundColor": "#151426"
     },
     "userInterfaceStyle": "light",
-    "version": "0.7.2",
+    "version": "0.7.3",
     "web": {
       "favicon": "./assets/icon.png"
     }

@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import * as DocumentPicker from 'expo-document-picker';
 
 import {
   Avatar,
@@ -78,6 +80,14 @@ import {
   deleteProfileImage,
   pickAndStoreProfileImage,
 } from '../lib/profileImage';
+import {
+  MediaApiError,
+  clearProfileMedia,
+  mediaFor,
+  setProfileMedia,
+  type ProfileMedia,
+} from '../lib/mediaApi';
+import { signerFor } from '../lib/wallet';
 
 type PendingAction = { kind: 1 | 2; item: TimelineItem };
 type LoadState = 'loading' | 'ok' | 'fail' | 'notfound';
@@ -164,6 +174,46 @@ export default function ProfileScreen({
   const followedByMe =
     profileId !== null ? app.hasFollowed(profileId) : false;
 
+  /* Shared profile media (v0.7.3, media server): the icon /
+   * header / audio this name's owner published for everyone.
+   * Display priority everywhere: server media → on-device
+   * custom (own names only) → the NFT card look. mediaFor
+   * never rejects; null = nothing shared (or server down). The
+   * Avatar component resolves the icon itself (ui.tsx); this
+   * screen needs the header + audio, so it keeps its own copy. */
+  const [serverMedia, setServerMedia] = useState<ProfileMedia | null>(
+    null,
+  );
+  useEffect(() => {
+    if (profileId === null) {
+      setServerMedia(null);
+      return;
+    }
+    let live = true;
+    setServerMedia(null);
+    mediaFor(profileId).then((m) => live && setServerMedia(m));
+    return () => {
+      live = false;
+    };
+  }, [profileId]);
+
+  /* Profile audio playback (v0.7.3): one player per profile
+   * screen; the source follows the profile's shared audio.
+   * Playback only — the app never records. */
+  const audioPlayer = useAudioPlayer();
+  const audioStatus = useAudioPlayerStatus(audioPlayer);
+  const audioUrl = serverMedia?.audio?.url ?? null;
+  useEffect(() => {
+    audioPlayer.pause();
+    if (audioUrl) audioPlayer.replace({ uri: audioUrl });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioUrl]);
+  const toggleAudio = useCallback(() => {
+    if (audioStatus.playing) audioPlayer.pause();
+    else audioPlayer.play();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioStatus.playing]);
+
   const openEditor = useCallback(() => {
     setEditName(custom && custom.displayName ? custom.displayName : '');
     setEditBio(custom && custom.bio ? custom.bio : '');
@@ -203,6 +253,32 @@ export default function ProfileScreen({
             kind === 'avatar' ? { avatarPath: uri } : { headerPath: uri },
           );
           setEditNote('');
+          /* Publish it (v0.7.3, media server): the same stored
+           * copy is uploaded under a signature from this name's
+           * wallet, so every client shows it. Best effort — the
+           * on-device save above already succeeded, so a failed
+           * upload only changes the note, never the local look. */
+          const secret = app.getSecret();
+          if (secret) {
+            try {
+              setEditNote(tr('media.uploading'));
+              await setProfileMedia(
+                kind === 'avatar' ? 'icon' : 'header',
+                uri,
+                undefined,
+                signerFor(secret.kind, secret.secret),
+                profileId,
+              );
+              setServerMedia(await mediaFor(profileId));
+              setEditNote(tr('media.uploaded'));
+            } catch (e) {
+              setEditNote(
+                e instanceof MediaApiError && e.status === 413
+                  ? tr('media.tooLarge')
+                  : tr('media.uploadFail'),
+              );
+            }
+          }
         }
         // uri === null: the user cancelled (or denied the photo
         // permission) — not an error, nothing to report.
@@ -227,9 +303,95 @@ export default function ProfileScreen({
         deleteProfileImage(old.avatarPath);
         deleteProfileImage(old.headerPath);
       }
+      /* Unpublish the shared pictures too (v0.7.3): the reset
+       * promises "back to the default look", which since the
+       * media server includes the icon/header everyone else
+       * sees. Best effort — a down server must not block the
+       * local reset. (Profile audio has its own remove row.) */
+      const secret = app.getSecret();
+      if (secret) {
+        const signer = signerFor(secret.kind, secret.secret);
+        await clearProfileMedia('icon', signer, profileId).catch(
+          () => {},
+        );
+        await clearProfileMedia('header', signer, profileId).catch(
+          () => {},
+        );
+        setServerMedia(await mediaFor(profileId));
+      }
       setEditName('');
       setEditBio('');
       setEditNote('');
+    } finally {
+      setEditBusy(false);
+    }
+  }, [app, profileId]);
+
+  /* Profile audio (v0.7.3): pick an audio file and publish it,
+   * or remove the published one. There is no on-device custom
+   * audio — the media server is its only home. */
+  const pickAudio = useCallback(async () => {
+    if (profileId === null) return;
+    let picked: DocumentPicker.DocumentPickerAsset | null = null;
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/*'],
+        copyToCacheDirectory: true,
+      });
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        picked = res.assets[0];
+      }
+    } catch {
+      setEditNote(tr('media.uploadFail'));
+      return;
+    }
+    if (!picked) return; // cancelled — not an error
+    const secret = app.getSecret();
+    if (!secret) {
+      setEditNote(tr('media.uploadFail'));
+      return;
+    }
+    setEditBusy(true);
+    try {
+      setEditNote(tr('media.uploading'));
+      await setProfileMedia(
+        'audio',
+        picked.uri,
+        picked.mimeType ?? undefined,
+        signerFor(secret.kind, secret.secret),
+        profileId,
+      );
+      setServerMedia(await mediaFor(profileId));
+      setEditNote(tr('media.uploaded'));
+    } catch (e) {
+      setEditNote(
+        e instanceof MediaApiError && e.status === 413
+          ? tr('media.tooLarge')
+          : tr('media.uploadFail'),
+      );
+    } finally {
+      setEditBusy(false);
+    }
+  }, [app, profileId]);
+
+  const removeAudio = useCallback(async () => {
+    if (profileId === null) return;
+    const secret = app.getSecret();
+    if (!secret) {
+      setEditNote(tr('media.uploadFail'));
+      return;
+    }
+    setEditBusy(true);
+    try {
+      await clearProfileMedia(
+        'audio',
+        signerFor(secret.kind, secret.secret),
+        profileId,
+      );
+      setServerMedia(await mediaFor(profileId));
+      setEditNote('');
+    } catch {
+      setEditNote(tr('media.uploadFail'));
     } finally {
       setEditBusy(false);
     }
@@ -833,7 +995,13 @@ export default function ProfileScreen({
   const header = (
     <View>
       {backRow}
-      {custom && custom.headerPath ? (
+      {serverMedia?.header ? (
+        <Image
+          source={{ uri: serverMedia.header.url }}
+          style={styles.banner}
+          resizeMode="cover"
+        />
+      ) : custom && custom.headerPath ? (
         <Image
           source={{ uri: custom.headerPath }}
           style={styles.banner}
@@ -903,6 +1071,28 @@ export default function ProfileScreen({
 
         {custom && custom.bio ? (
           <Text style={[S.body, { marginTop: 8 }]}>{custom.bio}</Text>
+        ) : null}
+
+        {/* Profile audio (v0.7.3, media server): a play/pause
+            row on ANY profile that published one. The player
+            itself lives with the state above; this is just the
+            button. */}
+        {audioUrl ? (
+          <Pressable
+            style={({ pressed }) => [
+              styles.audioRow,
+              pressed && { backgroundColor: '#f7f9f9' },
+            ]}
+            onPress={toggleAudio}
+            accessibilityRole="button"
+          >
+            <Text style={styles.audioGlyph}>
+              {audioStatus.playing ? '❚❚' : '▶'}
+            </Text>
+            <Text style={[S.body, { marginStart: 9 }]}>
+              {tr('media.audio')}
+            </Text>
+          </Pressable>
         ) : null}
 
         {isOwn || isMine ? (
@@ -1393,7 +1583,9 @@ export default function ProfileScreen({
             >
               <Text style={S.ghostBtnText}>
                 {tr('custom.pickAvatar')}
-                {custom && custom.avatarPath ? '' : '（' + tr('custom.notSet') + '）'}
+                {(custom && custom.avatarPath) || serverMedia?.icon
+                  ? ''
+                  : '（' + tr('custom.notSet') + '）'}
               </Text>
             </Pressable>
             <View style={{ height: 10 }} />
@@ -1404,9 +1596,49 @@ export default function ProfileScreen({
             >
               <Text style={S.ghostBtnText}>
                 {tr('custom.pickHeader')}
-                {custom && custom.headerPath ? '' : '（' + tr('custom.notSet') + '）'}
+                {(custom && custom.headerPath) || serverMedia?.header
+                  ? ''
+                  : '（' + tr('custom.notSet') + '）'}
               </Text>
             </Pressable>
+            {/* Shared media (v0.7.3): unlike the display name
+                and bio above, pictures and audio are published
+                for everyone — the note says so where the user
+                acts on it. */}
+            <Text style={[S.small, { marginTop: 12 }]}>
+              {tr('media.note')}
+            </Text>
+
+            <Text style={[S.h2, { marginTop: 18 }]}>
+              {tr('media.audio')}
+            </Text>
+            <View style={{ height: 8 }} />
+            <Pressable
+              style={[S.ghostBtn, editBusy && S.disabled]}
+              disabled={editBusy}
+              onPress={pickAudio}
+            >
+              <Text style={S.ghostBtnText}>
+                {tr('media.pickAudio')}
+                {serverMedia?.audio
+                  ? ''
+                  : '（' + tr('custom.notSet') + '）'}
+              </Text>
+            </Pressable>
+            {serverMedia?.audio ? (
+              <>
+                <View style={{ height: 10 }} />
+                <Pressable
+                  style={[S.ghostBtn, editBusy && S.disabled]}
+                  disabled={editBusy}
+                  onPress={removeAudio}
+                >
+                  <Text style={S.ghostBtnText}>
+                    {tr('media.removeAudio')}
+                  </Text>
+                </Pressable>
+              </>
+            ) : null}
 
             {editNote ? (
               <Text style={[S.err, { marginTop: 14 }]}>{editNote}</Text>
@@ -1490,6 +1722,20 @@ const styles = StyleSheet.create({
   },
   backText: { fontSize: 15, color: ACCENT, fontWeight: '600' },
   banner: { height: 110 },
+  /* Profile audio playback row (v0.7.3). */
+  audioRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#cfd9de',
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    alignSelf: 'flex-start',
+    backgroundColor: '#fff',
+  },
+  audioGlyph: { fontSize: 14, color: ACCENT, fontWeight: '700' },
   avatarRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

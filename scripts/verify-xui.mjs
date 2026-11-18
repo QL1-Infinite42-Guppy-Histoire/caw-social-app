@@ -509,10 +509,10 @@ console.log('\n-- structure / reachability --');
     'the header Post pill opens the same confirmation sheet; the bottom button is gone',
   );
   ok(
-    !composeSrc.includes('ImagePicker') &&
-      !composeSrc.includes('launchImageLibrary') &&
-      !composeSrc.includes('expo-image-picker'),
-    'no image attach wiring in the composer (a separate phase — no dead buttons)',
+    composeSrc.includes('launchImageLibraryAsync') &&
+      composeSrc.includes('attachToPost') &&
+      composeSrc.includes('MEDIA_ATTACH_PER_POST'),
+    'image attach wiring in the composer (v0.7.3, media server — the phase the v0.6.0 note deferred): picker + signed attach after the post lands; a wired button, not a dead one',
   );
 
   // PostCard action row: element order + views gating + gold star.
@@ -660,7 +660,7 @@ console.log('\n-- structure / reachability --');
   );
   ok(
     /actionRow: \{[^}]*justifyContent: 'space-between'/.test(uiSrc) &&
-      !uiSrc.includes("flexWrap: 'wrap'") &&
+      !/actionRow: \{[^}]*flexWrap/.test(uiSrc) &&
       uiSrc.includes('formatViewCount(Number(likes))') &&
       uiSrc.includes('formatViewCount(replyCount)') &&
       uiSrc.includes('formatViewCount(recawCount)') &&

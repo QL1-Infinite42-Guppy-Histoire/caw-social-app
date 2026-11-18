@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -13,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 
 import { Avatar, ConfirmSheet, QuotedPostFrame, S } from '../components/ui';
 import { ACCENT } from '../config';
@@ -38,7 +40,11 @@ import {
   postRefOverhead,
   type PostRef,
 } from '../lib/postRef';
-import { nowSec, randomCawId, submitAction } from '../lib/wallet';
+import { nowSec, randomCawId, signerFor, submitAction } from '../lib/wallet';
+import {
+  MEDIA_ATTACH_PER_POST,
+  attachToPost,
+} from '../lib/mediaApi';
 
 export default function ComposeScreen({ onClose }: { onClose: () => void }) {
   const app = useApp();
@@ -96,6 +102,36 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
     setText(next);
     const pos = mentionFrag.atIndex + insert.length;
     setSel({ start: pos, end: pos });
+  };
+  /* Image attachments (v0.7.3, media server): picked URIs ride
+   * along with the draft text in memory only (drafts persist
+   * text, not images — a restored draft starts imageless). They
+   * are uploaded after the post confirms on-chain and bound to
+   * it by signature; see doPost. */
+  const [images, setImages] = useState<
+    { uri: string; mimeType?: string }[]
+  >([]);
+  const pickImages = async () => {
+    const room = MEDIA_ATTACH_PER_POST - images.length;
+    if (room <= 0) return;
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      selectionLimit: room,
+      quality: 0.85,
+    });
+    if (res.canceled || !res.assets) return;
+    setImages((prev) =>
+      [
+        ...prev,
+        ...res.assets.map((a) => ({
+          uri: a.uri,
+          mimeType: a.mimeType ?? undefined,
+        })),
+      ].slice(0, MEDIA_ATTACH_PER_POST),
+    );
   };
   const [prepping, setPrepping] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -251,11 +287,36 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
       });
       if (!postRef && app.address) await clearDraft(app.address);
       setConfirmOpen(false);
+      /* Attach the picked images (v0.7.3, media server): the
+       * post is already confirmed on-chain, so this is a
+       * best-effort second step — each image is bound to the
+       * post by a signature the server checks against the post
+       * transaction itself. A failed attach NEVER fails the
+       * post; it only changes the closing note (and the close
+       * waits a little longer so the note can be read). */
+      let attachFailed = false;
+      if (images.length > 0) {
+        setStatusOk(true);
+        setStatus(tr('media.uploading'));
+        const signer = signerFor(secret.kind, secret.secret);
+        for (const im of images) {
+          try {
+            await attachToPost(cawId, hash, im.uri, signer, acting.id);
+          } catch {
+            attachFailed = true;
+          }
+        }
+      }
       setStatusOk(true);
-      setStatus(tr('compose.posted'));
-      timerRef.current = setTimeout(() => {
-        onClose();
-      }, 1200);
+      setStatus(
+        attachFailed ? tr('compose.attachFailed') : tr('compose.posted'),
+      );
+      timerRef.current = setTimeout(
+        () => {
+          onClose();
+        },
+        attachFailed ? 3200 : 1200,
+      );
     } catch {
       setConfirmOpen(false);
       setStatusOk(false);
@@ -280,9 +341,9 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
           blue Post pill at the right. The pill opens the SAME
           confirmation sheet the old bottom button did — the
           reply/quote/plain titles live on that sheet now, so
-          no context is lost. No image/GIF/poll/location
-          buttons anywhere: media attach is a separate phase
-          and this screen ships no dead buttons. */}
+          no context is lost. Image attach (v0.7.3, media
+          server) lives under the text field; there are still
+          no poll/location buttons — no dead buttons. */}
       <View style={styles.headerRow}>
         <Pressable onPress={onClose} hitSlop={10} accessibilityRole="button">
           <Text style={styles.closeX}>✕</Text>
@@ -420,6 +481,60 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
                   </Pressable>
                 ))}
               </ScrollView>
+            ) : null}
+            {/* Image attachments (v0.7.3, media server): pick up
+                to 4 images; thumbnails carry a remove ✕. The
+                images upload after the post lands (doPost) —
+                nothing here touches the chain. */}
+            <View style={[S.row, { marginTop: 10, alignItems: 'center' }]}>
+              <Pressable
+                onPress={pickImages}
+                disabled={
+                  sending || images.length >= MEDIA_ATTACH_PER_POST
+                }
+                style={({ pressed }) => [
+                  styles.attachBtn,
+                  (sending || images.length >= MEDIA_ATTACH_PER_POST) &&
+                    S.disabled,
+                  pressed && { backgroundColor: '#e8f5fe' },
+                ]}
+                accessibilityRole="button"
+              >
+                <Text style={styles.attachBtnText}>
+                  {tr('compose.addImages')} ({images.length}/
+                  {MEDIA_ATTACH_PER_POST})
+                </Text>
+              </Pressable>
+            </View>
+            {images.length > 0 ? (
+              <View
+                style={[
+                  S.row,
+                  { marginTop: 8, gap: 8, flexWrap: 'wrap' },
+                ]}
+              >
+                {images.map((im, i) => (
+                  <View key={im.uri + ':' + i} style={styles.thumbWrap}>
+                    <Image
+                      source={{ uri: im.uri }}
+                      style={styles.thumb}
+                    />
+                    <Pressable
+                      style={styles.thumbX}
+                      hitSlop={6}
+                      disabled={sending}
+                      onPress={() =>
+                        setImages((prev) =>
+                          prev.filter((_, j) => j !== i),
+                        )
+                      }
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.thumbXText}>✕</Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
             ) : null}
             {/* Cost line (v0.6.0): what this post costs and
                 what the ACTIVE name holds — the two numbers a
@@ -609,6 +724,30 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
   },
   mentionChipText: { fontSize: 14, fontWeight: '700', color: '#0f1419' },
+  /* Image attach (v0.7.3): the picker pill + thumbnails. */
+  attachBtn: {
+    borderWidth: 1,
+    borderColor: '#cfd9de',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#fff',
+  },
+  attachBtnText: { fontSize: 13.5, color: ACCENT, fontWeight: '700' },
+  thumbWrap: { position: 'relative' },
+  thumb: { width: 72, height: 72, borderRadius: 10, backgroundColor: '#f0f3f4' },
+  thumbX: {
+    position: 'absolute',
+    top: -6,
+    end: -6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(15,20,25,0.75)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  thumbXText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   pickerBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',

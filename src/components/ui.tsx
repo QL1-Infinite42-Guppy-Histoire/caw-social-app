@@ -67,6 +67,11 @@ import {
   viewCountCached,
 } from '../lib/views';
 import { resolveShareUrl } from '../lib/share';
+import {
+  attachmentLookup,
+  mediaFor,
+  type PostAttachment,
+} from '../lib/mediaApi';
 import type { TimelineItem } from '../lib/cawApi';
 import type { ProfileCustom } from '../lib/profileCustom';
 
@@ -575,6 +580,22 @@ function AvatarBase({
 }) {
   const [img, setImg] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
+  /* Shared profile icon (v0.7.3, media server): an icon the
+   * name's owner published for everyone wins over the on-device
+   * custom picture and the card image. mediaFor never rejects —
+   * null means "no shared icon" (or the server is down) and the
+   * older fallbacks below apply unchanged. */
+  const [serverIcon, setServerIcon] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    setServerIcon(null);
+    mediaFor(nameId).then(
+      (m) => live && setServerIcon(m?.icon?.url ?? null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [nameId]);
   useEffect(() => {
     if (customUri) return; // the custom picture needs no chain reads
     let live = true;
@@ -585,8 +606,9 @@ function AvatarBase({
     };
   }, [nameId, customUri]);
   let inner: React.ReactNode;
-  if (customUri) {
-    inner = <Image source={{ uri: customUri }} style={{ width: size, height: size }} />;
+  const shownUri = serverIcon || customUri;
+  if (shownUri) {
+    inner = <Image source={{ uri: shownUri }} style={{ width: size, height: size }} />;
   }
   if (!inner && img) {
     // The card image is a BASE64 svg data URI — decode it with
@@ -996,6 +1018,44 @@ export function LinkifiedText({
  * tappable link in the body text remains either way. Tapping
  * the card opens the resolved (original) URL.
  */
+/**
+ * A post's attached images (v0.7.3, media server): one image
+ * spans the column; two or more tile in a 2-up grid. The URLs
+ * are the server's content-addressed media URLs — plain remote
+ * images, so a dead media server just leaves broken-image
+ * placeholders out entirely (the grid only renders when the
+ * lookup already returned entries).
+ */
+export function PostMediaGrid({ items }: { items: PostAttachment[] }) {
+  const shown = items.slice(0, 4);
+  if (shown.length === 0) return null;
+  if (shown.length === 1) {
+    return (
+      <View style={postStyles.mediaGrid}>
+        <Image
+          source={{ uri: shown[0].url }}
+          style={postStyles.mediaSingle}
+          resizeMode="cover"
+        />
+      </View>
+    );
+  }
+  return (
+    <View style={postStyles.mediaGrid}>
+      <View style={postStyles.mediaRowWrap}>
+        {shown.map((m) => (
+          <Image
+            key={m.url}
+            source={{ uri: m.url }}
+            style={postStyles.mediaCell}
+            resizeMode="cover"
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
 export function LinkSnippetCard({ url }: { url: string }) {
   const [preview, setPreview] = useState<LinkPreview | null | undefined>(
     undefined,
@@ -1371,6 +1431,22 @@ function PostCardBase({
       unsub();
     };
   }, [item]);
+  /* Post image attachments (v0.7.3, media server): looked up
+   * through lib/mediaApi, which coalesces every card mounted in
+   * the same render pass into ONE batch GET. An empty result —
+   * no attachments, or the server unreachable — renders nothing;
+   * the post itself never depends on the media server. */
+  const [attachments, setAttachments] = useState<PostAttachment[]>([]);
+  useEffect(() => {
+    if (item.type !== 0) return;
+    let live = true;
+    attachmentLookup(item.cawId).then(
+      (list) => live && setAttachments(list),
+    );
+    return () => {
+      live = false;
+    };
+  }, [item]);
   const bookmarked = isBookmarked ? isBookmarked(item) : false;
   // Keep the shown like count in step with my own like: +1 the moment
   // it lights up (the chain read above was taken before my like), back
@@ -1502,6 +1578,9 @@ function PostCardBase({
           )
         ) : null}
         {firstUrl ? <LinkSnippetCard url={firstUrl} /> : null}
+        {item.type === 0 && attachments.length > 0 ? (
+          <PostMediaGrid items={attachments} />
+        ) : null}
         {parsed?.ref?.kind === 'quote' ? (
           <OriginalFrame
             cawId={parsed.ref.parentCawId}
@@ -1812,6 +1891,16 @@ const postStyles = StyleSheet.create({
   snippetTitle: { fontSize: 14.5, fontWeight: '700', color: '#0f1419' },
   snippetDesc: { fontSize: 13.5, color: '#536471', lineHeight: 19, marginTop: 3 },
   snippetDomain: { fontSize: 12.5, color: '#536471', marginTop: 5 },
+  /* Attached images (v0.7.3): a rounded block under the text —
+   * one wide image, or a 2-up tile grid for 2–4 images. */
+  mediaGrid: { marginTop: 8, borderRadius: 12, overflow: 'hidden' },
+  mediaSingle: { width: '100%', height: 210, backgroundColor: '#f7f9f9' },
+  mediaRowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 3 },
+  mediaCell: {
+    width: '49.4%',
+    height: 130,
+    backgroundColor: '#f7f9f9',
+  },
   /* The action row (v0.6.1): ONE line, always — space-between
    * across the content column, no wrap, compact counts. At
    * 360dp the column is ~274dp wide. v0.6.4 adds the EIGHTH
