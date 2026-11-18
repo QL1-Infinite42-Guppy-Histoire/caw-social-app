@@ -27,8 +27,18 @@
  * imports (expo-file-system is loaded lazily, only when a file
  * actually has to be read) so the verify harnesses can compile
  * and exercise the pure parts in Node.
+ *
+ * v0.7.4 transport fix: v0.7.3 read files through the LEGACY
+ * expo-file-system API and uploaded them as React Native
+ * FormData file parts — on the user's device EVERY write failed
+ * before/at sending (the server saw zero requests) while the
+ * Node harnesses, which mock both steps, stayed green. Files
+ * are now read with the current expo-file-system File API (the
+ * one lib/profileImage.ts uses) and the multipart body is built
+ * by hand as bytes (buildMultipartBody), so the exact bytes
+ * that were hashed for the signature are the bytes sent.
  */
-import { decodeBase64, getBytes, sha256, type Wallet } from 'ethers';
+import { sha256, type Wallet } from 'ethers';
 
 export const MEDIA_API =
   'https://vps-2026-11-12-16-49-27.tail303bfa.ts.net:10000';
@@ -83,6 +93,17 @@ export class MediaApiError extends Error {
   }
 }
 
+/** One-line detail for a failed media write, appended to the UI
+ *  failure notes (v0.7.4). The bare "sharing failed" note hid
+ *  WHICH step broke; the note now carries the error's own
+ *  message — MediaApiError's includes the HTTP status and the
+ *  server's error text — trimmed to a short single line. */
+export function mediaErrorDetail(e: unknown): string {
+  const m = (e as { message?: unknown } | null | undefined)?.message;
+  const raw = typeof m === 'string' && m ? m : String(e);
+  return raw.length > 100 ? raw.slice(0, 100) : raw;
+}
+
 /** The signed message, byte for byte as the server rebuilds it. */
 export function buildMediaMessage(o: {
   action: string;
@@ -131,17 +152,126 @@ async function throwForBad(res: Response): Promise<void> {
   throw new MediaApiError(res.status, serverError);
 }
 
-/** Read a local file's bytes (picker / cache URIs). The file is
- *  read as base64 through expo-file-system and decoded with
- *  ethers, so the bytes hashed here are exactly the bytes the
- *  multipart upload sends (React Native uploads the file itself;
- *  both read the same URI). */
+/** Fixed boundary for the hand-built upload bodies. */
+export const MEDIA_MULTIPART_BOUNDARY =
+  '----CAWMediaBoundary7MA4YWxkTrZu0gW';
+
+/**
+ * Assemble a multipart/form-data body BY HAND, as bytes: the
+ * text fields in the given order, then ONE file part, then the
+ * closing boundary. v0.7.3 sent React Native FormData file
+ * parts and every write failed on the device before/at sending
+ * (the server logged zero requests); this framing is the exact
+ * byte layout the parent agent verified the live server accepts
+ * (it recovers the signer and answers 403 for a non-owner).
+ * Pure and exported so the harness can pin the bytes.
+ */
+export function buildMultipartBody(
+  fields: Array<[string, string]>,
+  fileField: string,
+  fileName: string,
+  fileType: string,
+  fileBytes: Uint8Array,
+  boundary: string,
+): Uint8Array {
+  const enc = new TextEncoder();
+  const parts: Uint8Array[] = [];
+  for (const [name, value] of fields) {
+    parts.push(
+      enc.encode(
+        '--' +
+          boundary +
+          '\r\nContent-Disposition: form-data; name="' +
+          name +
+          '"\r\n\r\n' +
+          value +
+          '\r\n',
+      ),
+    );
+  }
+  parts.push(
+    enc.encode(
+      '--' +
+        boundary +
+        '\r\nContent-Disposition: form-data; name="' +
+        fileField +
+        '"; filename="' +
+        fileName +
+        '"\r\nContent-Type: ' +
+        fileType +
+        '\r\n\r\n',
+    ),
+  );
+  parts.push(fileBytes);
+  parts.push(enc.encode('\r\n--' + boundary + '--\r\n'));
+  let total = 0;
+  for (const p of parts) total += p.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    out.set(p, off);
+    off += p.length;
+  }
+  return out;
+}
+
+/** POST fields + one file to a media endpoint as a hand-built
+ *  multipart body (see buildMultipartBody). The body is sent as
+ *  an ArrayBuffer sliced to exactly the built bytes. */
+async function postMultipart(
+  path: string,
+  fields: Array<[string, string]>,
+  fileName: string,
+  fileType: string,
+  fileBytes: Uint8Array,
+): Promise<Response> {
+  const body = buildMultipartBody(
+    fields,
+    'file',
+    fileName,
+    fileType,
+    fileBytes,
+    MEDIA_MULTIPART_BOUNDARY,
+  );
+  const buf = body.buffer.slice(
+    body.byteOffset,
+    body.byteOffset + body.byteLength,
+  ) as ArrayBuffer;
+  return fetchTimeout(
+    MEDIA_API + path,
+    {
+      method: 'POST',
+      headers: {
+        'content-type':
+          'multipart/form-data; boundary=' + MEDIA_MULTIPART_BOUNDARY,
+      },
+      body: buf,
+    },
+    30000,
+  );
+}
+
+/** Read a local file's bytes (picker / cache URIs) with the
+ *  current expo-file-system File API — the same class the
+ *  profile-image store (lib/profileImage.ts) uses. A content://
+ *  URI (what the Android document picker hands out for profile
+ *  audio) is first copied into the app's cache folder and the
+ *  copy is read, since not every content provider can be read
+ *  in place. The bytes returned here are both hashed for the
+ *  signature and uploaded, so the digest the signature covers
+ *  is always the digest of what the server receives. */
 export async function readFileBytes(fileUri: string): Promise<Uint8Array> {
-  const FS = await import('expo-file-system/legacy');
-  const b64 = await FS.readAsStringAsync(fileUri, {
-    encoding: FS.EncodingType.Base64,
-  });
-  return getBytes(decodeBase64(b64));
+  const { File, Paths } = await import('expo-file-system');
+  let file = new File(fileUri);
+  if (fileUri.startsWith('content://')) {
+    const copy = new File(
+      Paths.cache,
+      'media-read-' + Date.now() + '-' + Math.floor(Math.random() * 1e6),
+    );
+    await file.copy(copy, { overwrite: true });
+    file = copy;
+  }
+  return file.bytes();
 }
 
 /** Hex sha256 (no 0x prefix — the wire format) of raw bytes. */
@@ -242,23 +372,17 @@ export async function setProfileMedia(
       ts,
     }),
   );
-  const fd = new FormData();
-  fd.append('nameId', String(nameId));
-  fd.append('kind', kind);
-  fd.append('ts', String(ts));
-  fd.append('sig', sig);
-  fd.append(
-    'file',
-    {
-      uri: fileUri,
-      name: fileNameFor(mimeType, kind),
-      type: mimeType || mimeForUri(fileUri),
-    } as unknown as Blob,
-  );
-  const res = await fetchTimeout(
-    MEDIA_API + '/v1/profile-media',
-    { method: 'POST', body: fd },
-    30000,
+  const res = await postMultipart(
+    '/v1/profile-media',
+    [
+      ['nameId', String(nameId)],
+      ['kind', kind],
+      ['ts', String(ts)],
+      ['sig', sig],
+    ],
+    fileNameFor(mimeType, kind),
+    mimeType || mimeForUri(fileUri),
+    bytes,
   );
   await throwForBad(res);
   invalidateMedia(nameId);
@@ -329,24 +453,18 @@ export async function attachToPost(
         ts,
       }),
     );
-    const fd = new FormData();
-    fd.append('nameId', String(nameId));
-    fd.append('cawId', cawId);
-    fd.append('txHash', txHash);
-    fd.append('ts', String(ts));
-    fd.append('sig', sig);
-    fd.append(
-      'file',
-      {
-        uri: fileUri,
-        name: fileNameFor(mimeType, 'image'),
-        type: mimeType,
-      } as unknown as Blob,
-    );
-    const res = await fetchTimeout(
-      MEDIA_API + '/v1/attach',
-      { method: 'POST', body: fd },
-      30000,
+    const res = await postMultipart(
+      '/v1/attach',
+      [
+        ['nameId', String(nameId)],
+        ['cawId', cawId],
+        ['txHash', txHash],
+        ['ts', String(ts)],
+        ['sig', sig],
+      ],
+      fileNameFor(mimeType, 'image'),
+      mimeType,
+      bytes,
     );
     if (res.ok) {
       attachCache.delete(cawId.toLowerCase());

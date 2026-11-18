@@ -83,6 +83,7 @@ import {
 import {
   MediaApiError,
   clearProfileMedia,
+  mediaErrorDetail,
   mediaFor,
   setProfileMedia,
   type ProfileMedia,
@@ -273,9 +274,11 @@ export default function ProfileScreen({
               setEditNote(tr('media.uploaded'));
             } catch (e) {
               setEditNote(
-                e instanceof MediaApiError && e.status === 413
+                (e instanceof MediaApiError && e.status === 413
                   ? tr('media.tooLarge')
-                  : tr('media.uploadFail'),
+                  : tr('media.uploadFail')) +
+                  ' — ' +
+                  mediaErrorDetail(e),
               );
             }
           }
@@ -341,8 +344,8 @@ export default function ProfileScreen({
       if (!res.canceled && res.assets && res.assets.length > 0) {
         picked = res.assets[0];
       }
-    } catch {
-      setEditNote(tr('media.uploadFail'));
+    } catch (e) {
+      setEditNote(tr('media.uploadFail') + ' — ' + mediaErrorDetail(e));
       return;
     }
     if (!picked) return; // cancelled — not an error
@@ -365,9 +368,11 @@ export default function ProfileScreen({
       setEditNote(tr('media.uploaded'));
     } catch (e) {
       setEditNote(
-        e instanceof MediaApiError && e.status === 413
+        (e instanceof MediaApiError && e.status === 413
           ? tr('media.tooLarge')
-          : tr('media.uploadFail'),
+          : tr('media.uploadFail')) +
+          ' — ' +
+          mediaErrorDetail(e),
       );
     } finally {
       setEditBusy(false);
@@ -390,8 +395,8 @@ export default function ProfileScreen({
       );
       setServerMedia(await mediaFor(profileId));
       setEditNote('');
-    } catch {
-      setEditNote(tr('media.uploadFail'));
+    } catch (e) {
+      setEditNote(tr('media.uploadFail') + ' — ' + mediaErrorDetail(e));
     } finally {
       setEditBusy(false);
     }

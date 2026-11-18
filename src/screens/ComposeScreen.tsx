@@ -44,6 +44,7 @@ import { nowSec, randomCawId, signerFor, submitAction } from '../lib/wallet';
 import {
   MEDIA_ATTACH_PER_POST,
   attachToPost,
+  mediaErrorDetail,
 } from '../lib/mediaApi';
 
 export default function ComposeScreen({ onClose }: { onClose: () => void }) {
@@ -295,6 +296,7 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
        * post; it only changes the closing note (and the close
        * waits a little longer so the note can be read). */
       let attachFailed = false;
+      let attachDetail = '';
       if (images.length > 0) {
         setStatusOk(true);
         setStatus(tr('media.uploading'));
@@ -302,14 +304,17 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
         for (const im of images) {
           try {
             await attachToPost(cawId, hash, im.uri, signer, acting.id);
-          } catch {
+          } catch (e) {
             attachFailed = true;
+            if (!attachDetail) attachDetail = mediaErrorDetail(e);
           }
         }
       }
       setStatusOk(true);
       setStatus(
-        attachFailed ? tr('compose.attachFailed') : tr('compose.posted'),
+        attachFailed
+          ? tr('compose.attachFailed') + ' — ' + attachDetail
+          : tr('compose.posted'),
       );
       timerRef.current = setTimeout(
         () => {

@@ -1,4 +1,4 @@
-/* Verification for the media-server client (v0.7.3).
+/* Verification for the media-server client (v0.7.4).
  * Run: node scripts/verify-media.mjs
  *
  * Purely local: src/lib/mediaApi.ts compiled and exercised in
@@ -22,13 +22,21 @@
  *      caches per cawId, caps at 4 per post, and resolves
  *      empty (uncached) on failure; attachmentLookup coalesces
  *      simultaneous per-card lookups into that same one GET;
- *   7. static wiring: the Avatar + PostCard (ui.tsx), the
+ *   7. buildMultipartBody's byte framing is exact, and the
+ *      write path — with expo-file-system FAKED at the module
+ *      loader, so the real read code runs — sends ONE
+ *      hand-built multipart POST whose sig verifies over the
+ *      message for the very bytes inside the body; a
+ *      content:// URI is read through a cache copy;
+ *   8. static wiring: the Avatar + PostCard (ui.tsx), the
  *      profile screen (display + edit + audio) and the
- *      composer (attach AFTER submitAction) all use the lib,
- *      and app.json carries 0.7.3 / versionCode 51.
+ *      composer (attach AFTER submitAction) all use the lib;
+ *      mediaApi.ts has no legacy FS import and no FormData;
+ *      the screens append mediaErrorDetail to the failure
+ *      notes; and app.json carries 0.7.4 / versionCode 52.
  */
 import { execFileSync } from 'node:child_process';
-import { createRequire } from 'node:module';
+import Module, { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
@@ -203,7 +211,134 @@ fakeFetch((url) => {
 }
 globalThis.fetch = realFetch;
 
-/* ---- 7. static wiring ---- */
+/* ---- 7. multipart framing + the write path (FS faked) ---- */
+{
+  const B = '----CAWMediaBoundary7MA4YWxkTrZu0gW';
+  check('MEDIA_MULTIPART_BOUNDARY is the fixed boundary',
+    api.MEDIA_MULTIPART_BOUNDARY === B);
+  const fileBytes = new Uint8Array([0xff, 0xd8, 0x00, 0x41]);
+  const body = api.buildMultipartBody(
+    [['nameId', '191'], ['kind', 'icon']],
+    'file', 'icon.jpg', 'image/jpeg', fileBytes, B,
+  );
+  const head =
+    '--' + B + '\r\nContent-Disposition: form-data; name="nameId"\r\n\r\n191\r\n' +
+    '--' + B + '\r\nContent-Disposition: form-data; name="kind"\r\n\r\nicon\r\n' +
+    '--' + B + '\r\nContent-Disposition: form-data; name="file"; filename="icon.jpg"\r\nContent-Type: image/jpeg\r\n\r\n';
+  const expected = Buffer.concat([
+    Buffer.from(head, 'latin1'),
+    Buffer.from(fileBytes),
+    Buffer.from('\r\n--' + B + '--\r\n', 'latin1'),
+  ]);
+  check('buildMultipartBody: exact byte framing (fields in order, file part, closing boundary)',
+    Buffer.from(body).equals(expected));
+}
+
+/* Fake expo-file-system at the module loader so the REAL
+ * readFileBytes / setProfileMedia / attachToPost run in Node:
+ * File.bytes() returns fixed bytes; copy() is a no-op that
+ * records its source. */
+const FILE_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+class FakeFile {
+  constructor(...args) {
+    this.uri = args
+      .map((a) => (typeof a === 'string' ? a : (a && a.uri) || 'dir'))
+      .join('/');
+  }
+  async copy(dest) {
+    dest.copiedFrom = this.uri;
+  }
+  async bytes() {
+    return FILE_BYTES;
+  }
+}
+const fakeFS = {
+  File: FakeFile,
+  Paths: { cache: { uri: 'file:///cache' } },
+  Directory: class {},
+};
+const origLoad = Module._load;
+Module._load = function (request, ...rest) {
+  if (request === 'expo-file-system') return fakeFS;
+  return origLoad.call(this, request, ...rest);
+};
+const writeCalls = [];
+globalThis.fetch = async (url, init) => {
+  writeCalls.push({ url: String(url), init });
+  return jsonRes({ ok: true, url: 'https://x/media/stored.jpg', hash: 'h' });
+};
+{
+  const direct = await api.readFileBytes('file:///plain.jpg');
+  check('readFileBytes: a file:// URI reads through the File API',
+    Buffer.from(direct).equals(Buffer.from(FILE_BYTES)));
+  const viaCopy = await api.readFileBytes('content://media/external/audio.mp3');
+  check('readFileBytes: a content:// URI is read through a cache copy',
+    Buffer.from(viaCopy).equals(Buffer.from(FILE_BYTES)));
+
+  const w = Wallet.createRandom();
+  const out = await api.setProfileMedia('icon', 'file:///pic.jpg', 'image/jpeg', w, 191n);
+  check('write: setProfileMedia resolves with the server entry',
+    !!out && out.ok === true);
+  check('write: exactly one POST to /v1/profile-media',
+    writeCalls.length === 1 &&
+      writeCalls[0].url === api.MEDIA_API + '/v1/profile-media' &&
+      writeCalls[0].init.method === 'POST');
+  const init = writeCalls[0].init;
+  check('write: content-type carries the fixed boundary',
+    init.headers['content-type'] ===
+      'multipart/form-data; boundary=' + api.MEDIA_MULTIPART_BOUNDARY);
+  const raw = Buffer.from(init.body);
+  const text = raw.toString('latin1');
+  check('write: body opens with the nameId field, fields in append order',
+    text.startsWith(
+      '--' + api.MEDIA_MULTIPART_BOUNDARY +
+        '\r\nContent-Disposition: form-data; name="nameId"\r\n\r\n191\r\n') &&
+      text.indexOf('name="kind"') < text.indexOf('name="ts"') &&
+      text.indexOf('name="ts"') < text.indexOf('name="sig"') &&
+      text.indexOf('name="sig"') < text.indexOf('name="file"'));
+  check('write: the hashed file bytes sit verbatim before the closing boundary',
+    raw.includes(Buffer.from(FILE_BYTES)) &&
+      text.endsWith('\r\n--' + api.MEDIA_MULTIPART_BOUNDARY + '--\r\n'));
+  const sig = /name="sig"\r\n\r\n(0x[0-9a-fA-F]+)/.exec(text)?.[1];
+  const ts = /name="ts"\r\n\r\n(\d+)/.exec(text)?.[1];
+  const msg = api.buildMediaMessage({
+    action: 'set-icon', nameId: '191',
+    sha256: api.sha256Hex(FILE_BYTES), ts,
+  });
+  check('write: the sig in the body verifies over the message for those bytes',
+    !!sig && !!ts && verifyMessage(msg, sig) === w.address);
+}
+{
+  writeCalls.length = 0;
+  const w = Wallet.createRandom();
+  const CAW = '0x' + 'ab'.repeat(32);
+  const TX = '0x' + 'cd'.repeat(32);
+  const out = await api.attachToPost(CAW, TX, 'file:///shot.png', w, 7n);
+  const init = writeCalls[0] && writeCalls[0].init;
+  const text = init ? Buffer.from(init.body).toString('latin1') : '';
+  const sig = /name="sig"\r\n\r\n(0x[0-9a-fA-F]+)/.exec(text)?.[1];
+  const ts = /name="ts"\r\n\r\n(\d+)/.exec(text)?.[1];
+  const msg = api.buildMediaMessage({
+    action: 'attach', nameId: '7',
+    sha256: api.sha256Hex(FILE_BYTES), caw: CAW, tx: TX, ts,
+  });
+  check('write: attachToPost posts cawId + txHash and a verifying sig',
+    writeCalls.length === 1 &&
+      writeCalls[0].url === api.MEDIA_API + '/v1/attach' &&
+      text.includes('name="cawId"\r\n\r\n' + CAW) &&
+      text.includes('name="txHash"\r\n\r\n' + TX) &&
+      !!sig && !!ts && verifyMessage(msg, sig) === w.address &&
+      !!out && out.ok === true);
+}
+check('mediaErrorDetail: a MediaApiError message (status + server text) survives; long errors cap at 100',
+  api.mediaErrorDetail(new api.MediaApiError(403, 'signer does not own this name')) ===
+    'media 403: signer does not own this name' &&
+    api.mediaErrorDetail(new Error('x'.repeat(300))).length === 100 &&
+    api.mediaErrorDetail('plain') === 'plain');
+Module._load = origLoad;
+globalThis.fetch = realFetch;
+
+/* ---- 8. static wiring ---- */
 const ui = readFileSync(ROOT + 'src/components/ui.tsx', 'utf8');
 check('wiring: Avatar feeds the server icon through mediaFor (ui.tsx)',
   ui.includes('mediaFor(nameId)') && ui.includes('serverIcon'));
@@ -230,9 +365,18 @@ check('wiring: composer attaches AFTER the post submits (ComposeScreen)',
   comp.indexOf('await submitAction(') < comp.indexOf('await attachToPost('));
 check('wiring: composer picker caps at MEDIA_ATTACH_PER_POST',
   comp.includes('MEDIA_ATTACH_PER_POST'));
+const mediaSrc = readFileSync(ROOT + 'src/lib/mediaApi.ts', 'utf8');
+check('wiring: mediaApi reads via the current FS API, never the legacy one (v0.7.4)',
+  mediaSrc.includes("await import('expo-file-system')") &&
+  !mediaSrc.includes('expo-file-system/legacy') &&
+  !mediaSrc.includes('readAsStringAsync'));
+check('wiring: uploads are hand-built multipart bytes, never FormData file parts (v0.7.4)',
+  mediaSrc.includes('buildMultipartBody') && !mediaSrc.includes('new FormData()'));
+check('wiring: failure notes append the error detail (ProfileScreen + ComposeScreen)',
+  prof.includes('mediaErrorDetail(e)') && comp.includes('mediaErrorDetail(e)'));
 const appJson = JSON.parse(readFileSync(ROOT + 'app.json', 'utf8'));
-check('app.json: version 0.7.3 / versionCode 51',
-  appJson.expo.version === '0.7.3' && appJson.expo.android.versionCode === 51);
+check('app.json: version 0.7.4 / versionCode 52',
+  appJson.expo.version === '0.7.4' && appJson.expo.android.versionCode === 52);
 
 console.log(`\nmedia: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

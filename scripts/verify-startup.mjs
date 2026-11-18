@@ -279,8 +279,8 @@ const PW = await import(OUT + '/lib/pwVerifier.js');
 {
   const appJson = JSON.parse(read('/app.json'));
   ok(
-    appJson.expo.version === '0.7.3' && appJson.expo.android.versionCode === 51,
-    'release: versionName 0.7.3, versionCode 51 (v0.7.3: media server — shared profile icons / headers / profile audio and post image attachments — v0.7.2: share/short links issued on the c.qql1.com custom domain — v0.7.1: feed swipe rebuilt on PanResponder; gas keep dropped — v0.7.0 shipped the v0.7.0 feature set: PHOENIX tips, new Super prices, mentions, swipe, HuntersDEX, BurnHawk)',
+    appJson.expo.version === '0.7.4' && appJson.expo.android.versionCode === 52,
+    'release: versionName 0.7.4, versionCode 52 (v0.7.4: media upload transport fix — files read with the current expo-file-system API and sent as a hand-built multipart byte body; failure notes carry the error detail — v0.7.3: media server — shared profile icons / headers / profile audio and post image attachments — v0.7.2: share/short links issued on the c.qql1.com custom domain — v0.7.1: feed swipe rebuilt on PanResponder; gas keep dropped — v0.7.0 shipped the v0.7.0 feature set: PHOENIX tips, new Super prices, mentions, swipe, HuntersDEX, BurnHawk)',
   );
 }
 
