@@ -37,6 +37,15 @@
  * one lib/profileImage.ts uses) and the multipart body is built
  * by hand as bytes (buildMultipartBody), so the exact bytes
  * that were hashed for the signature are the bytes sent.
+ *
+ * v0.7.5 display fix: uploads landed but the image did not show
+ * under the post. attachmentsFor cached EMPTY results for the
+ * whole session, and a post's card normally mounts (and looks
+ * up its attachments) BEFORE the composer's upload finishes —
+ * so the first, legitimately empty, answer was pinned forever.
+ * Empty results are no longer cached (only non-empty lists
+ * are), and the read timeouts grew to 15 s so a slow cold read
+ * through the relay stops feeding the empty path.
  */
 import { sha256, type Wallet } from 'ethers';
 
@@ -326,7 +335,7 @@ export function mediaFor(
 ): Promise<ProfileMedia | null> {
   const key = String(nameId);
   if (!mediaCache.has(key)) {
-    const p = fetchTimeout(MEDIA_API + '/v1/profile/' + key, undefined, 4000)
+    const p = fetchTimeout(MEDIA_API + '/v1/profile/' + key, undefined, 15000)
       .then((r) => (r.ok ? r.json() : null))
       .then((j) =>
         j && (j.icon || j.header || j.audio) ? (j as ProfileMedia) : null,
@@ -482,11 +491,16 @@ const attachCache = new Map<string, Promise<PostAttachment[]>>();
 
 /**
  * Attachments for a batch of posts: ONE GET for every id not
- * already cached (the server accepts up to 50 per call), results
- * cached per cawId for the session. Resolves a map with an entry
- * (possibly empty) for every requested id; never rejects — a
- * failed lookup resolves empty and is NOT cached, so a later
- * call can retry.
+ * already cached (the server accepts up to 50 per call).
+ * NON-EMPTY results are cached per cawId for the session;
+ * empty results are NEVER cached — a post's attachments land
+ * moments after the post itself first renders (the composer
+ * uploads after the tx confirms), so an empty answer is a
+ * "not yet", not a "never", and caching it hid the image for
+ * the whole session (the v0.7.5 bug). Resolves a map with an
+ * entry (possibly empty) for every requested id; never
+ * rejects — a failed lookup also resolves empty, uncached,
+ * so a later call can retry.
  */
 export async function attachmentsFor(
   cawIds: string[],
@@ -509,7 +523,7 @@ export async function attachmentsFor(
       const res = await fetchTimeout(
         MEDIA_API + '/v1/posts?caw=' + chunk.join(','),
         undefined,
-        5000,
+        15000,
       );
       if (res.ok) {
         const j = await res.json();
@@ -524,7 +538,12 @@ export async function attachmentsFor(
     for (const id of chunk) {
       const list = (media[id] || []).slice(0, MEDIA_ATTACH_PER_POST);
       out.set(id, list);
-      if (okFetch) {
+      // Cache ONLY a non-empty list (v0.7.5). An empty answer —
+      // from a successful fetch just as much as from a failed
+      // one — must stay retryable: the post's own upload may
+      // land a second later, and a cached [] would hide it
+      // until the app restarts.
+      if (okFetch && list.length > 0) {
         attachCache.set(id, Promise.resolve(list));
       }
     }

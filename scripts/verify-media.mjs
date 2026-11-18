@@ -1,4 +1,4 @@
-/* Verification for the media-server client (v0.7.4).
+/* Verification for the media-server client (v0.7.5).
  * Run: node scripts/verify-media.mjs
  *
  * Purely local: src/lib/mediaApi.ts compiled and exercised in
@@ -19,8 +19,11 @@
  *      field is set, and resolves null (never rejects) on an
  *      empty profile, an HTTP error and a network failure;
  *   6. attachmentsFor fetches every uncached id in ONE GET,
- *      caches per cawId, caps at 4 per post, and resolves
- *      empty (uncached) on failure; attachmentLookup coalesces
+ *      caches NON-EMPTY results per cawId, caps at 4 per post,
+ *      and resolves empty (uncached) on failure AND on an
+ *      empty success — an empty answer is never cached, so a
+ *      lookup repeated after the upload lands finds the image
+ *      (the v0.7.5 display fix); attachmentLookup coalesces
  *      simultaneous per-card lookups into that same one GET;
  *   7. buildMultipartBody's byte framing is exact, and the
  *      write path — with expo-file-system FAKED at the module
@@ -33,7 +36,8 @@
  *      composer (attach AFTER submitAction) all use the lib;
  *      mediaApi.ts has no legacy FS import and no FormData;
  *      the screens append mediaErrorDetail to the failure
- *      notes; and app.json carries 0.7.4 / versionCode 52.
+ *      notes; the read timeouts are pinned at 15 s; and
+ *      app.json carries 0.7.5 / versionCode 53.
  */
 import { execFileSync } from 'node:child_process';
 import Module, { createRequire } from 'node:module';
@@ -209,6 +213,42 @@ fakeFetch((url) => {
   check('attachmentLookup: every waiter resolves (empty here)',
     Array.isArray(d) && Array.isArray(e) && Array.isArray(d2));
 }
+{
+  // v0.7.5: an empty result is NEVER cached. The normal posting
+  // flow mounts the new post's card before the composer's
+  // upload finishes, so the first lookup legitimately answers
+  // empty; v0.7.4 cached that [] for the whole session and the
+  // uploaded image stayed invisible until an app restart.
+  const CAW_F = '0x' + 'ff'.repeat(32);
+  let serverHasIt = false;
+  fakeFetch((url) => {
+    if (url.startsWith(api.MEDIA_API + '/v1/posts?caw=')) {
+      return jsonRes({
+        media: serverHasIt
+          ? { [CAW_F]: [{ url: 'https://x/media/late.jpg', size: 9 }] }
+          : {},
+      });
+    }
+    throw new Error('network down');
+  });
+  const first = await api.attachmentsFor([CAW_F]);
+  check('attachmentsFor: a fresh post first resolves empty',
+    Array.isArray(first.get(CAW_F)) && first.get(CAW_F).length === 0);
+  const callsAfterFirst = fetchCalls.length;
+  serverHasIt = true;
+  const second = await api.attachmentsFor([CAW_F]);
+  check('attachmentsFor: empty NOT cached — a later lookup refetches and finds the attachment',
+    fetchCalls.length > callsAfterFirst &&
+      second.get(CAW_F)?.length === 1 &&
+      second.get(CAW_F)[0].url === 'https://x/media/late.jpg');
+  const callsAfterSecond = fetchCalls.length;
+  const third = await api.attachmentsFor([CAW_F]);
+  check('attachmentsFor: a non-empty result IS cached (no refetch)',
+    fetchCalls.length === callsAfterSecond && third.get(CAW_F)?.length === 1);
+  const viaLookup = await api.attachmentLookup(CAW_F);
+  check('attachmentLookup: the cached non-empty list is served without a fetch',
+    viaLookup.length === 1 && fetchCalls.length === callsAfterSecond);
+}
 globalThis.fetch = realFetch;
 
 /* ---- 7. multipart framing + the write path (FS faked) ---- */
@@ -374,9 +414,14 @@ check('wiring: uploads are hand-built multipart bytes, never FormData file parts
   mediaSrc.includes('buildMultipartBody') && !mediaSrc.includes('new FormData()'));
 check('wiring: failure notes append the error detail (ProfileScreen + ComposeScreen)',
   prof.includes('mediaErrorDetail(e)') && comp.includes('mediaErrorDetail(e)'));
+check('reads: mediaFor / attachmentsFor use the 15 s read timeout (v0.7.5)',
+  mediaSrc.includes("'/v1/profile/' + key, undefined, 15000") &&
+  /\/v1\/posts\?caw=' \+ chunk\.join\(','\),\s+undefined,\s+15000,?\s*\)/.test(mediaSrc));
+check('reads: attachmentsFor caches only non-empty lists (v0.7.5)',
+  mediaSrc.includes('if (okFetch && list.length > 0)'));
 const appJson = JSON.parse(readFileSync(ROOT + 'app.json', 'utf8'));
-check('app.json: version 0.7.4 / versionCode 52',
-  appJson.expo.version === '0.7.4' && appJson.expo.android.versionCode === 52);
+check('app.json: version 0.7.5 / versionCode 53',
+  appJson.expo.version === '0.7.5' && appJson.expo.android.versionCode === 53);
 
 console.log(`\nmedia: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
