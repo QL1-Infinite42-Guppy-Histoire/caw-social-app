@@ -10,13 +10,28 @@
  * over the QomSwap router on QL1 — the same engine the
  * HuntersSwap flows have used since v0.3.
  *
- * Tradable tokens are LIMITED to six (user decision):
- * QOM (native), O, qCAW, KET, HAWK, PHOENIX. Every ordered
- * pair was quote-probed live through this engine on
- * 2026-11-18 and all 30 had routes at probe amounts; a pair
- * (or an amount) with no route at quote time shows the
- * honest no-pool note and the Swap button stays disabled —
- * a quote is never faked.
+ * Tradable tokens are LIMITED (user decision): QOM
+ * (native), O, qCAW, KET, HAWK, PHOENIX — plus, since
+ * v0.7.7 (user decision 2026-11-19), WQOM. Every ordered
+ * swap pair was quote-probed live through this engine
+ * (2026-11-18 for the original six, 2026-11-19 for the
+ * WQOM pairs); a pair (or an amount) with no route at
+ * quote time shows the honest no-pool note and the Swap
+ * button stays disabled — a quote is never faked.
+ *
+ * QOM ⇄ WQOM is NOT a swap: the pair is served by the
+ * WQOM contract itself, 1:1 — wrap is WQOM.deposit()
+ * (the amount rides in the tx value), unwrap is
+ * WQOM.withdraw(amount), both built by lib/hunters
+ * (buildWrapTx / buildUnwrapTx, the same builders the
+ * HuntersSwap flows use). The "quote" for the pair is
+ * exact by construction (amount out = amount in, no
+ * price impact, no slippage), so it is synthesized
+ * locally instead of probed through the router — the
+ * router path for two tokens at the same address would
+ * be degenerate. No approve exists on this pair either:
+ * deposit takes the native value, withdraw is called on
+ * the token contract itself.
  *
  * Sends: approve (exact amount, only when the router
  * allowance is short) then the swap, each confirmed, with a
@@ -29,7 +44,13 @@
  * (no reserve is held back; see src/lib/hunters.ts), so the
  * full QOM balance is spendable here, as on the web DEX.
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -55,15 +76,27 @@ import {
 import { ALLOWANCE_SELECTOR } from '../lib/burnHawk';
 import { ethCall } from '../lib/cawApi';
 import { encAddr, fmtAmountCardDec } from '../lib/cawCore';
-import { QL1_GAS_KEEP_FLOOR_WEI, TxUnconfirmedError } from '../lib/hunters';
+import {
+  QL1_GAS_KEEP_FLOOR_WEI,
+  TxUnconfirmedError,
+  WQOM_ADDR,
+  buildUnwrapTx,
+  buildWrapTx,
+  erc20Balance,
+} from '../lib/hunters';
 import { sendTxReq, signerFor } from '../lib/wallet';
 
 const CHAIN = CHAINS.ql1;
 const SLIPPAGE_PCT = 1;
 
-/** The six tradable tokens, by aggEngine id on QL1. */
+/** The tradable tokens, by aggEngine id on QL1. WQOM
+ *  (v0.7.7) is the engine's own 'wqom' entry — the same
+ *  WQOM contract (lib/hunters WQOM_ADDR) the router paths
+ *  already anchor on. The wallet's balance display is a
+ *  separate, unchanged list; this list is DEX-only. */
 const DEX_TOKENS = [
   { id: 'native', sym: 'QOM' },
+  { id: 'wqom', sym: 'WQOM' },
   { id: 'o', sym: 'O' },
   { id: 'qcaw', sym: 'qCAW' },
   { id: 'ket', sym: 'KET' },
@@ -99,10 +132,37 @@ export default function DexSwapSection() {
   const fromSym = DEX_TOKENS.find((t) => t.id === fromId)?.sym ?? '';
   const toSym = DEX_TOKENS.find((t) => t.id === toId)?.sym ?? '';
 
+  /* WQOM balance (v0.7.7): the wallet's balance display
+   * deliberately does NOT carry WQOM (its six-token list is
+   * a separate user decision), so this section reads its
+   * own copy straight from the contract — on mount, on
+   * wallet change, and after every send it makes. */
+  const [wqomBal, setWqomBal] = useState<bigint | null>(null);
+  const refreshWqomBal = useCallback(() => {
+    if (!app.address) {
+      setWqomBal(null);
+      return;
+    }
+    erc20Balance('ql1', WQOM_ADDR, app.address)
+      .then((v) => setWqomBal(v))
+      .catch(() => {});
+  }, [app.address]);
+  useEffect(() => {
+    refreshWqomBal();
+  }, [refreshWqomBal]);
+
+  /** The QOM ⇄ WQOM pair: a 1:1 wrap/unwrap through the
+   *  WQOM contract, never a router swap (see the header). */
+  const isWrapPair =
+    (fromId === 'native' && toId === 'wqom') ||
+    (fromId === 'wqom' && toId === 'native');
+
   const balanceOf = (id: DexTokenId): bigint | null => {
     switch (id) {
       case 'native':
         return app.qom;
+      case 'wqom':
+        return wqomBal;
       case 'qcaw':
         return app.qcaw;
       case 'o':
@@ -146,6 +206,15 @@ export default function DexSwapSection() {
     if (!fromTok || !toTok || amountIn === null || overBalance) {
       setQuote(null);
       setQuoteState('idle');
+      return;
+    }
+    if (isWrapPair) {
+      /* Wrap/unwrap: the quote is exact by construction —
+       * 1 WQOM is always 1 QOM. Synthesized locally in the
+       * route's shape; doSwap branches on isWrapPair before
+       * any of the route machinery is touched. */
+      setQuote({ amountOut: amountIn, priceImpactPct: 0, wrap: true });
+      setQuoteState('ok');
       return;
     }
     const seq = ++quoteSeq.current;
@@ -207,6 +276,26 @@ export default function DexSwapSection() {
       const sec = app.getSecret();
       if (!sec) throw new Error('no secret');
       const signer = signerFor(sec.kind, sec.secret);
+      if (isWrapPair) {
+        /* Wrap / unwrap (v0.7.7): a single call on the WQOM
+         * contract itself — deposit() with the amount as the
+         * tx value, or withdraw(amount). No router, no
+         * approve, no re-quote: the 1:1 rate cannot move.
+         * The builders are lib/hunters' own, shared with
+         * the HuntersSwap flows. */
+        const tx =
+          fromId === 'native'
+            ? buildWrapTx(amountIn)
+            : buildUnwrapTx(amountIn);
+        await sendTxReq(signer, tx);
+        setStatus({ text: tr('dex.done'), tone: 'ok' });
+        setAmount('');
+        setQuote(null);
+        setQuoteState('idle');
+        app.refreshBalances().catch(() => {});
+        refreshWqomBal();
+        return;
+      }
       /* Fresh re-quote at send time; a >5% adverse move (or a
        * vanished route) stops the send rather than signing a
        * price the user never saw. */
@@ -246,6 +335,7 @@ export default function DexSwapSection() {
       setQuote(null);
       setQuoteState('idle');
       app.refreshBalances().catch(() => {});
+      refreshWqomBal();
     } catch (e) {
       if (e instanceof TxUnconfirmedError) {
         setStatus({ text: tr('hs.unconfirmed'), tone: 'err' });

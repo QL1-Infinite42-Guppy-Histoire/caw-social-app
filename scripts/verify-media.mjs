@@ -37,7 +37,7 @@
  *      mediaApi.ts has no legacy FS import and no FormData;
  *      the screens append mediaErrorDetail to the failure
  *      notes; the read timeouts are pinned at 15 s; and
- *      app.json carries 0.7.6 / versionCode 54;
+ *      app.json carries the current release version;
  *   9. moderation (v0.7.6): buildAdminMessage is byte-identical
  *      to the server's admin format (the media format plus a
  *      `target:` line; list-hidden signs all placeholders);
@@ -431,8 +431,8 @@ check('reads: mediaFor / attachmentsFor use the 15 s read timeout (v0.7.5)',
 check('reads: attachmentsFor caches only non-empty lists (v0.7.5)',
   mediaSrc.includes('if (okFetch && list.length > 0)'));
 const appJson = JSON.parse(readFileSync(ROOT + 'app.json', 'utf8'));
-check('app.json: version 0.7.6 / versionCode 54',
-  appJson.expo.version === '0.7.6' && appJson.expo.android.versionCode === 54);
+check('app.json: version 0.7.7 / versionCode 55',
+  appJson.expo.version === '0.7.7' && appJson.expo.android.versionCode === 55);
 
 /* ---- 9. moderation (v0.7.6) ---- */
 const EMPTY = api.MEDIA_EMPTY_SHA256;
