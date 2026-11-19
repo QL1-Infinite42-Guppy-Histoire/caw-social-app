@@ -17,9 +17,19 @@ first one is its end-to-end check.
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.7.8** — released 2026-11-19.
+- **現在版 / Current: v0.7.9** — released 2026-11-19.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.7.8/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.7.9/caw-social.apk
+  v0.7.9 adds user sanctions for admins: a CAW name
+  can be frozen for 24 hours / 7 days / 30 days or
+  banned, from its profile or from Settings. While
+  sanctioned, the name's posts are hidden on every
+  screen of this app and the web version and it
+  cannot upload media; its profile shows a plain
+  frozen / banned notice. Admins see the state and
+  can lift a sanction early. This is display-level
+  plus media-server scope — posts stay on-chain and
+  direct on-chain posting cannot be stopped.
   v0.7.8 switches the tip currency from PHOENIX to
   HAWK: new tips are plain HAWK transfers, with
   presets of 1,000 / 5,000 / 10,000 HAWK (the same
