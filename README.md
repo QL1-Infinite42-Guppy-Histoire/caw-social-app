@@ -17,9 +17,16 @@ first one is its end-to-end check.
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.7.7** — released 2026-11-19.
+- **現在版 / Current: v0.7.8** — released 2026-11-19.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.7.7/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.7.8/caw-social.apk
+  v0.7.8 switches the tip currency from PHOENIX to
+  HAWK: new tips are plain HAWK transfers, with
+  presets of 1,000 / 5,000 / 10,000 HAWK (the same
+  value steps as before). Past PHOENIX tips were
+  plain transfers too, so nothing about them
+  changes; PHOENIX stays in HuntersDEX, the wallet
+  display and BurnHawk.
   v0.7.7 adds WQOM to HuntersDEX: it trades against
   the other DEX tokens through the router like they
   do, and QOM ⇄ WQOM is a direct 1:1 wrap / unwrap
