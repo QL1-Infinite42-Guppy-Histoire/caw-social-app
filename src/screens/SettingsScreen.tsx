@@ -1,11 +1,12 @@
 import * as Clipboard from 'expo-clipboard';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 
@@ -19,6 +20,16 @@ import {
   deleteWalletByAddress,
   type WalletPublicInfo,
 } from '../lib/walletStore';
+import { resolveNameId, tokensOf } from '../lib/cawApi';
+import type { AdminEntry, HiddenMediaEntry } from '../lib/mediaApi';
+import {
+  applyMediaUnhidden,
+  applyPostHidden,
+  modErrorText,
+  refreshModeration,
+  runAdminOp,
+  useModeration,
+} from '../lib/moderation';
 import AddWalletModal from './AddWalletModal';
 import RevealSecretScreen from './RevealSecretScreen';
 
@@ -32,6 +43,195 @@ export default function SettingsScreen() {
   const [deleteOne, setDeleteOne] = useState<WalletPublicInfo | null>(null);
   const [deletingOne, setDeletingOne] = useState(false);
   const [switching, setSwitching] = useState(false);
+
+  /* ---------- Moderation (v0.7.6) ----------
+   * Admins (mod/root) get the moderation section: the role
+   * definition, the hidden-post list with per-post Unhide,
+   * and the hidden-MEDIA list from the server's list-hidden
+   * truth (Unhide / Delete per entry — works in any session).
+   * The root alone additionally gets the moderator
+   * management card: the admin list with roles and resolved
+   * names, appoint by CAW name or address, revoke per mod.
+   * Mods never see the management card. */
+  const mod = useModeration();
+  const [modBusy, setModBusy] = useState(false);
+  const [modNote, setModNote] = useState('');
+  const [adminNote, setAdminNote] = useState('');
+  const [unhidePostId, setUnhidePostId] = useState<string | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<AdminEntry | null>(
+    null,
+  );
+  const [appointInput, setAppointInput] = useState('');
+  const [appointPending, setAppointPending] = useState<{
+    nameId?: string;
+    target?: string;
+    label: string;
+  } | null>(null);
+  const [hiddenMediaPending, setHiddenMediaPending] = useState<{
+    entry: HiddenMediaEntry;
+    verb: 'unhide' | 'delete';
+  } | null>(null);
+  const [adminNames, setAdminNames] = useState<
+    Record<string, string | null>
+  >({});
+
+  useEffect(() => {
+    let live = true;
+    for (const a of mod.admins) {
+      if (adminNames[a.address] !== undefined) continue;
+      tokensOf(a.address)
+        .then((toks) => {
+          if (!live) return;
+          const named = toks.find((t) => t.username);
+          setAdminNames((prev) => ({
+            ...prev,
+            [a.address]: named ? named.username : null,
+          }));
+        })
+        .catch(() => {});
+    }
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mod.admins]);
+
+  const afterModOp = async () => {
+    await refreshModeration(app.address, app.getSecret()).catch(
+      () => {},
+    );
+  };
+
+  const doUnhidePost = async () => {
+    if (!unhidePostId) return;
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: 'unhide-post',
+        cawId: unhidePostId,
+      });
+      applyPostHidden(unhidePostId, false);
+      setModNote('');
+      await afterModOp();
+    } catch (e) {
+      setModNote(modErrorText(e));
+    } finally {
+      setModBusy(false);
+      setUnhidePostId(null);
+    }
+  };
+
+  const doHiddenMediaOp = async () => {
+    const p = hiddenMediaPending;
+    if (!p) return;
+    setModBusy(true);
+    try {
+      const e = p.entry;
+      if (e.kind === 'attach') {
+        await runAdminOp(app.getSecret(), {
+          action: p.verb + '-attach',
+          cawId: e.cawId,
+          sha256: e.hash,
+        });
+      } else {
+        await runAdminOp(app.getSecret(), {
+          action: p.verb + '-' + e.kind,
+          nameId: e.nameId,
+          sha256: e.hash,
+        });
+      }
+      applyMediaUnhidden(e);
+      setModNote('');
+      await afterModOp();
+    } catch (err) {
+      setModNote(modErrorText(err));
+      await afterModOp();
+    } finally {
+      setModBusy(false);
+      setHiddenMediaPending(null);
+    }
+  };
+
+  const doRevoke = async () => {
+    if (!revokeTarget) return;
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: 'revoke-admin',
+        target: revokeTarget.address,
+      });
+      setAdminNote('');
+      await afterModOp();
+    } catch (e) {
+      setAdminNote(modErrorText(e));
+    } finally {
+      setModBusy(false);
+      setRevokeTarget(null);
+    }
+  };
+
+  const startAppoint = async () => {
+    const raw = appointInput.trim().replace(/^@/, '');
+    if (!raw) return;
+    if (/^0x[0-9a-fA-F]{40}$/.test(raw)) {
+      setAppointPending({ target: raw.toLowerCase(), label: raw });
+      return;
+    }
+    try {
+      const res = await resolveNameId(raw);
+      if (res.status === 'ok') {
+        setAppointPending({
+          nameId: res.id.toString(),
+          label: '@' + res.username,
+        });
+      } else {
+        setAdminNote(tr('profile.notFound'));
+      }
+    } catch {
+      setAdminNote(tr('mod.errFail'));
+    }
+  };
+
+  const doAppoint = async () => {
+    if (!appointPending) return;
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: 'appoint-admin',
+        nameId: appointPending.nameId,
+        target: appointPending.target,
+      });
+      setAdminNote('');
+      setAppointInput('');
+      await afterModOp();
+    } catch (e) {
+      setAdminNote(modErrorText(e));
+    } finally {
+      setModBusy(false);
+      setAppointPending(null);
+    }
+  };
+
+  const shortCawId = (id: string) =>
+    id.length > 14 ? id.slice(0, 10) + '…' + id.slice(-4) : id;
+  const adminLabel = (a: AdminEntry) => {
+    const n = adminNames[a.address];
+    return n
+      ? '@' + n
+      : a.address.slice(0, 10) + '…' + a.address.slice(-6);
+  };
+  const hiddenMediaLabel = (e: HiddenMediaEntry) => {
+    if (e.kind === 'attach') {
+      return tr('mod.attHidden') + ' · ' + shortCawId(e.cawId);
+    }
+    const kind =
+      e.kind === 'icon'
+        ? tr('mod.kindIcon')
+        : e.kind === 'header'
+          ? tr('mod.kindHeader')
+          : tr('media.audio');
+    return kind + ' · #' + e.nameId;
+  };
 
   const doDeleteOne = async () => {
     if (!deleteOne) return;
@@ -190,6 +390,155 @@ export default function SettingsScreen() {
         <Text style={S.darkBtnText}>{tr('settings.lockNow')}</Text>
       </Pressable>
 
+      {/* moderation (v0.7.6 — admins only) */}
+      {mod.isAdmin ? (
+        <>
+          <Text style={[S.h2, { marginTop: 26 }]}>
+            {tr('mod.sectionTitle')}
+          </Text>
+          <View style={S.cardBox}>
+            <Text style={S.body}>{tr('mod.roleNote')}</Text>
+            <Text style={[S.h2, { marginTop: 16 }]}>
+              {tr('mod.hiddenListLbl')}
+            </Text>
+            {mod.hiddenPosts.size === 0 ? (
+              <Text style={[S.small, { marginTop: 6 }]}>
+                {tr('mod.noneHidden')}
+              </Text>
+            ) : (
+              [...mod.hiddenPosts].map((id) => (
+                <View key={id} style={styles.modRow}>
+                  <Text
+                    style={[S.body, { flex: 1 }, LTR_TEXT]}
+                    numberOfLines={1}
+                  >
+                    {shortCawId(id)}
+                  </Text>
+                  <Pressable
+                    onPress={() => setUnhidePostId(id)}
+                    hitSlop={6}
+                  >
+                    <Text style={styles.modBtnText}>
+                      {tr('mod.unhideBtn')}
+                    </Text>
+                  </Pressable>
+                </View>
+              ))
+            )}
+            <Text style={[S.h2, { marginTop: 16 }]}>
+              {tr('mod.hiddenMediaLbl')}
+            </Text>
+            {mod.hiddenMedia.length === 0 ? (
+              <Text style={[S.small, { marginTop: 6 }]}>
+                {tr('mod.noneHiddenMedia')}
+              </Text>
+            ) : (
+              mod.hiddenMedia.map((e) => (
+                <View
+                  key={
+                    (e.kind === 'attach'
+                      ? 'a:' + e.cawId
+                      : 'p:' + e.nameId + ':' + e.kind) +
+                    ':' +
+                    e.hash
+                  }
+                  style={styles.modRow}
+                >
+                  <Text style={[S.body, { flex: 1 }]} numberOfLines={1}>
+                    {hiddenMediaLabel(e)}
+                  </Text>
+                  <Pressable
+                    onPress={() =>
+                      setHiddenMediaPending({ entry: e, verb: 'unhide' })
+                    }
+                    hitSlop={6}
+                  >
+                    <Text style={styles.modBtnText}>
+                      {tr('mod.unhideBtn')}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() =>
+                      setHiddenMediaPending({ entry: e, verb: 'delete' })
+                    }
+                    hitSlop={6}
+                  >
+                    <Text
+                      style={[styles.modBtnText, { color: '#b3261e' }]}
+                    >
+                      {tr('mod.deleteBtn')}
+                    </Text>
+                  </Pressable>
+                </View>
+              ))
+            )}
+            {modNote ? (
+              <Text style={[S.small, { marginTop: 10 }]}>{modNote}</Text>
+            ) : null}
+          </View>
+        </>
+      ) : null}
+
+      {/* moderator management (v0.7.6 — root only) */}
+      {mod.isRoot ? (
+        <>
+          <Text style={[S.h2, { marginTop: 26 }]}>
+            {tr('mod.adminsTitle')}
+          </Text>
+          <View style={S.cardBox}>
+            <Text style={S.body}>{tr('mod.roleNote')}</Text>
+            <Text style={[S.small, { marginTop: 8 }]}>
+              {tr('mod.appointNote')}
+            </Text>
+            {mod.admins.map((a) => (
+              <View key={a.address} style={styles.modRow}>
+                <Text style={[S.body, { flex: 1 }]} numberOfLines={1}>
+                  {adminLabel(a)}
+                  {'  ·  '}
+                  {a.role === 'root'
+                    ? tr('mod.roleRoot')
+                    : tr('mod.roleMod')}
+                </Text>
+                {a.role === 'mod' ? (
+                  <Pressable
+                    onPress={() => setRevokeTarget(a)}
+                    hitSlop={6}
+                  >
+                    <Text
+                      style={[styles.modBtnText, { color: '#b3261e' }]}
+                    >
+                      {tr('mod.revokeBtn')}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ))}
+            <Text style={[S.h2, { marginTop: 16 }]}>
+              {tr('mod.appointLbl')}
+            </Text>
+            <TextInput
+              style={styles.appointInput}
+              value={appointInput}
+              onChangeText={setAppointInput}
+              placeholder={tr('mod.appointPh')}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Pressable
+              style={[S.bigBtn, { marginTop: 10 }]}
+              onPress={startAppoint}
+            >
+              <Text style={S.bigBtnText}>{tr('mod.appointBtn')}</Text>
+            </Pressable>
+            {adminNote ? (
+              <Text style={[S.small, { marginTop: 10 }]}>
+                {adminNote}
+              </Text>
+            ) : null}
+          </View>
+        </>
+      ) : null}
+
       {/* about */}
       <Text style={[S.h2, { marginTop: 26 }]}>{tr('settings.about')}</Text>
       <View style={S.cardBox}>
@@ -249,6 +598,81 @@ export default function SettingsScreen() {
         }}
         busy={deletingOne}
       />
+      <ConfirmSheet
+        visible={!!unhidePostId}
+        title={tr('mod.unhideTitle')}
+        confirmLabel={tr('mod.unhideBtn')}
+        cancelLabel={tr('settings.cancel')}
+        onConfirm={doUnhidePost}
+        onCancel={() => {
+          if (!modBusy) setUnhidePostId(null);
+        }}
+        busy={modBusy}
+      />
+      <ConfirmSheet
+        visible={!!hiddenMediaPending}
+        title={
+          hiddenMediaPending
+            ? hiddenMediaPending.verb === 'delete'
+              ? tr('mod.deleteTitle')
+              : tr('mod.unhideMediaTitle')
+            : ''
+        }
+        body={
+          hiddenMediaPending && hiddenMediaPending.verb === 'delete'
+            ? tr('mod.deleteWarn')
+            : undefined
+        }
+        confirmLabel={
+          hiddenMediaPending
+            ? hiddenMediaPending.verb === 'delete'
+              ? tr('mod.deleteBtn')
+              : tr('mod.unhideBtn')
+            : ''
+        }
+        cancelLabel={tr('settings.cancel')}
+        onConfirm={doHiddenMediaOp}
+        onCancel={() => {
+          if (!modBusy) setHiddenMediaPending(null);
+        }}
+        busy={modBusy}
+      />
+      <ConfirmSheet
+        visible={!!revokeTarget}
+        title={tr('mod.revokeTitle')}
+        body={
+          revokeTarget
+            ? adminLabel(revokeTarget) +
+              ' · ' +
+              revokeTarget.address.slice(0, 10) +
+              '…' +
+              revokeTarget.address.slice(-6)
+            : undefined
+        }
+        confirmLabel={tr('mod.revokeBtn')}
+        cancelLabel={tr('settings.cancel')}
+        onConfirm={doRevoke}
+        onCancel={() => {
+          if (!modBusy) setRevokeTarget(null);
+        }}
+        busy={modBusy}
+      />
+      <ConfirmSheet
+        visible={!!appointPending}
+        title={tr('mod.appointLbl')}
+        body={
+          appointPending
+            ? appointPending.label + ' — ' + tr('mod.appointNote')
+            : undefined
+        }
+        confirmLabel={tr('mod.appointBtn')}
+        cancelLabel={tr('settings.cancel')}
+        onConfirm={doAppoint}
+        onCancel={() => {
+          if (!modBusy) setAppointPending(null);
+        }}
+        busy={modBusy}
+      />
       <Modal
         visible={revealOpen}
         animationType="slide"
@@ -299,4 +723,30 @@ const styles = StyleSheet.create({
   },
   walletDel: { paddingVertical: 6, paddingHorizontal: 4 },
   walletDelText: { color: '#c62828', fontSize: 13.5, fontWeight: '600' },
+  /* Moderation (v0.7.6): list rows inside the moderation /
+   * moderators cards, their small text buttons, and the
+   * appoint input. */
+  modRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    gap: 6,
+  },
+  modBtnText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: ACCENT,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  appointInput: {
+    borderWidth: 1,
+    borderColor: '#cfd9de',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    marginTop: 10,
+    color: '#0f1419',
+  },
 });

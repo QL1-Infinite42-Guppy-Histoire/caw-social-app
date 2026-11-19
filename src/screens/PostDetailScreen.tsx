@@ -45,6 +45,21 @@ import {
 } from '../lib/authorPay';
 import { fmtAmountCardDec } from '../lib/cawCore';
 import { backArrow } from '../lib/rtl';
+import {
+  MediaApiError,
+  filterModeratedItems,
+  invalidateAttachments,
+  type PostAttachment,
+} from '../lib/mediaApi';
+import {
+  applyMediaHidden,
+  applyMediaUnhidden,
+  applyPostHidden,
+  modErrorText,
+  refreshHiddenMedia,
+  runAdminOp,
+  useModeration,
+} from '../lib/moderation';
 
 /**
  * Post detail (v0.2.0): the post itself, then who liked it and who
@@ -71,6 +86,106 @@ export default function PostDetailScreen({
    * own and never appear here; plain recaws are the shares list. */
   const [replies, setReplies] = useState<RefChild[] | null>(null);
   const [threadComplete, setThreadComplete] = useState(true);
+
+  /* ---------- Moderation (v0.7.6) ----------
+   * A hidden post opened directly shows the hidden-by-a-
+   * moderator state to non-admins (its content, reactions
+   * and thread are not rendered); admins see the post itself
+   * (dimmed + badged) with the Hide/Unhide control. Hidden
+   * replies leave the thread for non-admins. */
+  const mod = useModeration();
+  const postHidden = mod.isPostHidden(post.cawId);
+  const [modPostPending, setModPostPending] = useState<TimelineItem | null>(
+    null,
+  );
+  const [modAttPending, setModAttPending] = useState<{
+    item: TimelineItem;
+    hash: string;
+    verb: 'hide' | 'unhide' | 'delete';
+  } | null>(null);
+  const [modBusy, setModBusy] = useState(false);
+  const [attTicks, setAttTicks] = useState<Record<string, number>>({});
+
+  const bumpAttTick = useCallback((cawId: string) => {
+    const key = cawId.toLowerCase();
+    setAttTicks((t) => ({ ...t, [key]: (t[key] ?? 0) + 1 }));
+  }, []);
+
+  const confirmModPost = useCallback(async () => {
+    const item = modPostPending;
+    if (!item) return;
+    const hidden = mod.isPostHidden(item.cawId);
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: hidden ? 'unhide-post' : 'hide-post',
+        cawId: item.cawId,
+      });
+      applyPostHidden(item.cawId, !hidden);
+    } catch (e) {
+      setSlStatus((prev) => ({ ...prev, [item.hash]: modErrorText(e) }));
+    } finally {
+      setModBusy(false);
+      setModPostPending(null);
+    }
+  }, [app, mod, modPostPending]);
+
+  const confirmModAtt = useCallback(async () => {
+    const p = modAttPending;
+    if (!p) return;
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: p.verb + '-attach',
+        cawId: p.item.cawId,
+        sha256: p.hash,
+      });
+      const entry = {
+        kind: 'attach' as const,
+        cawId: p.item.cawId.toLowerCase(),
+        hash: p.hash,
+        hiddenBy: app.address ?? '',
+        ts: Date.now(),
+      };
+      if (p.verb === 'hide') applyMediaHidden(entry);
+      else applyMediaUnhidden(entry);
+      if (p.verb === 'delete') {
+        invalidateAttachments(p.item.cawId);
+        bumpAttTick(p.item.cawId);
+      }
+      refreshHiddenMedia(app.getSecret()).catch(() => {});
+    } catch (e) {
+      setSlStatus((prev) => ({
+        ...prev,
+        [p.item.hash]: modErrorText(e),
+      }));
+      if (e instanceof MediaApiError && e.status === 409) {
+        invalidateAttachments(p.item.cawId);
+        bumpAttTick(p.item.cawId);
+      }
+    } finally {
+      setModBusy(false);
+      setModAttPending(null);
+    }
+  }, [app, modAttPending, bumpAttTick]);
+
+  const onModTogglePost = useCallback(
+    (item: TimelineItem) => setModPostPending(item),
+    [],
+  );
+  const onModAttach = useCallback(
+    (
+      item: TimelineItem,
+      hash: string,
+      _att: PostAttachment | null,
+      verb: 'hide' | 'unhide' | 'delete',
+    ) => setModAttPending({ item, hash, verb }),
+    [],
+  );
+
+  const shownReplies = replies
+    ? filterModeratedItems(replies, mod.hiddenPosts, mod.isAdmin)
+    : null;
 
   const load = useCallback(async () => {
     setFailed(false);
@@ -329,6 +444,15 @@ export default function PostDetailScreen({
         <View style={{ width: 60 }} />
       </View>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 + insets.bottom }}>
+        {postHidden && !mod.isAdmin ? (
+          /* Direct-open of a hidden post (v0.7.6): the
+           * hidden-by-a-moderator state stands in place of
+           * the post, its reactions and its thread. */
+          <View style={[S.emptyCard, styles.emptyCardPad]}>
+            <Text style={S.small}>{tr('mod.hiddenNote')}</Text>
+          </View>
+        ) : (
+        <>
         <PostCard
           item={post}
           lang={app.lang}
@@ -344,6 +468,12 @@ export default function PostDetailScreen({
           liked={app.hasMyAction(1, post)}
           recawed={app.hasMyAction(2, post)}
           custom={app.customFor(post.senderId)}
+          modAdmin={mod.isAdmin}
+          modHiddenFor={mod.isPostHidden}
+          modHiddenAttFor={mod.hiddenAttHashesFor}
+          onModTogglePost={mod.isAdmin ? onModTogglePost : undefined}
+          onModAttach={mod.isAdmin ? onModAttach : undefined}
+          attTick={attTicks[post.cawId.toLowerCase()] ?? 0}
         />
         {failed ? (
           <View style={styles.center}>
@@ -416,19 +546,20 @@ export default function PostDetailScreen({
                 <ReplyIcon size={13} color="#fff" />
               </View>
               <Text style={S.h2}>
-                {tr('detail.replies')} · {replies ? replies.length : '…'}
+                {tr('detail.replies')} ·{' '}
+                {shownReplies ? shownReplies.length : '…'}
               </Text>
             </View>
-            {replies === null ? (
+            {shownReplies === null ? (
               <View style={styles.center}>
                 <ActivityIndicator color={ACCENT} />
               </View>
-            ) : replies.length === 0 ? (
+            ) : shownReplies.length === 0 ? (
               <View style={[S.emptyCard, styles.emptyCardPad]}>
                 <Text style={S.small}>{tr('detail.noneYet')}</Text>
               </View>
             ) : (
-              replies.map((r) => (
+              shownReplies.map((r) => (
                 <PostCard
                   key={r.hash + ':' + r.cawId}
                   item={r}
@@ -447,6 +578,14 @@ export default function PostDetailScreen({
                   liked={app.hasMyAction(1, r)}
                   recawed={app.hasMyAction(2, r)}
                   custom={app.customFor(r.senderId)}
+                  modAdmin={mod.isAdmin}
+                  modHiddenFor={mod.isPostHidden}
+                  modHiddenAttFor={mod.hiddenAttHashesFor}
+                  onModTogglePost={
+                    mod.isAdmin ? onModTogglePost : undefined
+                  }
+                  onModAttach={mod.isAdmin ? onModAttach : undefined}
+                  attTick={attTicks[r.cawId.toLowerCase()] ?? 0}
                 />
               ))
             )}
@@ -461,6 +600,8 @@ export default function PostDetailScreen({
               </Text>
             ) : null}
           </>
+        )}
+        </>
         )}
       </ScrollView>
       <ConfirmSheet
@@ -517,6 +658,62 @@ export default function PostDetailScreen({
         busy={tipBusy}
         onConfirm={confirmTip}
         onCancel={() => setTipItem(null)}
+      />
+      <ConfirmSheet
+        visible={!!modPostPending}
+        title={
+          modPostPending
+            ? mod.isPostHidden(modPostPending.cawId)
+              ? tr('mod.unhideTitle')
+              : tr('mod.hideTitle')
+            : ''
+        }
+        body={
+          modPostPending && !mod.isPostHidden(modPostPending.cawId)
+            ? tr('mod.hideNote')
+            : undefined
+        }
+        confirmLabel={
+          modPostPending
+            ? mod.isPostHidden(modPostPending.cawId)
+              ? tr('mod.unhideBtn')
+              : tr('mod.hideBtn')
+            : ''
+        }
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmModPost}
+        onCancel={() => setModPostPending(null)}
+        busy={modBusy}
+      />
+      <ConfirmSheet
+        visible={!!modAttPending}
+        title={
+          modAttPending
+            ? modAttPending.verb === 'delete'
+              ? tr('mod.deleteTitle')
+              : modAttPending.verb === 'hide'
+                ? tr('mod.hideMediaTitle')
+                : tr('mod.unhideMediaTitle')
+            : ''
+        }
+        body={
+          modAttPending && modAttPending.verb === 'delete'
+            ? tr('mod.deleteWarn')
+            : undefined
+        }
+        confirmLabel={
+          modAttPending
+            ? modAttPending.verb === 'delete'
+              ? tr('mod.deleteBtn')
+              : modAttPending.verb === 'hide'
+                ? tr('mod.hideMediaBtn')
+                : tr('mod.unhideBtn')
+            : ''
+        }
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmModAtt}
+        onCancel={() => setModAttPending(null)}
+        busy={modBusy}
       />
     </View>
   );

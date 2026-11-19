@@ -1,4 +1,4 @@
-/* Verification for the media-server client (v0.7.5).
+/* Verification for the media-server client (v0.7.6).
  * Run: node scripts/verify-media.mjs
  *
  * Purely local: src/lib/mediaApi.ts compiled and exercised in
@@ -37,7 +37,18 @@
  *      mediaApi.ts has no legacy FS import and no FormData;
  *      the screens append mediaErrorDetail to the failure
  *      notes; the read timeouts are pinned at 15 s; and
- *      app.json carries 0.7.5 / versionCode 53.
+ *      app.json carries 0.7.6 / versionCode 54;
+ *   9. moderation (v0.7.6): buildAdminMessage is byte-identical
+ *      to the server's admin format (the media format plus a
+ *      `target:` line; list-hidden signs all placeholders);
+ *      adminOp sends ONLY the fields the action uses and its
+ *      sig verifies; listHiddenMedia parses both entry shapes
+ *      and drops malformed ones; adminOpErrorKey maps the
+ *      statuses the way the web viewer does; the hidden-post
+ *      filter drops type 0/2 for non-admins only; the wiring
+ *      pins cover the store, the context refresh triggers,
+ *      every screen's moderation surface, and the profile
+ *      rendering NO owner address.
  */
 import { execFileSync } from 'node:child_process';
 import Module, { createRequire } from 'node:module';
@@ -420,8 +431,191 @@ check('reads: mediaFor / attachmentsFor use the 15 s read timeout (v0.7.5)',
 check('reads: attachmentsFor caches only non-empty lists (v0.7.5)',
   mediaSrc.includes('if (okFetch && list.length > 0)'));
 const appJson = JSON.parse(readFileSync(ROOT + 'app.json', 'utf8'));
-check('app.json: version 0.7.5 / versionCode 53',
-  appJson.expo.version === '0.7.5' && appJson.expo.android.versionCode === 53);
+check('app.json: version 0.7.6 / versionCode 54',
+  appJson.expo.version === '0.7.6' && appJson.expo.android.versionCode === 54);
+
+/* ---- 9. moderation (v0.7.6) ---- */
+const EMPTY = api.MEDIA_EMPTY_SHA256;
+const HASH2 = 'cd'.repeat(32);
+check('admin message: hide-post literal (empty hash signed, caw lowercased)',
+  api.buildAdminMessage({ action: 'hide-post', cawId: '0x' + 'AB'.repeat(32), ts: 1700000000 }) ===
+    'CAW Media v1\naction: hide-post\nname: -\nsha256: ' + EMPTY +
+    '\ncaw: 0x' + 'ab'.repeat(32) + '\ntx: -\ntarget: -\nts: 1700000000');
+check('admin message: hide-icon literal (name + pinned hash lowercased)',
+  api.buildAdminMessage({ action: 'hide-icon', nameId: 190, sha256: HASH.toUpperCase(), ts: 5 }) ===
+    'CAW Media v1\naction: hide-icon\nname: 190\nsha256: ' + HASH +
+    '\ncaw: -\ntx: -\ntarget: -\nts: 5');
+check('admin message: appoint-admin literal (target line filled, lowercased)',
+  api.buildAdminMessage({ action: 'appoint-admin', target: '0x' + 'AB'.repeat(20), ts: 7 }) ===
+    'CAW Media v1\naction: appoint-admin\nname: -\nsha256: ' + EMPTY +
+    '\ncaw: -\ntx: -\ntarget: 0x' + 'ab'.repeat(20) + '\nts: 7');
+check('admin message: list-hidden signs all placeholders',
+  api.buildAdminMessage({ action: 'list-hidden', ts: 9 }) ===
+    'CAW Media v1\naction: list-hidden\nname: -\nsha256: ' + EMPTY +
+    '\ncaw: -\ntx: -\ntarget: -\nts: 9');
+check('admin message: exactly 8 lines, no trailing newline',
+  (() => {
+    const m = api.buildAdminMessage({ action: 'hide-post', cawId: '0x' + 'ab'.repeat(32), ts: 1 });
+    return !m.endsWith('\n') && m.split('\n').length === 8;
+  })());
+{
+  const w = Wallet.createRandom();
+  const msg = api.buildAdminMessage({ action: 'revoke-admin', target: w.address, ts: 1700000001 });
+  const sig = await w.signMessage(msg);
+  check('admin sign: personal_sign over the admin message recovers the signer',
+    verifyMessage(msg, sig) === w.address);
+}
+check('adminOpErrorKey: the status mapping (403 splits on the server text)',
+  api.adminOpErrorKey(403, 'not an admin') === 'notAdmin' &&
+  api.adminOpErrorKey(403, 'root only') === 'rootOnly' &&
+  api.adminOpErrorKey(409, 'media changed') === 'changed' &&
+  api.adminOpErrorKey(404, '') === 'notFound' &&
+  api.adminOpErrorKey(401, '') === 'sig' &&
+  api.adminOpErrorKey(429, '') === 'throttle' &&
+  api.adminOpErrorKey(400, '') === 'bad' &&
+  api.adminOpErrorKey(500, '') === 'fail');
+check('hashFromMediaUrl: the content hash out of a media URL; null elsewhere',
+  api.hashFromMediaUrl(api.MEDIA_API + '/media/' + HASH + '.jpg') === HASH &&
+  api.hashFromMediaUrl('https://x/media/nope.jpg') === null &&
+  api.hashFromMediaUrl('') === null);
+
+const opCalls = [];
+fakeFetch((url, init) => {
+  if (url === api.MEDIA_API + '/v1/admins') {
+    return jsonRes({ admins: [
+      { address: '0x' + 'AA'.repeat(20), role: 'root' },
+      { address: '0x' + 'bb'.repeat(20), role: 'mod' },
+      { address: '0xjunk', role: 'nope' },
+    ] });
+  }
+  if (url === api.MEDIA_API + '/v1/hidden-posts') {
+    return jsonRes({ posts: ['0x' + 'AB'.repeat(32)] });
+  }
+  if (url === api.MEDIA_API + '/v1/admin/op') {
+    const body = JSON.parse(init.body);
+    opCalls.push(body);
+    if (body.action === 'list-hidden') {
+      return jsonRes({ ok: true, action: 'list-hidden', hidden: [
+        { kind: 'icon', nameId: '190', hash: HASH, hiddenBy: '0xroot', ts: 1700000000000 },
+        { kind: 'attach', cawId: '0x' + 'AB'.repeat(32), hash: HASH2, hiddenBy: '0xroot', ts: 1700000000001 },
+        { kind: 'bogus', hash: HASH },
+      ] });
+    }
+    if (body.action === 'hide-icon') {
+      return jsonRes({ error: 'media changed since read' }, false, 409);
+    }
+    return jsonRes({ ok: true, action: body.action });
+  }
+  throw new Error('network down');
+});
+{
+  const admins = await api.fetchAdmins();
+  check('fetchAdmins: roles kept, addresses lowercased, junk rows dropped',
+    !!admins && admins.length === 2 &&
+    admins[0].address === '0x' + 'aa'.repeat(20) && admins[0].role === 'root' &&
+    admins[1].role === 'mod');
+  const posts = await api.fetchHiddenPosts();
+  check('fetchHiddenPosts: cawIds lowercased',
+    !!posts && posts.length === 1 && posts[0] === '0x' + 'ab'.repeat(32));
+  const w = Wallet.createRandom();
+  const CAW = '0x' + 'ab'.repeat(32);
+  const before = opCalls.length;
+  await api.adminOp(w, { action: 'hide-post', cawId: CAW });
+  const body = opCalls[before];
+  check('adminOp: the body carries ONLY the fields the action uses (+ action/ts/sig)',
+    !!body &&
+    Object.keys(body).sort().join(',') === 'action,cawId,sig,ts' &&
+    body.action === 'hide-post' && body.cawId === CAW);
+  check('adminOp: the sent sig verifies over the canonical admin message',
+    !!body &&
+    verifyMessage(
+      api.buildAdminMessage({ action: 'hide-post', cawId: CAW, ts: body.ts }),
+      body.sig,
+    ) === w.address);
+  let err = null;
+  try {
+    await api.adminOp(w, { action: 'hide-icon', nameId: '190', sha256: HASH });
+  } catch (e) {
+    err = e;
+  }
+  check('adminOp: a 409 rejects with MediaApiError(status, server text)',
+    err instanceof api.MediaApiError && err.status === 409 &&
+    err.serverError === 'media changed since read');
+  const hidden = await api.listHiddenMedia(w);
+  check('listHiddenMedia: both entry shapes parsed, malformed dropped',
+    hidden.length === 2 &&
+    hidden[0].kind === 'icon' && hidden[0].nameId === '190' && hidden[0].hash === HASH &&
+    hidden[1].kind === 'attach' && hidden[1].cawId === CAW && hidden[1].hash === HASH2);
+  const lhBody = opCalls[opCalls.length - 1];
+  check('listHiddenMedia: its op body is action/ts/sig only',
+    !!lhBody && lhBody.action === 'list-hidden' &&
+    Object.keys(lhBody).sort().join(',') === 'action,sig,ts');
+}
+fakeFetch(() => {
+  throw new Error('network down');
+});
+check('admin reads: failures resolve null, never reject',
+  (await api.fetchAdmins()) === null &&
+  (await api.fetchHiddenPosts()) === null);
+globalThis.fetch = realFetch;
+
+{
+  const HSET = new Set(['0x' + 'ab'.repeat(32)]);
+  const rows = [
+    { type: 0, cawId: '0x' + 'AB'.repeat(32) },
+    { type: 2, cawId: '0x' + 'ab'.repeat(32) },
+    { type: 1, cawId: '0x' + 'ab'.repeat(32) },
+    { type: 0, cawId: '0x' + 'ff'.repeat(32) },
+  ];
+  const kept = api.filterModeratedItems(rows, HSET, false);
+  check('filter: hidden posts + recaws drop for non-admins; likes and other posts stay',
+    kept.length === 2 && kept[0].type === 1 && kept[1].type === 0);
+  check('filter: admins keep everything (same array back)',
+    api.filterModeratedItems(rows, HSET, true) === rows);
+  check('filter: an empty hidden set is a no-op (same array back)',
+    api.filterModeratedItems(rows, new Set(), false) === rows);
+  check('postVisible: hidden shows only to admins',
+    api.postVisible(true, false) === false &&
+    api.postVisible(true, true) === true &&
+    api.postVisible(false, false) === true);
+}
+
+const modLib = readFileSync(ROOT + 'src/lib/moderation.ts', 'utf8');
+check('wiring: the moderation store sits on the admin client (moderation.ts)',
+  modLib.includes('fetchAdmins') &&
+  modLib.includes('fetchHiddenPosts') &&
+  modLib.includes('listHiddenMedia') &&
+  modLib.includes('useModeration'));
+const ctxSrc = readFileSync(ROOT + 'src/context/AppContext.tsx', 'utf8');
+check('wiring: AppContext refreshes moderation on wallet change + a 60 s tick',
+  ctxSrc.includes('refreshModeration(address, secretRef.current)') &&
+  ctxSrc.includes('60000'));
+const tlSrc = readFileSync(ROOT + 'src/screens/TimelineScreen.tsx', 'utf8');
+check('wiring: the timeline filters hidden posts and wires the card ops',
+  tlSrc.includes('filterModeratedItems') &&
+  tlSrc.includes('onModTogglePost') &&
+  tlSrc.includes('confirmModAtt'));
+const pdSrc = readFileSync(ROOT + 'src/screens/PostDetailScreen.tsx', 'utf8');
+check('wiring: post detail shows the hidden state to non-admins, filters replies',
+  pdSrc.includes('postHidden && !mod.isAdmin') &&
+  pdSrc.includes("tr('mod.hiddenNote')") &&
+  pdSrc.includes('filterModeratedItems(replies'));
+const bmSrc = readFileSync(ROOT + 'src/screens/BookmarksScreen.tsx', 'utf8');
+check('wiring: bookmarks drop hidden posts for non-admins',
+  bmSrc.includes('mod.isPostHidden(post.cawId) && !mod.isAdmin'));
+const stSrc = readFileSync(ROOT + 'src/screens/SettingsScreen.tsx', 'utf8');
+check('wiring: Settings carries the moderation section (admins) + moderators card (root only)',
+  stSrc.includes("tr('mod.sectionTitle')") && stSrc.includes('mod.isAdmin') &&
+  stSrc.includes("tr('mod.adminsTitle')") && stSrc.includes('mod.isRoot') &&
+  stSrc.includes("tr('mod.roleNote')"));
+check('wiring: profile media moderation rows (ProfileScreen)',
+  prof.includes("tr('mod.mediaTitle')") && prof.includes('setModMediaPending'));
+check('wiring: PostCard carries the moderation props + hidden placeholders (ui.tsx)',
+  ui.includes('modHiddenFor') && ui.includes('onModTogglePost') &&
+  ui.includes('modHiddenAttFor') && ui.includes('mod.attHidden'));
+check('profile address: ProfileScreen never renders the owner address (v0.7.6)',
+  !prof.includes('{owner}') && !prof.includes('owner.slice') &&
+  !prof.includes('shortAddr(owner)'));
 
 console.log(`\nmedia: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

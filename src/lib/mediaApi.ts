@@ -351,6 +351,273 @@ export function invalidateMedia(nameId: bigint | string | number): void {
   mediaCache.delete(String(nameId));
 }
 
+/** Drop one post's cached attachment list (after an admin
+ *  delete, so other cards stop serving the removed image). */
+export function invalidateAttachments(cawId: string): void {
+  attachCache.delete(String(cawId).toLowerCase());
+}
+
+/* ---------------- moderation (admin API, v0.7.6) ----------------
+ * The media server keeps a small admin list (one root plus the
+ * moderators it appoints). When the app's wallet address is on
+ * it, the app grows moderation tools: posts can be hidden
+ * (display-level only — the post stays on-chain and other
+ * clients may still show it), profile media and post
+ * attachments can be hidden or deleted, and the root can
+ * appoint / revoke moderators. Every op is an EIP-191
+ * personal_sign by the wallet over the admin message format —
+ * the media format plus a `target:` line before `ts:` — and
+ * the server authorises it against its admin list, never
+ * against name ownership. The format and the error mapping
+ * are shared byte for byte / rule for rule with the web
+ * viewer (buildAdminMessage / adminOpErrorKey there).
+ *
+ * Hidden MEDIA truth is the server's own list: the
+ * `list-hidden` op returns every hidden profile item and
+ * attachment, so a hide can be undone from any session —
+ * there is no session-only limitation. */
+
+export type AdminRole = 'root' | 'mod';
+
+export interface AdminEntry {
+  address: string;
+  role: AdminRole;
+}
+
+/** The admin list (GET /v1/admins). Null on any failure —
+ *  a down server simply means "no admin UI this time". */
+export async function fetchAdmins(): Promise<AdminEntry[] | null> {
+  try {
+    const res = await fetchTimeout(MEDIA_API + '/v1/admins', undefined, 15000);
+    if (!res.ok) return null;
+    const j = await res.json();
+    if (!j || !Array.isArray(j.admins)) return null;
+    return j.admins
+      .filter(
+        (a: unknown): a is AdminEntry =>
+          !!a &&
+          typeof (a as AdminEntry).address === 'string' &&
+          ((a as AdminEntry).role === 'root' ||
+            (a as AdminEntry).role === 'mod'),
+      )
+      .map((a: AdminEntry) => ({
+        address: a.address.toLowerCase(),
+        role: a.role,
+      }));
+  } catch {
+    return null;
+  }
+}
+
+/** The hidden-post list (GET /v1/hidden-posts): lowercase
+ *  cawIds our frontends must not render for non-admins.
+ *  Null on any failure (callers keep the last good list). */
+export async function fetchHiddenPosts(): Promise<string[] | null> {
+  try {
+    const res = await fetchTimeout(
+      MEDIA_API + '/v1/hidden-posts',
+      undefined,
+      15000,
+    );
+    if (!res.ok) return null;
+    const j = await res.json();
+    if (!j || !Array.isArray(j.posts)) return null;
+    return j.posts.map((x: unknown) => String(x).toLowerCase());
+  } catch {
+    return null;
+  }
+}
+
+export interface AdminOpFields {
+  action: string;
+  nameId?: string | number | null;
+  sha256?: string | null;
+  cawId?: string | null;
+  target?: string | null;
+}
+
+/** The signed admin message, byte for byte as the server
+ *  rebuilds it: the media format with a `target:` line.
+ *  Canonicalisation IS the contract — name is the decimal id
+ *  or -, sha256 the lowercase hash (the empty hash when the
+ *  action pins no media), caw / target the lowercase hex
+ *  or -. Clients sign the lowercase forms. */
+export function buildAdminMessage(o: {
+  action: string;
+  nameId?: string | number | null;
+  sha256?: string | null;
+  cawId?: string | null;
+  target?: string | null;
+  ts: number | string;
+}): string {
+  return [
+    'CAW Media v1',
+    'action: ' + o.action,
+    'name: ' +
+      (o.nameId != null && o.nameId !== '' ? String(o.nameId) : '-'),
+    'sha256: ' +
+      (o.sha256 ? String(o.sha256).toLowerCase() : MEDIA_EMPTY_SHA256),
+    'caw: ' + (o.cawId ? String(o.cawId).toLowerCase() : '-'),
+    'tx: -',
+    'target: ' + (o.target ? String(o.target).toLowerCase() : '-'),
+    'ts: ' + o.ts,
+  ].join('\n');
+}
+
+/** Map an admin-op rejection to its string-table suffix.
+ *  403 splits by the server's message (not an admin vs root
+ *  only); 409 is the stale-hash race and gets its own honest
+ *  wording. Mirrors the web viewer's adminOpErrorKey. */
+export function adminOpErrorKey(
+  status: number,
+  msg: string,
+): 'notAdmin' | 'rootOnly' | 'changed' | 'notFound' | 'sig' | 'throttle' | 'bad' | 'fail' {
+  const m = String(msg || '');
+  if (status === 403) return m.includes('root only') ? 'rootOnly' : 'notAdmin';
+  if (status === 409) return 'changed';
+  if (status === 404) return 'notFound';
+  if (status === 401) return 'sig';
+  if (status === 429) return 'throttle';
+  if (status === 400) return 'bad';
+  return 'fail';
+}
+
+/** Media blobs are content-addressed: /media/<sha256>.<ext>.
+ *  The hash an admin op must pin is read back out of the URL
+ *  the public reads already hand the client. */
+export function hashFromMediaUrl(url: string): string | null {
+  const m = /\/media\/([0-9a-f]{64})\.[a-z0-9]+/.exec(String(url || ''));
+  return m ? m[1] : null;
+}
+
+/**
+ * One signed admin op (POST /v1/admin/op). The body carries
+ * ONLY the fields the action uses, plus action / ts / sig —
+ * the message is the canonical buildAdminMessage form.
+ * Resolves with the server's JSON; rejects with MediaApiError
+ * (status + the server's own error text) on any failure.
+ */
+export async function adminOp(
+  signer: Wallet,
+  fields: AdminOpFields,
+): Promise<Record<string, unknown>> {
+  const ts = Math.floor(Date.now() / 1000);
+  const sig = await signer.signMessage(
+    buildAdminMessage({ ...fields, ts }),
+  );
+  const body: Record<string, unknown> = { action: fields.action, ts, sig };
+  if (fields.nameId != null && fields.nameId !== '') {
+    body.nameId = String(fields.nameId);
+  }
+  if (fields.sha256) body.sha256 = String(fields.sha256).toLowerCase();
+  if (fields.cawId) body.cawId = String(fields.cawId).toLowerCase();
+  if (fields.target) body.target = String(fields.target).toLowerCase();
+  const res = await fetchTimeout(
+    MEDIA_API + '/v1/admin/op',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    15000,
+  );
+  let j: Record<string, unknown> | null = null;
+  try {
+    j = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* a non-JSON body — the status alone will have to do */
+  }
+  if (!res.ok) {
+    throw new MediaApiError(
+      res.status,
+      j && typeof j.error === 'string' ? j.error : '',
+    );
+  }
+  return j ?? {};
+}
+
+/** One entry of the server's hidden-media list. Profile items
+ *  carry kind + nameId; attachments carry kind 'attach' +
+ *  cawId. `ts` is the hide time in MILLISECONDS (server form). */
+export type HiddenMediaEntry =
+  | {
+      kind: MediaKind;
+      nameId: string;
+      hash: string;
+      hiddenBy: string;
+      ts: number;
+    }
+  | {
+      kind: 'attach';
+      cawId: string;
+      hash: string;
+      hiddenBy: string;
+      ts: number;
+    };
+
+/**
+ * The server's hidden-media list (the `list-hidden` admin
+ * op, newest first) — the durable truth for media unhide:
+ * every entry can be unhidden / deleted straight from the
+ * list, in any session. Resolves [] when the server reports
+ * none; rejects with MediaApiError on failure (callers keep
+ * the last good list).
+ */
+export async function listHiddenMedia(
+  signer: Wallet,
+): Promise<HiddenMediaEntry[]> {
+  const j = await adminOp(signer, { action: 'list-hidden' });
+  const raw = Array.isArray(j.hidden) ? j.hidden : [];
+  const out: HiddenMediaEntry[] = [];
+  for (const e of raw as Array<Record<string, unknown>>) {
+    if (!e || typeof e.hash !== 'string') continue;
+    const base = {
+      hash: String(e.hash).toLowerCase(),
+      hiddenBy: typeof e.hiddenBy === 'string' ? e.hiddenBy : '',
+      ts: typeof e.ts === 'number' ? e.ts : 0,
+    };
+    if (e.kind === 'attach' && typeof e.cawId === 'string') {
+      out.push({ kind: 'attach', cawId: e.cawId.toLowerCase(), ...base });
+    } else if (
+      (e.kind === 'icon' || e.kind === 'header' || e.kind === 'audio') &&
+      e.nameId != null
+    ) {
+      out.push({
+        kind: e.kind as MediaKind,
+        nameId: String(e.nameId),
+        ...base,
+      });
+    }
+  }
+  return out;
+}
+
+/** The one visibility rule for posts: a hidden post is
+ *  dropped for everyone except admins, who keep seeing it
+ *  (marked). Mirrors the web viewer's modItemVisible. */
+export function postVisible(hidden: boolean, isAdmin: boolean): boolean {
+  return !hidden || !!isAdmin;
+}
+
+/** The list choke point, mirroring the web's modFilterItems:
+ *  feed-shaped items (type 0 posts and type 2 Recaws carry
+ *  the post's cawId; other types are never posts) filtered
+ *  against the lowercase hidden set. Admins keep everything. */
+export function filterModeratedItems<
+  T extends { type: number; cawId: string },
+>(items: T[], hidden: Set<string>, isAdmin: boolean): T[] {
+  if (!items || !hidden || hidden.size === 0 || isAdmin) return items || [];
+  return items.filter(
+    (a) =>
+      !(
+        a &&
+        (a.type === 0 || a.type === 2) &&
+        a.cawId &&
+        hidden.has(String(a.cawId).toLowerCase())
+      ),
+  );
+}
+
 /* ---------------- profile media writes ---------------- */
 
 /**

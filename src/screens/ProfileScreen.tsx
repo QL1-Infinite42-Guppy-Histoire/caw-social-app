@@ -83,12 +83,28 @@ import {
 import {
   MediaApiError,
   clearProfileMedia,
+  filterModeratedItems,
+  hashFromMediaUrl,
+  invalidateAttachments,
+  invalidateMedia,
   mediaErrorDetail,
   mediaFor,
   setProfileMedia,
+  type HiddenMediaEntry,
+  type MediaKind,
+  type PostAttachment,
   type ProfileMedia,
 } from '../lib/mediaApi';
 import { signerFor } from '../lib/wallet';
+import {
+  applyMediaHidden,
+  applyMediaUnhidden,
+  applyPostHidden,
+  modErrorText,
+  refreshHiddenMedia,
+  runAdminOp,
+  useModeration,
+} from '../lib/moderation';
 
 type PendingAction = { kind: 1 | 2; item: TimelineItem };
 type LoadState = 'loading' | 'ok' | 'fail' | 'notfound';
@@ -127,6 +143,176 @@ export default function ProfileScreen({
   const [statusByHash, setStatusByHash] = useState<Record<string, string>>({});
   const [busyByHash, setBusyByHash] = useState<Record<string, boolean>>({});
   const [pending, setPending] = useState<PendingAction | null>(null);
+
+  /* ---------- Moderation (v0.7.6) ----------
+   * Admins get, on ANY profile: Hide/Unhide/Delete for the
+   * profile's icon / header / audio (the ops pin the item's
+   * CURRENT hash, read from the media layer), the usual post
+   * + attachment controls on the profile's posts, and the
+   * hidden state of each media kind from the server's
+   * list-hidden truth — so a hide can be undone here in any
+   * session, not just the one that hid it. */
+  const mod = useModeration();
+  const [modPostPending, setModPostPending] = useState<TimelineItem | null>(
+    null,
+  );
+  const [modAttPending, setModAttPending] = useState<{
+    item: TimelineItem;
+    hash: string;
+    verb: 'hide' | 'unhide' | 'delete';
+  } | null>(null);
+  const [modMediaPending, setModMediaPending] = useState<{
+    kind: MediaKind;
+    verb: 'hide' | 'unhide' | 'delete';
+    hash: string;
+  } | null>(null);
+  const [modBusy, setModBusy] = useState(false);
+  const [modMediaNote, setModMediaNote] = useState('');
+  const [mediaTick, setMediaTick] = useState(0);
+  const [attTicks, setAttTicks] = useState<Record<string, number>>({});
+
+  const bumpAttTick = useCallback((cawId: string) => {
+    const key = cawId.toLowerCase();
+    setAttTicks((t) => ({ ...t, [key]: (t[key] ?? 0) + 1 }));
+  }, []);
+
+  const confirmModPost = useCallback(async () => {
+    const item = modPostPending;
+    if (!item) return;
+    const hidden = mod.isPostHidden(item.cawId);
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: hidden ? 'unhide-post' : 'hide-post',
+        cawId: item.cawId,
+      });
+      applyPostHidden(item.cawId, !hidden);
+    } catch (e) {
+      setStatusByHash((prev) => ({
+        ...prev,
+        [item.hash]: modErrorText(e),
+      }));
+    } finally {
+      setModBusy(false);
+      setModPostPending(null);
+    }
+  }, [app, mod, modPostPending]);
+
+  const confirmModAtt = useCallback(async () => {
+    const p = modAttPending;
+    if (!p) return;
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: p.verb + '-attach',
+        cawId: p.item.cawId,
+        sha256: p.hash,
+      });
+      const entry = {
+        kind: 'attach' as const,
+        cawId: p.item.cawId.toLowerCase(),
+        hash: p.hash,
+        hiddenBy: app.address ?? '',
+        ts: Date.now(),
+      };
+      if (p.verb === 'hide') applyMediaHidden(entry);
+      else applyMediaUnhidden(entry);
+      if (p.verb === 'delete') {
+        invalidateAttachments(p.item.cawId);
+        bumpAttTick(p.item.cawId);
+      }
+      refreshHiddenMedia(app.getSecret()).catch(() => {});
+    } catch (e) {
+      setStatusByHash((prev) => ({
+        ...prev,
+        [p.item.hash]: modErrorText(e),
+      }));
+      if (e instanceof MediaApiError && e.status === 409) {
+        invalidateAttachments(p.item.cawId);
+        bumpAttTick(p.item.cawId);
+      }
+    } finally {
+      setModBusy(false);
+      setModAttPending(null);
+    }
+  }, [app, modAttPending, bumpAttTick]);
+
+  const confirmModMedia = useCallback(async () => {
+    const p = modMediaPending;
+    if (!p || profileId === null) return;
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: p.verb + '-' + p.kind,
+        nameId: profileId.toString(),
+        sha256: p.hash,
+      });
+      const entry: HiddenMediaEntry = {
+        kind: p.kind,
+        nameId: profileId.toString(),
+        hash: p.hash,
+        hiddenBy: app.address ?? '',
+        ts: Date.now(),
+      };
+      if (p.verb === 'hide') applyMediaHidden(entry);
+      else applyMediaUnhidden(entry);
+      setModMediaNote('');
+      // The profile's media reads refresh: the cached copy
+      // is dropped, the header re-reads, and the big avatar
+      // remounts onto the fresh state.
+      invalidateMedia(profileId);
+      mediaFor(profileId)
+        .then((m) => setServerMedia(m))
+        .catch(() => {});
+      setMediaTick((t) => t + 1);
+      refreshHiddenMedia(app.getSecret()).catch(() => {});
+    } catch (e) {
+      // 409 included: modErrorText carries the honest
+      // "changed since this screen opened" wording, and the
+      // refetch below shows the current version.
+      setModMediaNote(modErrorText(e));
+      invalidateMedia(profileId);
+      mediaFor(profileId)
+        .then((m) => setServerMedia(m))
+        .catch(() => {});
+      setMediaTick((t) => t + 1);
+    } finally {
+      setModBusy(false);
+      setModMediaPending(null);
+    }
+  }, [app, modMediaPending, profileId]);
+
+  const onModTogglePost = useCallback(
+    (item: TimelineItem) => setModPostPending(item),
+    [],
+  );
+  const onModAttach = useCallback(
+    (
+      item: TimelineItem,
+      hash: string,
+      _att: PostAttachment | null,
+      verb: 'hide' | 'unhide' | 'delete',
+    ) => setModAttPending({ item, hash, verb }),
+    [],
+  );
+
+  /* This profile's hidden media kinds, from the server's
+   * list-hidden truth (any session's hides included). */
+  const profHiddenMedia: Partial<Record<MediaKind, HiddenMediaEntry>> =
+    {};
+  if (profileId !== null) {
+    for (const e of mod.hiddenMedia) {
+      if (e.kind !== 'attach' && e.nameId === profileId.toString()) {
+        profHiddenMedia[e.kind] = e;
+      }
+    }
+  }
+
+  const visiblePosts = filterModeratedItems(
+    posts,
+    mod.hiddenPosts,
+    mod.isAdmin,
+  );
 
   const [followConfirmOpen, setFollowConfirmOpen] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
@@ -1027,6 +1213,7 @@ export default function ProfileScreen({
           {profileId !== null ? (
             <View style={styles.avatarRing}>
               <Avatar
+                key={'avatar-' + mediaTick}
                 nameId={profileId}
                 size={96}
                 customUri={custom ? custom.avatarPath : undefined}
@@ -1157,6 +1344,129 @@ export default function ProfileScreen({
           </Pressable>
         </View>
 
+        {/* Media moderation (v0.7.6, admins only): one row
+            per media kind this profile has — or has hidden.
+            A visible item's buttons pin its CURRENT hash
+            (from the media layer's own read); a hidden item
+            stays listed from the server's hidden-media list
+            so the hide can be undone right here. */}
+        {mod.isAdmin && profileId !== null ? (
+          <View style={{ marginTop: 16 }}>
+            <Text style={S.h2}>{tr('mod.mediaTitle')}</Text>
+            {(['icon', 'header', 'audio'] as MediaKind[]).map(
+              (kind) => {
+                const hiddenEntry = profHiddenMedia[kind];
+                const current = serverMedia?.[kind] ?? null;
+                const currentHash = current
+                  ? hashFromMediaUrl(current.url)
+                  : null;
+                if (!hiddenEntry && !currentHash) return null;
+                const label =
+                  kind === 'icon'
+                    ? tr('mod.kindIcon')
+                    : kind === 'header'
+                      ? tr('mod.kindHeader')
+                      : tr('media.audio');
+                return (
+                  <View
+                    key={kind}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      marginTop: 8,
+                    }}
+                  >
+                    <Text style={[S.body, { flex: 1 }]}>
+                      {label}
+                      {hiddenEntry
+                        ? ' · ' + tr('mod.hiddenBadge')
+                        : ''}
+                    </Text>
+                    {hiddenEntry ? (
+                      <>
+                        <Pressable
+                          onPress={() =>
+                            setModMediaPending({
+                              kind,
+                              verb: 'unhide',
+                              hash: hiddenEntry.hash,
+                            })
+                          }
+                          hitSlop={6}
+                        >
+                          <Text style={styles.modBtnText}>
+                            {tr('mod.unhideBtn')}
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() =>
+                            setModMediaPending({
+                              kind,
+                              verb: 'delete',
+                              hash: hiddenEntry.hash,
+                            })
+                          }
+                          hitSlop={6}
+                        >
+                          <Text
+                            style={[
+                              styles.modBtnText,
+                              { color: '#b3261e' },
+                            ]}
+                          >
+                            {tr('mod.deleteBtn')}
+                          </Text>
+                        </Pressable>
+                      </>
+                    ) : (
+                      <>
+                        <Pressable
+                          onPress={() =>
+                            setModMediaPending({
+                              kind,
+                              verb: 'hide',
+                              hash: currentHash as string,
+                            })
+                          }
+                          hitSlop={6}
+                        >
+                          <Text style={styles.modBtnText}>
+                            {tr('mod.hideMediaBtn')}
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() =>
+                            setModMediaPending({
+                              kind,
+                              verb: 'delete',
+                              hash: currentHash as string,
+                            })
+                          }
+                          hitSlop={6}
+                        >
+                          <Text
+                            style={[
+                              styles.modBtnText,
+                              { color: '#b3261e' },
+                            ]}
+                          >
+                            {tr('mod.deleteBtn')}
+                          </Text>
+                        </Pressable>
+                      </>
+                    )}
+                  </View>
+                );
+              },
+            )}
+            {modMediaNote ? (
+              <Text style={[S.small, { marginTop: 8 }]}>
+                {modMediaNote}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+
         <Text style={[S.h2, { marginTop: 18, marginBottom: 4 }]}>
           {tr('profile.posts')}
         </Text>
@@ -1167,7 +1477,7 @@ export default function ProfileScreen({
   return (
     <View style={rootStyle}>
       <FlatList
-        data={posts}
+        data={visiblePosts}
         keyExtractor={(item, idx) => item.hash + ':' + idx}
         ListHeaderComponent={header}
         renderItem={({ item }) => (
@@ -1187,6 +1497,12 @@ export default function ProfileScreen({
             liked={app.hasMyAction(1, item)}
             recawed={app.hasMyAction(2, item)}
             custom={app.customFor(item.senderId)}
+            modAdmin={mod.isAdmin}
+            modHiddenFor={mod.isPostHidden}
+            modHiddenAttFor={mod.hiddenAttHashesFor}
+            onModTogglePost={mod.isAdmin ? onModTogglePost : undefined}
+            onModAttach={mod.isAdmin ? onModAttach : undefined}
+            attTick={attTicks[item.cawId.toLowerCase()] ?? 0}
           />
         )}
         ListEmptyComponent={
@@ -1206,7 +1522,7 @@ export default function ProfileScreen({
           )
         }
         ListFooterComponent={
-          !done && posts.length > 0 ? (
+          !done && visiblePosts.length > 0 ? (
             <LoadMoreFooter
               loading={loadingMore}
               onPress={loadMorePosts}
@@ -1335,6 +1651,92 @@ export default function ProfileScreen({
         busy={tipBusy}
         onConfirm={confirmTip}
         onCancel={() => setTipItem(null)}
+      />
+      <ConfirmSheet
+        visible={!!modPostPending}
+        title={
+          modPostPending
+            ? mod.isPostHidden(modPostPending.cawId)
+              ? tr('mod.unhideTitle')
+              : tr('mod.hideTitle')
+            : ''
+        }
+        body={
+          modPostPending && !mod.isPostHidden(modPostPending.cawId)
+            ? tr('mod.hideNote')
+            : undefined
+        }
+        confirmLabel={
+          modPostPending
+            ? mod.isPostHidden(modPostPending.cawId)
+              ? tr('mod.unhideBtn')
+              : tr('mod.hideBtn')
+            : ''
+        }
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmModPost}
+        onCancel={() => setModPostPending(null)}
+        busy={modBusy}
+      />
+      <ConfirmSheet
+        visible={!!modAttPending}
+        title={
+          modAttPending
+            ? modAttPending.verb === 'delete'
+              ? tr('mod.deleteTitle')
+              : modAttPending.verb === 'hide'
+                ? tr('mod.hideMediaTitle')
+                : tr('mod.unhideMediaTitle')
+            : ''
+        }
+        body={
+          modAttPending && modAttPending.verb === 'delete'
+            ? tr('mod.deleteWarn')
+            : undefined
+        }
+        confirmLabel={
+          modAttPending
+            ? modAttPending.verb === 'delete'
+              ? tr('mod.deleteBtn')
+              : modAttPending.verb === 'hide'
+                ? tr('mod.hideMediaBtn')
+                : tr('mod.unhideBtn')
+            : ''
+        }
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmModAtt}
+        onCancel={() => setModAttPending(null)}
+        busy={modBusy}
+      />
+      <ConfirmSheet
+        visible={!!modMediaPending}
+        title={
+          modMediaPending
+            ? modMediaPending.verb === 'delete'
+              ? tr('mod.deleteTitle')
+              : modMediaPending.verb === 'hide'
+                ? tr('mod.hideMediaTitle')
+                : tr('mod.unhideMediaTitle')
+            : ''
+        }
+        body={
+          modMediaPending && modMediaPending.verb === 'delete'
+            ? tr('mod.deleteWarn')
+            : undefined
+        }
+        confirmLabel={
+          modMediaPending
+            ? modMediaPending.verb === 'delete'
+              ? tr('mod.deleteBtn')
+              : modMediaPending.verb === 'hide'
+                ? tr('mod.hideMediaBtn')
+                : tr('mod.unhideBtn')
+            : ''
+        }
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmModMedia}
+        onCancel={() => setModMediaPending(null)}
+        busy={modBusy}
       />
       <Modal
         visible={!!recawChoice}
@@ -1768,6 +2170,15 @@ const styles = StyleSheet.create({
   followingPillText: { fontSize: 14, fontWeight: '700', color: '#0f1419' },
   username: { fontSize: 20, fontWeight: '800', color: '#0f1419', marginTop: 8 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  /* Media moderation rows (v0.7.6): the small text buttons
+   * (Hide / Unhide / Delete) beside each media kind. */
+  modBtnText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: ACCENT,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
   countsRow: {
     flexDirection: 'row',
     alignItems: 'stretch',

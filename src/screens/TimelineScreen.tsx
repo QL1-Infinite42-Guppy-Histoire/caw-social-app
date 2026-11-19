@@ -62,6 +62,22 @@ import {
 } from '../lib/authorPay';
 import { fmtAmountCard, fmtAmountCardDec } from '../lib/cawCore';
 import {
+  MediaApiError,
+  filterModeratedItems,
+  invalidateAttachments,
+  type PostAttachment,
+} from '../lib/mediaApi';
+import {
+  applyMediaHidden,
+  applyMediaUnhidden,
+  applyPostHidden,
+  modErrorText,
+  refreshHiddenMedia,
+  refreshModeration,
+  runAdminOp,
+  useModeration,
+} from '../lib/moderation';
+import {
   buildFollowIndex,
   refinedFollowListsOf,
 } from '../lib/followIndex';
@@ -117,6 +133,105 @@ export default function TimelineScreen() {
   const [statusByHash, setStatusByHash] = useState<Record<string, string>>({});
   const [busyByHash, setBusyByHash] = useState<Record<string, boolean>>({});
   const [pending, setPending] = useState<PendingAction | null>(null);
+
+  /* ---------- Moderation (v0.7.6) ----------
+   * Admin-only tools, mirroring the web viewer: hidden posts
+   * are filtered out of both feeds for non-admins; admins
+   * keep seeing them (dimmed + badged, by PostCard) and get
+   * Hide/Unhide + attachment ops behind confirm sheets. */
+  const mod = useModeration();
+  const [modPostPending, setModPostPending] = useState<TimelineItem | null>(
+    null,
+  );
+  const [modAttPending, setModAttPending] = useState<{
+    item: TimelineItem;
+    hash: string;
+    verb: 'hide' | 'unhide' | 'delete';
+  } | null>(null);
+  const [modBusy, setModBusy] = useState(false);
+  const [attTicks, setAttTicks] = useState<Record<string, number>>({});
+
+  const bumpAttTick = useCallback((cawId: string) => {
+    const key = cawId.toLowerCase();
+    setAttTicks((t) => ({ ...t, [key]: (t[key] ?? 0) + 1 }));
+  }, []);
+
+  const confirmModPost = useCallback(async () => {
+    const item = modPostPending;
+    if (!item) return;
+    const hidden = mod.isPostHidden(item.cawId);
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: hidden ? 'unhide-post' : 'hide-post',
+        cawId: item.cawId,
+      });
+      applyPostHidden(item.cawId, !hidden);
+    } catch (e) {
+      setStatusByHash((prev) => ({
+        ...prev,
+        [item.hash]: modErrorText(e),
+      }));
+    } finally {
+      setModBusy(false);
+      setModPostPending(null);
+    }
+  }, [app, mod, modPostPending]);
+
+  const confirmModAtt = useCallback(async () => {
+    const p = modAttPending;
+    if (!p) return;
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: p.verb + '-attach',
+        cawId: p.item.cawId,
+        sha256: p.hash,
+      });
+      const entry = {
+        kind: 'attach' as const,
+        cawId: p.item.cawId.toLowerCase(),
+        hash: p.hash,
+        hiddenBy: app.address ?? '',
+        ts: Date.now(),
+      };
+      if (p.verb === 'hide') applyMediaHidden(entry);
+      else applyMediaUnhidden(entry);
+      if (p.verb === 'delete') {
+        invalidateAttachments(p.item.cawId);
+        bumpAttTick(p.item.cawId);
+      }
+      refreshHiddenMedia(app.getSecret()).catch(() => {});
+    } catch (e) {
+      setStatusByHash((prev) => ({
+        ...prev,
+        [p.item.hash]: modErrorText(e),
+      }));
+      // 409: the bytes changed under us — drop the cached
+      // list so the card refetches what is actually there.
+      if (e instanceof MediaApiError && e.status === 409) {
+        invalidateAttachments(p.item.cawId);
+        bumpAttTick(p.item.cawId);
+      }
+    } finally {
+      setModBusy(false);
+      setModAttPending(null);
+    }
+  }, [app, modAttPending, bumpAttTick]);
+
+  const onModTogglePost = useCallback(
+    (item: TimelineItem) => setModPostPending(item),
+    [],
+  );
+  const onModAttach = useCallback(
+    (
+      item: TimelineItem,
+      hash: string,
+      _att: PostAttachment | null,
+      verb: 'hide' | 'unhide' | 'delete',
+    ) => setModAttPending({ item, hash, verb }),
+    [],
+  );
 
   const acting =
     myTokens.find((t) => t.id === actingId) ?? myTokens[0] ?? null;
@@ -297,6 +412,7 @@ export default function TimelineScreen() {
     setRefreshing(true);
     app.refreshBalances().catch(() => {});
     app.refreshMyTokens().catch(() => {});
+    refreshModeration(app.address, app.getSecret()).catch(() => {});
     loadFirst();
   }, [app, loadFirst]);
 
@@ -830,7 +946,14 @@ export default function TimelineScreen() {
     );
   }
 
-  const shownItems = mode === 'latest' ? items : fItems;
+  /* Moderation filter (v0.7.6): hidden posts leave both
+   * feeds for non-admins. Admins keep the raw list — their
+   * cards render dimmed + badged instead. */
+  const shownItems = filterModeratedItems(
+    mode === 'latest' ? items : fItems,
+    mod.hiddenPosts,
+    mod.isAdmin,
+  );
   const onRefreshList = () => {
     if (mode === 'following') {
       setFItems([]);
@@ -871,6 +994,12 @@ export default function TimelineScreen() {
             liked={app.hasMyAction(1, item)}
             recawed={app.hasMyAction(2, item)}
             custom={app.customFor(item.senderId)}
+            modAdmin={mod.isAdmin}
+            modHiddenFor={mod.isPostHidden}
+            modHiddenAttFor={mod.hiddenAttHashesFor}
+            onModTogglePost={mod.isAdmin ? onModTogglePost : undefined}
+            onModAttach={mod.isAdmin ? onModAttach : undefined}
+            attTick={attTicks[item.cawId.toLowerCase()] ?? 0}
           />
         )}
         windowSize={7}
@@ -1024,6 +1153,62 @@ export default function TimelineScreen() {
         onConfirm={confirmAuthorPay}
         onCancel={() => setPayTarget(null)}
         busy={payBusy}
+      />
+      <ConfirmSheet
+        visible={!!modPostPending}
+        title={
+          modPostPending
+            ? mod.isPostHidden(modPostPending.cawId)
+              ? tr('mod.unhideTitle')
+              : tr('mod.hideTitle')
+            : ''
+        }
+        body={
+          modPostPending && !mod.isPostHidden(modPostPending.cawId)
+            ? tr('mod.hideNote')
+            : undefined
+        }
+        confirmLabel={
+          modPostPending
+            ? mod.isPostHidden(modPostPending.cawId)
+              ? tr('mod.unhideBtn')
+              : tr('mod.hideBtn')
+            : ''
+        }
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmModPost}
+        onCancel={() => setModPostPending(null)}
+        busy={modBusy}
+      />
+      <ConfirmSheet
+        visible={!!modAttPending}
+        title={
+          modAttPending
+            ? modAttPending.verb === 'delete'
+              ? tr('mod.deleteTitle')
+              : modAttPending.verb === 'hide'
+                ? tr('mod.hideMediaTitle')
+                : tr('mod.unhideMediaTitle')
+            : ''
+        }
+        body={
+          modAttPending && modAttPending.verb === 'delete'
+            ? tr('mod.deleteWarn')
+            : undefined
+        }
+        confirmLabel={
+          modAttPending
+            ? modAttPending.verb === 'delete'
+              ? tr('mod.deleteBtn')
+              : modAttPending.verb === 'hide'
+                ? tr('mod.hideMediaBtn')
+                : tr('mod.unhideBtn')
+            : ''
+        }
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmModAtt}
+        onCancel={() => setModAttPending(null)}
+        busy={modBusy}
       />
       <TipSheet
         visible={!!tipItem}

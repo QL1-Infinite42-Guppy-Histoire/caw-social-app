@@ -53,6 +53,7 @@ import {
   storeKV,
 } from '../lib/stores';
 import { initViews } from '../lib/views';
+import { refreshModeration } from '../lib/moderation';
 import {
   AUTO_LOCK_MS,
   autoLockDue,
@@ -297,7 +298,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // A new wallet's list is "not read yet" until its own fresh
     // enumeration completes (v0.4.5).
     setMyTokensReady(false);
+    // Moderation (v0.7.6): the admin list + hidden posts are
+    // wallet-shaped too — a new wallet may BE an admin, and
+    // the hidden set filters every feed for non-admins.
+    refreshModeration(address, secretRef.current).catch(() => {});
   }, [address]);
+
+  /* Moderation refresh (v0.7.6): once unlocked, and then on a
+   * slow tick — the hidden list can change under the app
+   * (another moderator, the web viewer) and the admin's
+   * hidden-media list needs the in-memory secret to read. */
+  useEffect(() => {
+    if (!address || locked) return;
+    refreshModeration(address, secretRef.current).catch(() => {});
+    const t = setInterval(() => {
+      refreshModeration(addressRef.current, secretRef.current).catch(
+        () => {},
+      );
+    }, 60000);
+    return () => clearInterval(t);
+  }, [address, locked]);
 
   /* Progressive my-names (v0.4.5): the enumeration reports the
    * names it has already proven (snapshot-shaped partial lists);

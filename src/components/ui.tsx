@@ -69,6 +69,7 @@ import {
 import { resolveShareUrl } from '../lib/share';
 import {
   attachmentLookup,
+  hashFromMediaUrl,
   mediaFor,
   type PostAttachment,
 } from '../lib/mediaApi';
@@ -785,10 +786,17 @@ function TargetPostQuote({
   item,
   lang,
   onOpenProfile,
+  modAdmin,
+  modHiddenFor,
 }: {
   item: TimelineItem;
   lang: string;
   onOpenProfile: (username: string) => void;
+  /** Moderation (v0.7.6): a hidden target post's content is
+   *  not quoted for non-admins (the hidden note stands in
+   *  its place); admins see it with the Hidden badge. */
+  modAdmin?: boolean;
+  modHiddenFor?: (cawId: string) => boolean;
 }) {
   const [post, setPost] = useState<TimelineItem | null>(null);
   const [author, setAuthor] = useState<string | null>(null);
@@ -808,6 +816,14 @@ function TargetPostQuote({
     };
   }, [item.cawId]);
   if (!post || !post.text) return null;
+  const targetHidden = !!(modHiddenFor && modHiddenFor(post.cawId));
+  if (targetHidden && !modAdmin) {
+    return (
+      <View style={postStyles.quote}>
+        <Text style={S.small}>{tr('mod.hiddenNote')}</Text>
+      </View>
+    );
+  }
   const authorLabel = author
     ? '@' + author
     : tr('tl.unknownName') + post.senderId.toString();
@@ -816,6 +832,11 @@ function TargetPostQuote({
       style={postStyles.quote}
       onPress={author ? () => onOpenProfile(author) : undefined}
     >
+      {targetHidden ? (
+        <Text style={postStyles.modBadgeText}>
+          {tr('mod.hiddenBadge')}
+        </Text>
+      ) : null}
       <View style={S.row}>
         <Avatar nameId={post.senderId} size={20} />
         <Text style={[postStyles.quoteName, { marginStart: 6 }]}>
@@ -847,11 +868,15 @@ export function QuotedPostFrame({
   lang,
   onOpenProfile,
   onOpenPost,
+  modHidden,
 }: {
   post: TimelineItem;
   lang: string;
   onOpenProfile: (username: string) => void;
   onOpenPost?: (item: TimelineItem) => void;
+  /** Moderation (v0.7.6): the quoted post is on the hidden
+   *  list and the viewer is an admin — badge it. */
+  modHidden?: boolean;
 }) {
   const [author, setAuthor] = useState<string | null>(null);
   useEffect(() => {
@@ -875,6 +900,11 @@ export function QuotedPostFrame({
             : undefined
       }
     >
+      {modHidden ? (
+        <Text style={postStyles.modBadgeText}>
+          {tr('mod.hiddenBadge')}
+        </Text>
+      ) : null}
       <View style={S.row}>
         <Avatar nameId={post.senderId} size={20} />
         <Text style={[postStyles.quoteName, { marginStart: 6 }]}>
@@ -906,11 +936,17 @@ export function OriginalFrame({
   lang,
   onOpenProfile,
   onOpenPost,
+  modAdmin,
+  modHiddenFor,
 }: {
   cawId: string;
   lang: string;
   onOpenProfile: (username: string) => void;
   onOpenPost?: (item: TimelineItem) => void;
+  /** Moderation (v0.7.6): a hidden original is not quoted
+   *  for non-admins; admins see it badged. */
+  modAdmin?: boolean;
+  modHiddenFor?: (cawId: string) => boolean;
 }) {
   const [post, setPost] = useState<TimelineItem | null | undefined>(
     undefined,
@@ -938,12 +974,21 @@ export function OriginalFrame({
       </View>
     );
   }
+  const origHidden = !!(modHiddenFor && modHiddenFor(post.cawId));
+  if (origHidden && !modAdmin) {
+    return (
+      <View style={postStyles.quote}>
+        <Text style={S.small}>{tr('mod.hiddenNote')}</Text>
+      </View>
+    );
+  }
   return (
     <QuotedPostFrame
       post={post}
       lang={lang}
       onOpenProfile={onOpenProfile}
       onOpenPost={onOpenPost}
+      modHidden={origHidden}
     />
   );
 }
@@ -1026,32 +1071,121 @@ export function LinkifiedText({
  * placeholders out entirely (the grid only renders when the
  * lookup already returned entries).
  */
-export function PostMediaGrid({ items }: { items: PostAttachment[] }) {
+export function PostMediaGrid({
+  items,
+  hiddenHashes,
+  onMod,
+}: {
+  items: PostAttachment[];
+  /** Moderation (v0.7.6, admins only): hashes of this post's
+   *  server-hidden attachments — rendered as placeholder
+   *  tiles, never as images. */
+  hiddenHashes?: string[];
+  /** Admin attachment ops: (hash, attachment-or-null, verb).
+   *  Visible attachments pass themselves; placeholders pass
+   *  null. Without a handler no controls render. */
+  onMod?: (
+    hash: string,
+    att: PostAttachment | null,
+    verb: 'hide' | 'unhide' | 'delete',
+  ) => void;
+}) {
   const shown = items.slice(0, 4);
-  if (shown.length === 0) return null;
-  if (shown.length === 1) {
-    return (
+  const hidden = (hiddenHashes ?? []).slice(0, 4);
+  if (shown.length === 0 && hidden.length === 0) return null;
+  const total = shown.length + hidden.length;
+  const placeholder = (hash: string, single: boolean) => (
+    <View
+      key={'hidden-' + hash}
+      style={
+        single ? postStyles.mediaHiddenSingle : postStyles.mediaHiddenCell
+      }
+    >
+      <Text style={postStyles.mediaHiddenText}>
+        {tr('mod.attHidden')}
+      </Text>
+    </View>
+  );
+  const grid =
+    total === 1 ? (
       <View style={postStyles.mediaGrid}>
-        <Image
-          source={{ uri: shown[0].url }}
-          style={postStyles.mediaSingle}
-          resizeMode="cover"
-        />
-      </View>
-    );
-  }
-  return (
-    <View style={postStyles.mediaGrid}>
-      <View style={postStyles.mediaRowWrap}>
-        {shown.map((m) => (
+        {shown.length === 1 ? (
           <Image
-            key={m.url}
-            source={{ uri: m.url }}
-            style={postStyles.mediaCell}
+            source={{ uri: shown[0].url }}
+            style={postStyles.mediaSingle}
             resizeMode="cover"
           />
-        ))}
+        ) : (
+          placeholder(hidden[0], true)
+        )}
       </View>
+    ) : (
+      <View style={postStyles.mediaGrid}>
+        <View style={postStyles.mediaRowWrap}>
+          {shown.map((m) => (
+            <Image
+              key={m.url}
+              source={{ uri: m.url }}
+              style={postStyles.mediaCell}
+              resizeMode="cover"
+            />
+          ))}
+          {hidden.map((h) => placeholder(h, false))}
+        </View>
+      </View>
+    );
+  if (!onMod) return grid;
+  /* Admin controls (v0.7.6): one compact row per attachment —
+   * Hide / Delete for a visible image, Unhide / Delete for a
+   * hidden one. The ops themselves (confirm + signing) live
+   * in the screens; the grid only reports the intent. */
+  return (
+    <View>
+      {grid}
+      {shown.map((m) => {
+        const hash = hashFromMediaUrl(m.url);
+        if (!hash) return null;
+        return (
+          <View key={'mod-' + hash} style={postStyles.modAttRow}>
+            <Text style={[S.tiny, { flex: 1 }]} numberOfLines={1}>
+              {'🖼 ' + hash.slice(0, 10) + '…'}
+            </Text>
+            <Pressable
+              onPress={() => onMod(hash, m, 'hide')}
+              hitSlop={6}
+            >
+              <Text style={postStyles.modBtnText}>
+                {tr('mod.hideMediaBtn')}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => onMod(hash, m, 'delete')}
+              hitSlop={6}
+            >
+              <Text style={[postStyles.modBtnText, { color: '#b3261e' }]}>
+                {tr('mod.deleteBtn')}
+              </Text>
+            </Pressable>
+          </View>
+        );
+      })}
+      {hidden.map((hash) => (
+        <View key={'modh-' + hash} style={postStyles.modAttRow}>
+          <Text style={[S.tiny, { flex: 1 }]} numberOfLines={1}>
+            {'🖼 ' + hash.slice(0, 10) + '… · ' + tr('mod.hiddenBadge')}
+          </Text>
+          <Pressable onPress={() => onMod(hash, null, 'unhide')} hitSlop={6}>
+            <Text style={postStyles.modBtnText}>
+              {tr('mod.unhideBtn')}
+            </Text>
+          </Pressable>
+          <Pressable onPress={() => onMod(hash, null, 'delete')} hitSlop={6}>
+            <Text style={[postStyles.modBtnText, { color: '#b3261e' }]}>
+              {tr('mod.deleteBtn')}
+            </Text>
+          </Pressable>
+        </View>
+      ))}
     </View>
   );
 }
@@ -1142,6 +1276,31 @@ export interface PostCardProps {
   /** Rendered inside another row (a recaw's embedded original):
    *  no outer padding / border of its own. */
   nested?: boolean;
+  /** Moderation (v0.7.6): the viewer is an admin (mod/root) —
+   *  hidden posts stay visible to admins, dimmed and badged,
+   *  and the moderation controls render. Non-admin lists
+   *  filter hidden posts out before render, so for them
+   *  these props simply never matter. */
+  modAdmin?: boolean;
+  /** Is this cawId on the hidden-post list? (per-item function
+   *  for the same reason as isBookmarked: a recaw's nested
+   *  original reports its OWN state.) */
+  modHiddenFor?: (cawId: string) => boolean;
+  /** This post's server-hidden attachment hashes (admins). */
+  modHiddenAttFor?: (cawId: string) => string[];
+  /** Admin Hide/Unhide for the row's OWN post. */
+  onModTogglePost?: (item: TimelineItem) => void;
+  /** Admin attachment op for this post. */
+  onModAttach?: (
+    item: TimelineItem,
+    hash: string,
+    att: PostAttachment | null,
+    verb: 'hide' | 'unhide' | 'delete',
+  ) => void;
+  /** Bump to refetch this post's attachment list (an admin
+   *  delete removed an image server-side; the cached list
+   *  would otherwise keep serving it). */
+  attTick?: number;
 }
 
 /**
@@ -1168,6 +1327,12 @@ function RecawCard({
   liked,
   recawed,
   nested,
+  modAdmin,
+  modHiddenFor,
+  modHiddenAttFor,
+  onModTogglePost,
+  onModAttach,
+  attTick,
 }: PostCardProps) {
   const [name, setName] = useState<string | null>(null);
   const [original, setOriginal] = useState<TimelineItem | null | undefined>(
@@ -1221,6 +1386,17 @@ function RecawCard({
   const who = name
     ? '@' + name
     : tr('tl.unknownName') + item.senderId.toString();
+  /* Moderation (v0.7.6): the recaw's OWN hidden state (the
+   * recaw is itself a post on the hidden list) and the
+   * original's — for a non-admin the original's content is
+   * replaced by the hidden note; admins see it badged via
+   * the nested card's own marking. */
+  const ownHidden = !!(modHiddenFor && modHiddenFor(item.cawId));
+  const origHidden = !!(
+    original &&
+    modHiddenFor &&
+    modHiddenFor(original.cawId)
+  );
   const row = (
     <>
       <Avatar
@@ -1254,6 +1430,11 @@ function RecawCard({
             {isSuper ? ' · ' + tr('tl.superRecaw') : ''}
           </Text>
         </View>
+        {ownHidden ? (
+          <Text style={postStyles.modBadgeText}>
+            {tr('mod.hiddenBadge')}
+          </Text>
+        ) : null}
         {original === undefined ? (
           <View style={postStyles.quote}>
             <Text style={S.small}>{tr('tl.loading')}</Text>
@@ -1261,6 +1442,10 @@ function RecawCard({
         ) : original === null ? (
           <View style={postStyles.quote}>
             <Text style={S.small}>{tr('tl.originalMissing')}</Text>
+          </View>
+        ) : origHidden && !modAdmin ? (
+          <View style={postStyles.quote}>
+            <Text style={S.small}>{tr('mod.hiddenNote')}</Text>
           </View>
         ) : (
           <PostCard
@@ -1278,6 +1463,12 @@ function RecawCard({
             liked={liked}
             recawed={recawed}
             nested
+            modAdmin={modAdmin}
+            modHiddenFor={modHiddenFor}
+            modHiddenAttFor={modHiddenAttFor}
+            onModTogglePost={onModTogglePost}
+            onModAttach={onModAttach}
+            attTick={attTick}
           />
         )}
         <View style={[S.row, { marginTop: 8 }]}>
@@ -1287,6 +1478,20 @@ function RecawCard({
             </Text>
           </Pressable>
         </View>
+        {/* The recaw's OWN moderation toggle (v0.7.6): it
+            hides the recaw post itself, never the original. */}
+        {modAdmin && onModTogglePost && !nested ? (
+          <View style={[S.row, { marginTop: 6 }]}>
+            <Pressable
+              onPress={() => onModTogglePost(item)}
+              hitSlop={6}
+            >
+              <Text style={postStyles.modBtnText}>
+                {ownHidden ? tr('mod.unhideBtn') : tr('mod.hideBtn')}
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
         {actionStatus ? (
           <Text style={[S.tiny, { marginTop: 4 }]}>{actionStatus}</Text>
         ) : null}
@@ -1308,6 +1513,7 @@ function RecawCard({
       style={[
         nested ? postStyles.postNested : postStyles.post,
         isSuper && { backgroundColor: SUPER_RECAW_WASH },
+        ownHidden && { opacity: 0.55 },
       ]}
     >
       {row}
@@ -1332,6 +1538,12 @@ function PostCardBase({
   recawed,
   custom,
   nested,
+  modAdmin,
+  modHiddenFor,
+  modHiddenAttFor,
+  onModTogglePost,
+  onModAttach,
+  attTick,
 }: PostCardProps) {
   const [name, setName] = useState<string | null>(null);
   const [targetName, setTargetName] = useState<string | null>(null);
@@ -1446,7 +1658,23 @@ function PostCardBase({
     return () => {
       live = false;
     };
-  }, [item]);
+  }, [item, attTick]);
+  /* Moderation (v0.7.6): this post's own hidden state, and
+   * its hidden attachments (admins only — non-admin lists
+   * never pass these props, and the server already omits
+   * hidden attachments from their reads). A locally cached
+   * attachment list can still contain an image hidden since
+   * (this session's own hide, before any refetch) — those
+   * are filtered out here and shown as placeholders. */
+  const ownHidden = !!(modHiddenFor && modHiddenFor(item.cawId));
+  const hiddenAttHashes =
+    modAdmin && modHiddenAttFor ? modHiddenAttFor(item.cawId) : [];
+  const visibleAttachments = hiddenAttHashes.length
+    ? attachments.filter((a) => {
+        const h = hashFromMediaUrl(a.url);
+        return !h || !hiddenAttHashes.includes(h);
+      })
+    : attachments;
   const bookmarked = isBookmarked ? isBookmarked(item) : false;
   // Keep the shown like count in step with my own like: +1 the moment
   // it lights up (the chain read above was taken before my like), back
@@ -1501,6 +1729,12 @@ function PostCardBase({
         liked={liked}
         recawed={recawed}
         nested={nested}
+        modAdmin={modAdmin}
+        modHiddenFor={modHiddenFor}
+        modHiddenAttFor={modHiddenAttFor}
+        onModTogglePost={onModTogglePost}
+        onModAttach={onModAttach}
+        attTick={attTick}
       />
     );
   }
@@ -1531,7 +1765,12 @@ function PostCardBase({
     Share.share({ message }).catch(() => {});
   };
   return (
-    <View style={nested ? postStyles.postNested : postStyles.post}>
+    <View
+      style={[
+        nested ? postStyles.postNested : postStyles.post,
+        ownHidden && { opacity: 0.55 },
+      ]}
+    >
       <Avatar
         nameId={item.senderId}
         size={44}
@@ -1555,6 +1794,11 @@ function PostCardBase({
           {displayName ? who + '  ·  ' : ''}
           {formatRelativeTime(item.ts, lang)}
         </Text>
+        {ownHidden ? (
+          <Text style={postStyles.modBadgeText}>
+            {tr('mod.hiddenBadge')}
+          </Text>
+        ) : null}
         {parsed?.ref?.kind === 'reply' && replyToName ? (
           <Text style={S.tiny}>
             {tr('tl.replyTo', { name: '@' + replyToName })}
@@ -1578,8 +1822,17 @@ function PostCardBase({
           )
         ) : null}
         {firstUrl ? <LinkSnippetCard url={firstUrl} /> : null}
-        {item.type === 0 && attachments.length > 0 ? (
-          <PostMediaGrid items={attachments} />
+        {item.type === 0 &&
+        (visibleAttachments.length > 0 || hiddenAttHashes.length > 0) ? (
+          <PostMediaGrid
+            items={visibleAttachments}
+            hiddenHashes={hiddenAttHashes}
+            onMod={
+              modAdmin && onModAttach
+                ? (hash, att, verb) => onModAttach(item, hash, att, verb)
+                : undefined
+            }
+          />
         ) : null}
         {parsed?.ref?.kind === 'quote' ? (
           <OriginalFrame
@@ -1587,10 +1840,18 @@ function PostCardBase({
             lang={lang}
             onOpenProfile={onOpenProfile}
             onOpenPost={onOpenPost}
+            modAdmin={modAdmin}
+            modHiddenFor={modHiddenFor}
           />
         ) : null}
         {item.type === 1 ? (
-          <TargetPostQuote item={item} lang={lang} onOpenProfile={onOpenProfile} />
+          <TargetPostQuote
+            item={item}
+            lang={lang}
+            onOpenProfile={onOpenProfile}
+            modAdmin={modAdmin}
+            modHiddenFor={modHiddenFor}
+          />
         ) : null}
         {/* X-style action row (v0.6.0): icon + count, no word
             labels except Tip — Reply / Recaw / Like / Views /
@@ -1781,6 +2042,22 @@ function PostCardBase({
             </Pressable>
           </View>
         ) : null}
+        {/* Admin Hide/Unhide for THIS post (v0.7.6): the web
+            viewer's "mod-row" position, under the record
+            link. The confirm sheet (with the on-chain
+            honesty copy) lives in the screens. */}
+        {modAdmin && onModTogglePost && item.type === 0 && !nested ? (
+          <View style={[S.row, { marginTop: 6 }]}>
+            <Pressable
+              onPress={() => onModTogglePost(item)}
+              hitSlop={6}
+            >
+              <Text style={postStyles.modBtnText}>
+                {ownHidden ? tr('mod.unhideBtn') : tr('mod.hideBtn')}
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
         {actionStatus ? (
           <Text style={[S.tiny, { marginTop: 4 }]}>{actionStatus}</Text>
         ) : null}
@@ -1900,6 +2177,46 @@ const postStyles = StyleSheet.create({
     width: '49.4%',
     height: 130,
     backgroundColor: '#f7f9f9',
+  },
+  /* Moderation (v0.7.6): a hidden attachment's placeholder
+   * tile — the image itself is never rendered for anyone
+   * while it is on the hidden list; admins get the tile plus
+   * the Unhide / Delete row under the grid. */
+  mediaHiddenSingle: {
+    width: '100%',
+    height: 210,
+    backgroundColor: '#263238',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mediaHiddenCell: {
+    width: '49.4%',
+    height: 130,
+    backgroundColor: '#263238',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mediaHiddenText: { fontSize: 13, color: '#cfd8dc', fontWeight: '700' },
+  /* The "Hidden" badge line on a post / frame an admin is
+   * still shown, and the small text buttons of the
+   * moderation rows (post toggle + per-attachment ops). */
+  modBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#b3261e',
+    marginTop: 2,
+  },
+  modBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: ACCENT,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  modAttRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
   },
   /* The action row (v0.6.1): ONE line, always — space-between
    * across the content column, no wrap, compact counts. At

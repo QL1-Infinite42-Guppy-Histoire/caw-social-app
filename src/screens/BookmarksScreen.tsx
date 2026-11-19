@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -11,10 +11,24 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ACCENT } from '../config';
 import { useApp } from '../context/AppContext';
 import { tr } from '../i18n';
-import { PostCard, S } from '../components/ui';
+import { ConfirmSheet, PostCard, S } from '../components/ui';
 import { backArrow } from '../lib/rtl';
 import { findPostByCawId, type TimelineItem } from '../lib/cawApi';
 import { bookmarkStore } from '../lib/stores';
+import {
+  MediaApiError,
+  invalidateAttachments,
+  type PostAttachment,
+} from '../lib/mediaApi';
+import {
+  applyMediaHidden,
+  applyMediaUnhidden,
+  applyPostHidden,
+  modErrorText,
+  refreshHiddenMedia,
+  runAdminOp,
+  useModeration,
+} from '../lib/moderation';
 
 /**
  * Bookmarks (v0.6.0) — the saved-posts list, reached from
@@ -40,6 +54,101 @@ export default function BookmarksScreen({
   >({});
   const [resolving, setResolving] = useState(true);
   const runRef = useRef(0);
+
+  /* ---------- Moderation (v0.7.6) ----------
+   * A bookmarked post that lands on the hidden list leaves
+   * this list for non-admins (the bookmark itself is kept —
+   * unhiding brings the row back). Admins keep the row,
+   * marked, with the usual controls. Op errors surface in
+   * the note line under the header. */
+  const mod = useModeration();
+  const [modNote, setModNote] = useState('');
+  const [modPostPending, setModPostPending] = useState<TimelineItem | null>(
+    null,
+  );
+  const [modAttPending, setModAttPending] = useState<{
+    item: TimelineItem;
+    hash: string;
+    verb: 'hide' | 'unhide' | 'delete';
+  } | null>(null);
+  const [modBusy, setModBusy] = useState(false);
+  const [attTicks, setAttTicks] = useState<Record<string, number>>({});
+
+  const bumpAttTick = useCallback((cawId: string) => {
+    const key = cawId.toLowerCase();
+    setAttTicks((t) => ({ ...t, [key]: (t[key] ?? 0) + 1 }));
+  }, []);
+
+  const confirmModPost = useCallback(async () => {
+    const item = modPostPending;
+    if (!item) return;
+    const hidden = mod.isPostHidden(item.cawId);
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: hidden ? 'unhide-post' : 'hide-post',
+        cawId: item.cawId,
+      });
+      applyPostHidden(item.cawId, !hidden);
+      setModNote('');
+    } catch (e) {
+      setModNote(modErrorText(e));
+    } finally {
+      setModBusy(false);
+      setModPostPending(null);
+    }
+  }, [app, mod, modPostPending]);
+
+  const confirmModAtt = useCallback(async () => {
+    const p = modAttPending;
+    if (!p) return;
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: p.verb + '-attach',
+        cawId: p.item.cawId,
+        sha256: p.hash,
+      });
+      const entry = {
+        kind: 'attach' as const,
+        cawId: p.item.cawId.toLowerCase(),
+        hash: p.hash,
+        hiddenBy: app.address ?? '',
+        ts: Date.now(),
+      };
+      if (p.verb === 'hide') applyMediaHidden(entry);
+      else applyMediaUnhidden(entry);
+      if (p.verb === 'delete') {
+        invalidateAttachments(p.item.cawId);
+        bumpAttTick(p.item.cawId);
+      }
+      refreshHiddenMedia(app.getSecret()).catch(() => {});
+      setModNote('');
+    } catch (e) {
+      setModNote(modErrorText(e));
+      if (e instanceof MediaApiError && e.status === 409) {
+        invalidateAttachments(p.item.cawId);
+        bumpAttTick(p.item.cawId);
+      }
+    } finally {
+      setModBusy(false);
+      setModAttPending(null);
+    }
+  }, [app, modAttPending, bumpAttTick]);
+
+  const onModTogglePost = useCallback(
+    (item: TimelineItem) => setModPostPending(item),
+    [],
+  );
+  const onModAttach = useCallback(
+    (
+      item: TimelineItem,
+      hash: string,
+      _att: PostAttachment | null,
+      verb: 'hide' | 'unhide' | 'delete',
+    ) => setModAttPending({ item, hash, verb }),
+    [],
+  );
 
   useEffect(() => bookmarkStore.subscribe(() => setIds(bookmarkStore.list())), []);
 
@@ -100,6 +209,13 @@ export default function BookmarksScreen({
           {tr('bm.title')}
         </Text>
       </View>
+      {modNote ? (
+        <Text
+          style={[S.small, { paddingHorizontal: 16, paddingVertical: 8 }]}
+        >
+          {modNote}
+        </Text>
+      ) : null}
       {ids.length === 0 ? (
         <View
           style={{
@@ -119,6 +235,20 @@ export default function BookmarksScreen({
           keyExtractor={(id) => id}
           renderItem={({ item: id }) => {
             const post = resolved[id];
+            if (post && mod.isPostHidden(post.cawId) && !mod.isAdmin) {
+              return (
+                <View
+                  style={{
+                    paddingHorizontal: 16,
+                    paddingVertical: 14,
+                    borderBottomWidth: 1,
+                    borderBottomColor: '#eff3f4',
+                  }}
+                >
+                  <Text style={S.small}>{tr('mod.hiddenNote')}</Text>
+                </View>
+              );
+            }
             if (post) {
               return (
                 <PostCard
@@ -141,6 +271,14 @@ export default function BookmarksScreen({
                   liked={app.hasMyAction(1, post)}
                   recawed={app.hasMyAction(2, post)}
                   custom={app.customFor(post.senderId)}
+                  modAdmin={mod.isAdmin}
+                  modHiddenFor={mod.isPostHidden}
+                  modHiddenAttFor={mod.hiddenAttHashesFor}
+                  onModTogglePost={
+                    mod.isAdmin ? onModTogglePost : undefined
+                  }
+                  onModAttach={mod.isAdmin ? onModAttach : undefined}
+                  attTick={attTicks[post.cawId.toLowerCase()] ?? 0}
                 />
               );
             }
@@ -193,6 +331,62 @@ export default function BookmarksScreen({
           <ActivityIndicator color={ACCENT} />
         </View>
       ) : null}
+      <ConfirmSheet
+        visible={!!modPostPending}
+        title={
+          modPostPending
+            ? mod.isPostHidden(modPostPending.cawId)
+              ? tr('mod.unhideTitle')
+              : tr('mod.hideTitle')
+            : ''
+        }
+        body={
+          modPostPending && !mod.isPostHidden(modPostPending.cawId)
+            ? tr('mod.hideNote')
+            : undefined
+        }
+        confirmLabel={
+          modPostPending
+            ? mod.isPostHidden(modPostPending.cawId)
+              ? tr('mod.unhideBtn')
+              : tr('mod.hideBtn')
+            : ''
+        }
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmModPost}
+        onCancel={() => setModPostPending(null)}
+        busy={modBusy}
+      />
+      <ConfirmSheet
+        visible={!!modAttPending}
+        title={
+          modAttPending
+            ? modAttPending.verb === 'delete'
+              ? tr('mod.deleteTitle')
+              : modAttPending.verb === 'hide'
+                ? tr('mod.hideMediaTitle')
+                : tr('mod.unhideMediaTitle')
+            : ''
+        }
+        body={
+          modAttPending && modAttPending.verb === 'delete'
+            ? tr('mod.deleteWarn')
+            : undefined
+        }
+        confirmLabel={
+          modAttPending
+            ? modAttPending.verb === 'delete'
+              ? tr('mod.deleteBtn')
+              : modAttPending.verb === 'hide'
+                ? tr('mod.hideMediaBtn')
+                : tr('mod.unhideBtn')
+            : ''
+        }
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmModAtt}
+        onCancel={() => setModAttPending(null)}
+        busy={modBusy}
+      />
     </View>
   );
 }
