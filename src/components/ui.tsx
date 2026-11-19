@@ -2349,7 +2349,7 @@ export function TipSheet({
   /**
    * The resolved recipient address (audit M1): a tip is a
    * plain transfer and cannot be recalled, so the sheet
-   * SHOWS where the PHOENIX will actually go — shortened with
+   * SHOWS where the HAWK will actually go — shortened with
    * the last four characters emphasised, the app's usual
    * spot-check shape — instead of only naming the author.
    * Null while unresolved (the line is then omitted; the
@@ -2431,7 +2431,7 @@ export function TipSheet({
                       color: on ? '#fff' : '#0f1419',
                     }}
                   >
-                    {p} PHOENIX
+                    {p.toLocaleString('en-US')} HAWK
                   </Text>
                 </Pressable>
               );

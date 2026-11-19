@@ -1647,7 +1647,7 @@ export default function ProfileScreen({
         visible={!!tipItem}
         authorLabel={tipName}
         recipient={tipRecipient}
-        balanceRaw={app.phoenix ? app.phoenix.raw : null}
+        balanceRaw={app.hawk ? app.hawk.raw : null}
         busy={tipBusy}
         onConfirm={confirmTip}
         onCancel={() => setTipItem(null)}

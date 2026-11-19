@@ -1,40 +1,50 @@
 /**
- * Tip （チップ) — a plain PHOENIX transfer from the reader to
- * a post's author. PHOENIX is the tip currency since v0.7.0
- * (user decision 2026-11-18), replacing CAT42, which held the
- * role from v0.5.0 through v0.6.7. A tip is deliberately JUST
- * a transfer: no marker, no counting, no split, no burn. The
- * amount is the tipper's choice: presets (TIP_PRESETS below)
- * or a custom amount (the sheet's custom input carries the
- * app's usual 25 / 50 / 75 / MAX balance chips).
+ * Tip （チップ) — a plain HAWK transfer from the reader to
+ * a post's author. HAWK is the tip currency since v0.7.8
+ * (user decision 2026-11-19). The role's history: CAT42
+ * from v0.5.0 through v0.6.7, then PHOENIX from v0.7.0
+ * through v0.7.7. A tip is deliberately JUST a transfer:
+ * no marker, no counting, no split, no burn — so past
+ * PHOENIX (and CAT42) tips need no migration: they were
+ * plain transfers too, and nothing in the app detects or
+ * displays tips by currency. PHOENIX itself is untouched
+ * elsewhere (HuntersDEX, the wallet display, BurnHawk).
+ * The amount is the tipper's choice: presets (TIP_PRESETS
+ * below) or a custom amount (the sheet's custom input
+ * carries the app's usual 25 / 50 / 75 / MAX balance
+ * chips).
  *
  * Chain note: CAT42 lives on 42 Chain, so the old tip was
- * sent there; PHOENIX lives on QL1 (config.ts), so the tip
- * now travels on QL1 like the SuperLike / SuperRecaw legs —
- * same wallet address on both chains, so the recipient (the
- * author's owner address) is unchanged.
+ * sent there; PHOENIX and HAWK both live on QL1
+ * (config.ts), so the tip travels on QL1 like the
+ * SuperLike / SuperRecaw legs — same wallet address on
+ * both chains, so the recipient (the author's owner
+ * address) is unchanged.
  */
 import { Interface } from 'ethers';
 
-import { PHOENIX, SEL } from '../config';
+import { HAWK, SEL } from '../config';
 import { ethCall } from './cawApi';
 import { decUintRet, encAddr, parseAmount } from './cawCore';
 
 /**
- * The tip preset amounts, in whole PHOENIX — ONE central
+ * The tip preset amounts, in whole HAWK — ONE central
  * constant; the tip sheet renders exactly these.
  *
- * DECIDED (user, 2026-11-18): 10 / 50 / 100 PHOENIX — the
- * same numbers the CAT42 tip used. (An assistant-suggested
- * 1 / 5 / 10 was NOT chosen.) Custom amounts are unchanged.
+ * DECIDED (user, 2026-11-19): 1,000 / 5,000 / 10,000 HAWK —
+ * the same value steps as the PHOENIX era's 10 / 50 / 100
+ * at the 100 HAWK : 1 PHOENIX anchor (the burnToMint
+ * rate). (The PHOENIX presets were themselves the CAT42
+ * era's numbers, DECIDED 2026-11-18.) Custom amounts are
+ * unchanged.
  */
-export const TIP_PRESETS = [10, 50, 100] as const;
+export const TIP_PRESETS = [1000, 5000, 10000] as const;
 
 const ERC20_IFACE = new Interface([
   'function transfer(address to, uint256 amount) returns (bool)',
 ]);
 
-/** Parse a custom tip amount (PHOENIX, 18 decimals) into raw
+/** Parse a custom tip amount (HAWK, 18 decimals) into raw
  *  units. Null for anything malformed or not positive. */
 export function parseTipAmount(text: string): bigint | null {
   const raw = parseAmount(text);
@@ -42,20 +52,20 @@ export function parseTipAmount(text: string): bigint | null {
   return raw;
 }
 
-/** The raw units for one preset (whole PHOENIX). */
-export function tipPresetRaw(phoenix: number): bigint {
-  return BigInt(phoenix) * 10n ** 18n;
+/** The raw units for one preset (whole HAWK). */
+export function tipPresetRaw(hawk: number): bigint {
+  return BigInt(hawk) * 10n ** 18n;
 }
 
 /** The amount a balance chip selects: pct% of the balance
  *  (100 = MAX, the whole balance — a tip pays no separate fee
- *  in PHOENIX, so MAX needs no reserve). */
+ *  in HAWK, so MAX needs no reserve). */
 export function tipChipAmount(balance: bigint, pct: number): bigint {
   if (pct >= 100) return balance;
   return (balance * BigInt(pct)) / 100n;
 }
 
-/** Plain PHOENIX transfer calldata for a tip. */
+/** Plain HAWK transfer calldata for a tip. */
 export function buildTipData(to: string, amountRaw: bigint): string {
   return ERC20_IFACE.encodeFunctionData('transfer', [to, amountRaw]);
 }
@@ -114,11 +124,11 @@ export function tipRecipientVerdict(
   return primary.toLowerCase() === alt.toLowerCase() ? 'ok' : 'mismatch';
 }
 
-/** A trustworthy PHOENIX balance read on QL1 (throws on RPC
+/** A trustworthy HAWK balance read on QL1 (throws on RPC
  *  failure). Kept here (not in lib/superlike.ts) for the tip
  *  flow, mirroring oBalanceOf there. */
-export async function phoenixBalanceOf(owner: string): Promise<bigint> {
+export async function hawkBalanceOf(owner: string): Promise<bigint> {
   return decUintRet(
-    await ethCall(PHOENIX, SEL.balanceOf + encAddr(owner)),
+    await ethCall(HAWK, SEL.balanceOf + encAddr(owner)),
   );
 }

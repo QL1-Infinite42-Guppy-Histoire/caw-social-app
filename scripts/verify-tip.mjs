@@ -1,22 +1,27 @@
 #!/usr/bin/env node
 /**
- * Tip （チップ) verification (v0.5.0; v0.7.0 currency change).
+ * Tip （チップ) verification (v0.5.0; currency changes
+ * v0.7.0 and v0.7.8).
  *
  * A tip is deliberately JUST a plain token transfer to the
  * post author's owner address — no marker, no counting.
- * Through v0.6.7 the token was CAT42 on 42 Chain; since
- * v0.7.0 (user decision 2026-11-18) it is PHOENIX on QL1
- * (CAT42's tip role ended; the CAT42 claim site is a
- * separate surface and is untouched). This suite pins: the
- * presets (10 / 50 / 100 PHOENIX — DECIDED by the user
- * 2026-11-18, the same numbers as the CAT42 era, kept in
- * the one TIP_PRESETS constant),
+ * Through v0.6.7 the token was CAT42 on 42 Chain; in
+ * v0.7.0–v0.7.7 it was PHOENIX on QL1; since v0.7.8 (user
+ * decision 2026-11-19) it is HAWK on QL1. Because a tip
+ * has no marker, past PHOENIX/CAT42 tips need nothing:
+ * there is no tip detection or display to migrate, and
+ * PHOENIX stays live in HuntersDEX, the wallet display
+ * and BurnHawk. This suite pins: the presets
+ * (1,000 / 5,000 / 10,000 HAWK — DECIDED by the user
+ * 2026-11-19, the same value steps as 10 / 50 / 100
+ * PHOENIX at the 100:1 burnToMint anchor, kept in the
+ * one TIP_PRESETS constant),
  * the custom amount parsing, the 25 / 50 / 75 / MAX balance
  * chips, the plainness of the calldata (a tip must never
  * parse as a marked burn of any kind), the self-tip and
  * shortfall guards, and the wiring statics for performTip +
  * the three surfaces (feed, profile, post detail) + the
- * TipSheet.
+ * TipSheet (which is fed the HAWK balance).
  */
 import { execFileSync } from 'node:child_process';
 import {
@@ -84,11 +89,11 @@ const E18 = 10n ** 18n;
 /* ---------- presets, parsing, chips ---------- */
 {
   ok(
-    JSON.stringify(TIP.TIP_PRESETS) === '[10,50,100]',
-    'presets are 10 / 50 / 100 PHOENIX (user-decided 2026-11-18)',
+    JSON.stringify(TIP.TIP_PRESETS) === '[1000,5000,10000]',
+    'presets are 1,000 / 5,000 / 10,000 HAWK (user-decided 2026-11-19)',
   );
-  ok(TIP.tipPresetRaw(10) === 10n * E18, 'preset raw: 10 PHOENIX');
-  ok(TIP.tipPresetRaw(100) === 100n * E18, 'preset raw: 100 PHOENIX');
+  ok(TIP.tipPresetRaw(1000) === 1000n * E18, 'preset raw: 1,000 HAWK');
+  ok(TIP.tipPresetRaw(10000) === 10000n * E18, 'preset raw: 10,000 HAWK');
   ok(TIP.parseTipAmount('10') === 10n * E18, 'parse: whole amount');
   ok(TIP.parseTipAmount('0.5') === E18 / 2n, 'parse: fractional amount');
   ok(TIP.parseTipAmount('0') === null, 'parse: zero refused');
@@ -122,8 +127,8 @@ const E18 = 10n ** 18n;
   );
   ok(SL.parseSuperlikeInput(data) === null, 'a tip is never a SuperLike');
   ok(
-    CFG.PHOENIX === '0xDFe660C5a29c8AADF1daA096543D249135e1938A',
-    'tips move PHOENIX on QL1 (the burnToMint contract, not the 6-holder namesake)',
+    CFG.HAWK === '0xbC85F14059d60458b614052b4a84734E463878cc',
+    'tips move HAWK on QL1 (the plain ERC-20, no burn function)',
   );
 }
 
@@ -159,7 +164,7 @@ const E18 = 10n ** 18n;
   );
   ok(TIP.tipShortfall(49n * E18, 50n * E18) === true, 'shortfall: balance below the tip');
   ok(TIP.tipShortfall(50n * E18, 50n * E18) === false, 'shortfall: exact balance ok');
-  ok(TIP.tipShortfall(101n * E18, 100n * E18) === false, 'shortfall: a balance above the biggest preset (100) covers it');
+  ok(TIP.tipShortfall(10001n * E18, 10000n * E18) === false, 'shortfall: a balance above the biggest preset (10,000) covers it');
 }
 
 /* ---------- wiring statics ---------- */
@@ -172,12 +177,13 @@ const E18 = 10n ** 18n;
   ok(iSelf > 0 && iSelf < iSend, 'performTip: self block precedes the send');
   ok(iShort > 0 && iShort < iSend, 'performTip: shortfall stop precedes the send');
   ok(flow.includes('nameOwner'), 'performTip: author owner resolved fresh');
-  ok(flow.includes('phoenixBalanceOf'), 'performTip: fresh PHOENIX balance read');
+  ok(flow.includes('hawkBalanceOf'), 'performTip: fresh HAWK balance read');
   ok(
     flow.includes('signerFor(secret.kind, secret.secret)') &&
-      flow.includes('PHOENIX') &&
+      flow.includes('HAWK') &&
+      !flow.includes('PHOENIX') &&
       !flow.includes('signerForHsChain'),
-    'performTip: signs on QL1 (PHOENIX lives there) and sends to the PHOENIX contract',
+    'performTip: signs on QL1 (HAWK lives there), sends to the HAWK contract, no PHOENIX left in the flow',
   );
   ok(flow.includes('buildTipData(authorOwner'), 'performTip: pays the author owner');
   ok(
@@ -203,10 +209,23 @@ const E18 = 10n ** 18n;
   ok(ui.includes('export function TipSheet'), 'ui.tsx exports the TipSheet');
   ok(
     ui.includes('TIP_PRESETS') && ui.includes('tipChipAmount') &&
-      ui.includes('PHOENIX'),
-    'TipSheet uses the presets and the balance chips, labelled PHOENIX',
+      ui.includes("toLocaleString('en-US')") && ui.includes('HAWK'),
+    'TipSheet uses the presets and the balance chips, labelled in HAWK with grouped amounts',
   );
   ok(ui.includes('onTip'), 'PostCard exposes the tip action');
+  for (const [file, label, needle] of [
+    ['src/screens/TimelineScreen.tsx', 'TimelineScreen', 'balanceRaw={hawk ? hawk.raw : null}'],
+    ['src/screens/ProfileScreen.tsx', 'ProfileScreen', 'balanceRaw={app.hawk ? app.hawk.raw : null}'],
+    ['src/screens/PostDetailScreen.tsx', 'PostDetailScreen', 'balanceRaw={app.hawk ? app.hawk.raw : null}'],
+  ]) {
+    const s = readFileSync(ROOT + '/' + file, 'utf8');
+    ok(
+      s.includes(needle) &&
+        !s.includes('balanceRaw={app.phoenix') &&
+        !s.includes('balanceRaw={phoenix'),
+      `${label} feeds the TipSheet the HAWK balance (not PHOENIX)`,
+    );
+  }
 }
 
 /* ---------- M1: recipient cross-check + sheet display

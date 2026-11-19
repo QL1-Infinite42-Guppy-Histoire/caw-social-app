@@ -99,7 +99,7 @@ let feedCache: {
 export default function TimelineScreen() {
   const insets = useSafeAreaInsets();
   const app = useApp();
-  const { lang, address, qom, qcaw, f42, phoenix, oTok, ket, myTokens, actingId } = app;
+  const { lang, address, qom, qcaw, f42, phoenix, hawk, oTok, ket, myTokens, actingId } = app;
 
   const [items, setItems] = useState<TimelineItem[]>(
     () => feedCache?.items ?? [],
@@ -1214,7 +1214,7 @@ export default function TimelineScreen() {
         visible={!!tipItem}
         authorLabel={tipName}
         recipient={tipRecipient}
-        balanceRaw={phoenix ? phoenix.raw : null}
+        balanceRaw={hawk ? hawk.raw : null}
         busy={tipBusy}
         onConfirm={confirmTip}
         onCancel={() => setTipItem(null)}
