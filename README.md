@@ -17,9 +17,14 @@ first one is its end-to-end check.
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.7.6** — released 2026-11-19.
+- **現在版 / Current: v0.7.7** — released 2026-11-19.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.7.6/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.7.7/caw-social.apk
+  v0.7.7 adds WQOM to HuntersDEX: it trades against
+  the other DEX tokens through the router like they
+  do, and QOM ⇄ WQOM is a direct 1:1 wrap / unwrap
+  on the WQOM contract itself. The wallet's balance
+  display is unchanged.
   v0.7.6 adds moderation, mirroring the web version:
   when the signed-in wallet is on the media server's
   admin list, posts can be hidden from every screen of
