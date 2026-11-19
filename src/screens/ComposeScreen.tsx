@@ -44,6 +44,7 @@ import { nowSec, randomCawId, signerFor, submitAction } from '../lib/wallet';
 import {
   MEDIA_ATTACH_PER_POST,
   attachToPost,
+  isSanctionedError,
   mediaErrorDetail,
 } from '../lib/mediaApi';
 
@@ -306,7 +307,13 @@ export default function ComposeScreen({ onClose }: { onClose: () => void }) {
             await attachToPost(cawId, hash, im.uri, signer, acting.id);
           } catch (e) {
             attachFailed = true;
-            if (!attachDetail) attachDetail = mediaErrorDetail(e);
+            /* A sanctioned acting name (v0.7.9) gets the
+             * sanction wording, not the raw server text. */
+            if (!attachDetail) {
+              attachDetail = isSanctionedError(e)
+                ? tr('media.sanctioned')
+                : mediaErrorDetail(e);
+            }
           }
         }
       }

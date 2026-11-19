@@ -48,7 +48,19 @@
  *      filter drops type 0/2 for non-admins only; the wiring
  *      pins cover the store, the context refresh triggers,
  *      every screen's moderation surface, and the profile
- *      rendering NO owner address.
+ *      rendering NO owner address;
+ *  10. sanctions (v0.7.9): the freeze-user / ban-user signed
+ *      messages are byte-exact (the duration rides the
+ *      target line; ban signs a placeholder); adminOp sends
+ *      only the fields each sanction action uses and its sig
+ *      verifies; adminOpErrorKey maps the cannot-sanction
+ *      refusal; fetchSanctions parses the public list and
+ *      drops malformed rows; the sanction filter drops a
+ *      sanctioned author's posts/recaws for non-admins only;
+ *      isSanctionedError matches the server's 403 wording;
+ *      and the wiring pins cover the store, the profile
+ *      notice + controls, the Settings sanctions card, the
+ *      card badge, and the upload sanction wording.
  */
 import { execFileSync } from 'node:child_process';
 import Module, { createRequire } from 'node:module';
@@ -431,8 +443,8 @@ check('reads: mediaFor / attachmentsFor use the 15 s read timeout (v0.7.5)',
 check('reads: attachmentsFor caches only non-empty lists (v0.7.5)',
   mediaSrc.includes('if (okFetch && list.length > 0)'));
 const appJson = JSON.parse(readFileSync(ROOT + 'app.json', 'utf8'));
-check('app.json: version 0.7.8 / versionCode 56',
-  appJson.expo.version === '0.7.8' && appJson.expo.android.versionCode === 56);
+check('app.json: version 0.7.9 / versionCode 57',
+  appJson.expo.version === '0.7.9' && appJson.expo.android.versionCode === 57);
 
 /* ---- 9. moderation (v0.7.6) ---- */
 const EMPTY = api.MEDIA_EMPTY_SHA256;
@@ -597,12 +609,14 @@ check('wiring: the timeline filters hidden posts and wires the card ops',
   tlSrc.includes('confirmModAtt'));
 const pdSrc = readFileSync(ROOT + 'src/screens/PostDetailScreen.tsx', 'utf8');
 check('wiring: post detail shows the hidden state to non-admins, filters replies',
-  pdSrc.includes('postHidden && !mod.isAdmin') &&
+  pdSrc.includes('(postHidden || postSanction) && !mod.isAdmin') &&
   pdSrc.includes("tr('mod.hiddenNote')") &&
   pdSrc.includes('filterModeratedItems(replies'));
 const bmSrc = readFileSync(ROOT + 'src/screens/BookmarksScreen.tsx', 'utf8');
 check('wiring: bookmarks drop hidden posts for non-admins',
-  bmSrc.includes('mod.isPostHidden(post.cawId) && !mod.isAdmin'));
+  bmSrc.includes('mod.isPostHidden(post.cawId)') &&
+  bmSrc.includes('mod.sanctionFor(post.senderId)') &&
+  bmSrc.includes('!mod.isAdmin'));
 const stSrc = readFileSync(ROOT + 'src/screens/SettingsScreen.tsx', 'utf8');
 check('wiring: Settings carries the moderation section (admins) + moderators card (root only)',
   stSrc.includes("tr('mod.sectionTitle')") && stSrc.includes('mod.isAdmin') &&
@@ -616,6 +630,119 @@ check('wiring: PostCard carries the moderation props + hidden placeholders (ui.t
 check('profile address: ProfileScreen never renders the owner address (v0.7.6)',
   !prof.includes('{owner}') && !prof.includes('owner.slice') &&
   !prof.includes('shortAddr(owner)'));
+
+/* ---- 10. sanctions (v0.7.9) ---- */
+check('sanction message: freeze-user literal (duration on the target line)',
+  api.buildAdminMessage({ action: 'freeze-user', nameId: '190', target: '24h', ts: 1700000002 }) ===
+    'CAW Media v1\naction: freeze-user\nname: 190\nsha256: ' + EMPTY +
+    '\ncaw: -\ntx: -\ntarget: 24h\nts: 1700000002');
+check('sanction message: ban-user literal (target placeholder)',
+  api.buildAdminMessage({ action: 'ban-user', nameId: 190, ts: 3 }) ===
+    'CAW Media v1\naction: ban-user\nname: 190\nsha256: ' + EMPTY +
+    '\ncaw: -\ntx: -\ntarget: -\nts: 3');
+check('sanction message: unsanction-user literal (target placeholder)',
+  api.buildAdminMessage({ action: 'unsanction-user', nameId: '7', ts: 4 }) ===
+    'CAW Media v1\naction: unsanction-user\nname: 7\nsha256: ' + EMPTY +
+    '\ncaw: -\ntx: -\ntarget: -\nts: 4');
+check('adminOpErrorKey: 403 cannot-sanction maps to its own key',
+  api.adminOpErrorKey(403, 'cannot sanction an admin') === 'cannotSanction' &&
+  api.adminOpErrorKey(403, 'not an admin') === 'notAdmin');
+check('isSanctionedError: only the 403 sanction wording matches',
+  api.isSanctionedError(new api.MediaApiError(403, 'account sanctioned')) === true &&
+  api.isSanctionedError(new api.MediaApiError(403, 'not an admin')) === false &&
+  api.isSanctionedError(new Error('account sanctioned')) === false);
+
+const sanctCalls = [];
+fakeFetch((url, init) => {
+  if (url === api.MEDIA_API + '/v1/sanctions') {
+    return jsonRes({ sanctions: [
+      { nameId: '190', kind: 'freeze', until: 1700086400000, ts: 1700000000000 },
+      { nameId: 42, kind: 'ban', until: null, ts: 1700000000001 },
+      { nameId: '7', kind: 'bogus', until: null, ts: 1 },
+      { kind: 'freeze', until: null, ts: 2 },
+    ] });
+  }
+  if (url === api.MEDIA_API + '/v1/admin/op') {
+    const body = JSON.parse(init.body);
+    sanctCalls.push(body);
+    return jsonRes({ ok: true, action: body.action, nameId: body.nameId, kind: 'freeze', until: 1700086400000 });
+  }
+  throw new Error('network down');
+});
+{
+  const list = await api.fetchSanctions();
+  check('fetchSanctions: valid rows kept (nameId stringified), malformed dropped',
+    !!list && list.length === 2 &&
+    list[0].nameId === '190' && list[0].kind === 'freeze' && list[0].until === 1700086400000 &&
+    list[1].nameId === '42' && list[1].kind === 'ban' && list[1].until === null);
+  const w = Wallet.createRandom();
+  await api.adminOp(w, { action: 'freeze-user', nameId: '190', target: '7d' });
+  const fb = sanctCalls[sanctCalls.length - 1];
+  check('adminOp freeze-user: body = action/nameId/target/ts/sig only',
+    !!fb && Object.keys(fb).sort().join(',') === 'action,nameId,sig,target,ts' &&
+    fb.target === '7d' && fb.nameId === '190');
+  check('adminOp freeze-user: the sent sig verifies over the canonical message',
+    !!fb &&
+    verifyMessage(
+      api.buildAdminMessage({ action: 'freeze-user', nameId: '190', target: '7d', ts: fb.ts }),
+      fb.sig,
+    ) === w.address);
+  await api.adminOp(w, { action: 'ban-user', nameId: '190' });
+  const bb = sanctCalls[sanctCalls.length - 1];
+  check('adminOp ban-user: body carries NO target key',
+    !!bb && Object.keys(bb).sort().join(',') === 'action,nameId,sig,ts');
+  await api.adminOp(w, { action: 'unsanction-user', nameId: '190' });
+  const ub = sanctCalls[sanctCalls.length - 1];
+  check('adminOp unsanction-user: body carries NO target key',
+    !!ub && Object.keys(ub).sort().join(',') === 'action,nameId,sig,ts');
+}
+fakeFetch(() => {
+  throw new Error('network down');
+});
+check('fetchSanctions: failure resolves null, never rejects',
+  (await api.fetchSanctions()) === null);
+globalThis.fetch = realFetch;
+
+{
+  const SSET = new Set(['190']);
+  const rows = [
+    { type: 0, senderId: 190n },
+    { type: 2, senderId: 190n },
+    { type: 1, senderId: 190n },
+    { type: 0, senderId: 7n },
+  ];
+  const kept = api.filterSanctionedItems(rows, SSET, false);
+  check('sanction filter: a sanctioned author\'s posts + recaws drop for non-admins; likes and others stay',
+    kept.length === 2 && kept[0].type === 1 && kept[1].senderId === 7n);
+  check('sanction filter: admins keep everything (same array back)',
+    api.filterSanctionedItems(rows, SSET, true) === rows);
+  check('sanction filter: an empty set is a no-op (same array back)',
+    api.filterSanctionedItems(rows, new Set(), false) === rows);
+}
+
+check('wiring: the moderation store carries sanctions (moderation.ts)',
+  modLib.includes('fetchSanctions') &&
+  modLib.includes('applyUnsanctionLocal') &&
+  modLib.includes('sanctionFor'));
+check('wiring: the timeline + post detail filter sanctioned authors',
+  tlSrc.includes('filterSanctionedItems') &&
+  pdSrc.includes('filterSanctionedItems'));
+check('wiring: profile shows the sanction notice + admin controls (ProfileScreen)',
+  prof.includes("tr('sanct.frozenNote')") &&
+  prof.includes("tr('sanct.bannedNote')") &&
+  prof.includes('setSanctPending') &&
+  prof.includes("'freeze-user'"));
+check('wiring: profile + composer surface the sanctioned-upload wording',
+  prof.includes('isSanctionedError(e)') &&
+  comp.includes('isSanctionedError(e)') &&
+  comp.includes("tr('media.sanctioned')"));
+check('wiring: Settings carries the sanctions list + apply form',
+  stSrc.includes("tr('sanct.listTitle')") &&
+  stSrc.includes("tr('sanct.applyTitle')") &&
+  stSrc.includes('startSanction'));
+check('wiring: PostCard carries the sanction badge + lift (ui.tsx)',
+  ui.includes('SanctionBadge') && ui.includes('modSanctionFor') &&
+  ui.includes('onModUnsanction'));
 
 console.log(`\nmedia: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

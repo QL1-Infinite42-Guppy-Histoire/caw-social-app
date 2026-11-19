@@ -84,9 +84,11 @@ import {
   MediaApiError,
   clearProfileMedia,
   filterModeratedItems,
+  filterSanctionedItems,
   hashFromMediaUrl,
   invalidateAttachments,
   invalidateMedia,
+  isSanctionedError,
   mediaErrorDetail,
   mediaFor,
   setProfileMedia,
@@ -100,8 +102,11 @@ import {
   applyMediaHidden,
   applyMediaUnhidden,
   applyPostHidden,
+  applySanctionLocal,
+  applyUnsanctionLocal,
   modErrorText,
   refreshHiddenMedia,
+  refreshModeration,
   runAdminOp,
   useModeration,
 } from '../lib/moderation';
@@ -308,10 +313,75 @@ export default function ProfileScreen({
     }
   }
 
-  const visiblePosts = filterModeratedItems(
-    posts,
-    mod.hiddenPosts,
+  const visiblePosts = filterSanctionedItems(
+    filterModeratedItems(posts, mod.hiddenPosts, mod.isAdmin),
+    mod.sanctionedNames,
     mod.isAdmin,
+  );
+
+  /* ---------- Sanctions (v0.7.9) ----------
+   * This profile's sanction state, and the admin ops on it:
+   * freeze (24h / 7d / 30d) / ban / lift, all behind
+   * ConfirmSheets. The same pending state also serves the
+   * card-level Lift (which acts on a post's author — here,
+   * always this profile's name). Errors land in the
+   * moderation note line. */
+  const profSanction =
+    profileId !== null ? mod.sanctionFor(profileId) : null;
+  const [sanctPending, setSanctPending] = useState<{
+    verb: 'freeze' | 'ban' | 'lift';
+    dur?: '24h' | '7d' | '30d';
+    nameId: string;
+  } | null>(null);
+  const [sanctBusy, setSanctBusy] = useState(false);
+  const confirmSanction = useCallback(async () => {
+    const p = sanctPending;
+    if (!p) return;
+    setSanctBusy(true);
+    try {
+      if (p.verb === 'lift') {
+        await runAdminOp(app.getSecret(), {
+          action: 'unsanction-user',
+          nameId: p.nameId,
+        });
+        applyUnsanctionLocal(p.nameId);
+      } else if (p.verb === 'freeze') {
+        const j = await runAdminOp(app.getSecret(), {
+          action: 'freeze-user',
+          nameId: p.nameId,
+          target: p.dur,
+        });
+        applySanctionLocal({
+          nameId: p.nameId,
+          kind: 'freeze',
+          until: typeof j.until === 'number' ? j.until : null,
+          ts: Date.now(),
+        });
+      } else {
+        await runAdminOp(app.getSecret(), {
+          action: 'ban-user',
+          nameId: p.nameId,
+        });
+        applySanctionLocal({
+          nameId: p.nameId,
+          kind: 'ban',
+          until: null,
+          ts: Date.now(),
+        });
+      }
+      setModMediaNote('');
+      refreshModeration(app.address, app.getSecret()).catch(() => {});
+    } catch (e) {
+      setModMediaNote(modErrorText(e));
+    } finally {
+      setSanctBusy(false);
+      setSanctPending(null);
+    }
+  }, [app, sanctPending]);
+  const onModUnsanction = useCallback(
+    (item: TimelineItem) =>
+      setSanctPending({ verb: 'lift', nameId: item.senderId.toString() }),
+    [],
   );
 
   const [followConfirmOpen, setFollowConfirmOpen] = useState(false);
@@ -460,11 +530,13 @@ export default function ProfileScreen({
               setEditNote(tr('media.uploaded'));
             } catch (e) {
               setEditNote(
-                (e instanceof MediaApiError && e.status === 413
-                  ? tr('media.tooLarge')
-                  : tr('media.uploadFail')) +
-                  ' — ' +
-                  mediaErrorDetail(e),
+                isSanctionedError(e)
+                  ? tr('media.sanctioned')
+                  : (e instanceof MediaApiError && e.status === 413
+                      ? tr('media.tooLarge')
+                      : tr('media.uploadFail')) +
+                    ' — ' +
+                    mediaErrorDetail(e),
               );
             }
           }
@@ -531,7 +603,11 @@ export default function ProfileScreen({
         picked = res.assets[0];
       }
     } catch (e) {
-      setEditNote(tr('media.uploadFail') + ' — ' + mediaErrorDetail(e));
+      setEditNote(
+        isSanctionedError(e)
+          ? tr('media.sanctioned')
+          : tr('media.uploadFail') + ' — ' + mediaErrorDetail(e),
+      );
       return;
     }
     if (!picked) return; // cancelled — not an error
@@ -554,11 +630,13 @@ export default function ProfileScreen({
       setEditNote(tr('media.uploaded'));
     } catch (e) {
       setEditNote(
-        (e instanceof MediaApiError && e.status === 413
-          ? tr('media.tooLarge')
-          : tr('media.uploadFail')) +
-          ' — ' +
-          mediaErrorDetail(e),
+        isSanctionedError(e)
+          ? tr('media.sanctioned')
+          : (e instanceof MediaApiError && e.status === 413
+              ? tr('media.tooLarge')
+              : tr('media.uploadFail')) +
+            ' — ' +
+            mediaErrorDetail(e),
       );
     } finally {
       setEditBusy(false);
@@ -582,7 +660,11 @@ export default function ProfileScreen({
       setServerMedia(await mediaFor(profileId));
       setEditNote('');
     } catch (e) {
-      setEditNote(tr('media.uploadFail') + ' — ' + mediaErrorDetail(e));
+      setEditNote(
+        isSanctionedError(e)
+          ? tr('media.sanctioned')
+          : tr('media.uploadFail') + ' — ' + mediaErrorDetail(e),
+      );
     } finally {
       setEditBusy(false);
     }
@@ -1344,6 +1426,113 @@ export default function ProfileScreen({
           </Pressable>
         </View>
 
+        {/* Sanction notice (v0.7.9): a plain statement for
+            every viewer when this name is frozen or banned
+            — no reason is ever shown. Admins additionally
+            get the expiry and the Lift button right here. */}
+        {profSanction ? (
+          <View
+            style={{
+              marginTop: 16,
+              borderWidth: 1,
+              borderColor: '#f0b429',
+              backgroundColor: '#fff8e1',
+              borderRadius: 12,
+              padding: 12,
+            }}
+          >
+            <Text style={[S.body, { fontWeight: '700' }]}>
+              {profSanction.kind === 'freeze'
+                ? tr('sanct.frozenNote')
+                : tr('sanct.bannedNote')}
+            </Text>
+            {mod.isAdmin ? (
+              <>
+                {profSanction.kind === 'freeze' &&
+                profSanction.until !== null ? (
+                  <Text style={[S.small, { marginTop: 4 }]}>
+                    {tr('sanct.until', {
+                      date: new Date(
+                        profSanction.until,
+                      ).toLocaleString(),
+                    })}
+                  </Text>
+                ) : null}
+                <Pressable
+                  onPress={() =>
+                    profileId !== null &&
+                    setSanctPending({
+                      verb: 'lift',
+                      nameId: profileId.toString(),
+                    })
+                  }
+                  hitSlop={6}
+                  style={{ marginTop: 8, alignSelf: 'flex-start' }}
+                >
+                  <Text style={styles.modBtnText}>
+                    {tr('sanct.liftBtn')}
+                  </Text>
+                </Pressable>
+              </>
+            ) : null}
+          </View>
+        ) : null}
+
+        {/* Sanction controls (v0.7.9, admins only): freeze
+            for 24h / 7d / 30d, or ban outright. A name owned
+            by an admin cannot be sanctioned — the server
+            refuses and the refusal shows in the note. */}
+        {mod.isAdmin && profileId !== null && !profSanction ? (
+          <View style={{ marginTop: 16 }}>
+            <Text style={S.h2}>{tr('sanct.applyTitle')}</Text>
+            <View
+              style={[
+                S.row,
+                { marginTop: 8, gap: 16, flexWrap: 'wrap' },
+              ]}
+            >
+              {(
+                [
+                  ['24h', 'sanct.dur24h'],
+                  ['7d', 'sanct.dur7d'],
+                  ['30d', 'sanct.dur30d'],
+                ] as const
+              ).map(([dur, key]) => (
+                <Pressable
+                  key={dur}
+                  onPress={() =>
+                    setSanctPending({
+                      verb: 'freeze',
+                      dur,
+                      nameId: profileId.toString(),
+                    })
+                  }
+                  hitSlop={6}
+                >
+                  <Text style={styles.modBtnText}>
+                    {tr('sanct.freezeBtn')} · {tr(key)}
+                  </Text>
+                </Pressable>
+              ))}
+              <Pressable
+                onPress={() =>
+                  setSanctPending({
+                    verb: 'ban',
+                    nameId: profileId.toString(),
+                  })
+                }
+                hitSlop={6}
+              >
+                <Text
+                  style={[styles.modBtnText, { color: '#b3261e' }]}
+                >
+                  {tr('sanct.banBtn')}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
         {/* Media moderation (v0.7.6, admins only): one row
             per media kind this profile has — or has hidden.
             A visible item's buttons pin its CURRENT hash
@@ -1502,6 +1691,8 @@ export default function ProfileScreen({
             modHiddenAttFor={mod.hiddenAttHashesFor}
             onModTogglePost={mod.isAdmin ? onModTogglePost : undefined}
             onModAttach={mod.isAdmin ? onModAttach : undefined}
+            modSanctionFor={mod.sanctionFor}
+            onModUnsanction={mod.isAdmin ? onModUnsanction : undefined}
             attTick={attTicks[item.cawId.toLowerCase()] ?? 0}
           />
         )}
@@ -1737,6 +1928,49 @@ export default function ProfileScreen({
         onConfirm={confirmModMedia}
         onCancel={() => setModMediaPending(null)}
         busy={modBusy}
+      />
+      <ConfirmSheet
+        visible={!!sanctPending}
+        title={
+          sanctPending
+            ? sanctPending.verb === 'freeze'
+              ? tr('sanct.freezeTitle')
+              : sanctPending.verb === 'ban'
+                ? tr('sanct.banTitle')
+                : tr('sanct.liftTitle')
+            : ''
+        }
+        body={
+          sanctPending
+            ? sanctPending.verb === 'freeze'
+              ? tr('sanct.freezeNote') +
+                ' (' +
+                tr(
+                  sanctPending.dur === '7d'
+                    ? 'sanct.dur7d'
+                    : sanctPending.dur === '30d'
+                      ? 'sanct.dur30d'
+                      : 'sanct.dur24h',
+                ) +
+                ')'
+              : sanctPending.verb === 'ban'
+                ? tr('sanct.banNote')
+                : tr('sanct.liftNote')
+            : undefined
+        }
+        confirmLabel={
+          sanctPending
+            ? sanctPending.verb === 'freeze'
+              ? tr('sanct.freezeBtn')
+              : sanctPending.verb === 'ban'
+                ? tr('sanct.banBtn')
+                : tr('sanct.liftBtn')
+            : ''
+        }
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmSanction}
+        onCancel={() => setSanctPending(null)}
+        busy={sanctBusy}
       />
       <Modal
         visible={!!recawChoice}

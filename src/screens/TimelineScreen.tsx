@@ -64,6 +64,7 @@ import { fmtAmountCard, fmtAmountCardDec } from '../lib/cawCore';
 import {
   MediaApiError,
   filterModeratedItems,
+  filterSanctionedItems,
   invalidateAttachments,
   type PostAttachment,
 } from '../lib/mediaApi';
@@ -71,6 +72,7 @@ import {
   applyMediaHidden,
   applyMediaUnhidden,
   applyPostHidden,
+  applyUnsanctionLocal,
   modErrorText,
   refreshHiddenMedia,
   refreshModeration,
@@ -218,6 +220,35 @@ export default function TimelineScreen() {
       setModAttPending(null);
     }
   }, [app, modAttPending, bumpAttTick]);
+
+  /* Sanction lift (v0.7.9): the card's Lift button opens
+   * this confirm; the op acts on the post's AUTHOR name. */
+  const [modUnsanctionPending, setModUnsanctionPending] =
+    useState<TimelineItem | null>(null);
+  const confirmModUnsanction = useCallback(async () => {
+    const item = modUnsanctionPending;
+    if (!item) return;
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: 'unsanction-user',
+        nameId: item.senderId.toString(),
+      });
+      applyUnsanctionLocal(item.senderId.toString());
+    } catch (e) {
+      setStatusByHash((prev) => ({
+        ...prev,
+        [item.hash]: modErrorText(e),
+      }));
+    } finally {
+      setModBusy(false);
+      setModUnsanctionPending(null);
+    }
+  }, [app, modUnsanctionPending]);
+  const onModUnsanction = useCallback(
+    (item: TimelineItem) => setModUnsanctionPending(item),
+    [],
+  );
 
   const onModTogglePost = useCallback(
     (item: TimelineItem) => setModPostPending(item),
@@ -948,10 +979,15 @@ export default function TimelineScreen() {
 
   /* Moderation filter (v0.7.6): hidden posts leave both
    * feeds for non-admins. Admins keep the raw list — their
-   * cards render dimmed + badged instead. */
-  const shownItems = filterModeratedItems(
-    mode === 'latest' ? items : fItems,
-    mod.hiddenPosts,
+   * cards render dimmed + badged instead. Sanctioned
+   * AUTHORS' posts leave the same way (v0.7.9). */
+  const shownItems = filterSanctionedItems(
+    filterModeratedItems(
+      mode === 'latest' ? items : fItems,
+      mod.hiddenPosts,
+      mod.isAdmin,
+    ),
+    mod.sanctionedNames,
     mod.isAdmin,
   );
   const onRefreshList = () => {
@@ -999,6 +1035,8 @@ export default function TimelineScreen() {
             modHiddenAttFor={mod.hiddenAttHashesFor}
             onModTogglePost={mod.isAdmin ? onModTogglePost : undefined}
             onModAttach={mod.isAdmin ? onModAttach : undefined}
+            modSanctionFor={mod.sanctionFor}
+            onModUnsanction={mod.isAdmin ? onModUnsanction : undefined}
             attTick={attTicks[item.cawId.toLowerCase()] ?? 0}
           />
         )}
@@ -1208,6 +1246,16 @@ export default function TimelineScreen() {
         cancelLabel={tr('compose.cancel')}
         onConfirm={confirmModAtt}
         onCancel={() => setModAttPending(null)}
+        busy={modBusy}
+      />
+      <ConfirmSheet
+        visible={!!modUnsanctionPending}
+        title={tr('sanct.liftTitle')}
+        body={tr('sanct.liftNote')}
+        confirmLabel={tr('sanct.liftBtn')}
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmModUnsanction}
+        onCancel={() => setModUnsanctionPending(null)}
         busy={modBusy}
       />
       <TipSheet

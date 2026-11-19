@@ -21,10 +21,16 @@ import {
   type WalletPublicInfo,
 } from '../lib/walletStore';
 import { resolveNameId, tokensOf } from '../lib/cawApi';
-import type { AdminEntry, HiddenMediaEntry } from '../lib/mediaApi';
+import type {
+  AdminEntry,
+  HiddenMediaEntry,
+  SanctionEntry,
+} from '../lib/mediaApi';
 import {
   applyMediaUnhidden,
   applyPostHidden,
+  applySanctionLocal,
+  applyUnsanctionLocal,
   modErrorText,
   refreshModeration,
   runAdminOp,
@@ -151,6 +157,106 @@ export default function SettingsScreen() {
       setHiddenMediaPending(null);
     }
   };
+
+  /* ---------- Sanctions (v0.7.9) ----------
+   * Freeze / ban / lift by CAW name, from this same card.
+   * The target resolves like the appoint input (a name, or
+   * a bare numeric id); the op itself runs behind a
+   * ConfirmSheet. A name owned by an admin cannot be
+   * sanctioned — the server's refusal shows as the note. */
+  const [sanctInput, setSanctInput] = useState('');
+  const [sanctPending, setSanctPending] = useState<{
+    verb: 'freeze' | 'ban' | 'lift';
+    dur?: '24h' | '7d' | '30d';
+    nameId: string;
+    label: string;
+  } | null>(null);
+
+  const startSanction = async (
+    verb: 'freeze' | 'ban',
+    dur?: '24h' | '7d' | '30d',
+  ) => {
+    const raw = sanctInput.trim().replace(/^@/, '');
+    if (!raw) return;
+    if (/^\d+$/.test(raw)) {
+      setSanctPending({ verb, dur, nameId: raw, label: '#' + raw });
+      return;
+    }
+    try {
+      const res = await resolveNameId(raw);
+      if (res.status === 'ok') {
+        setSanctPending({
+          verb,
+          dur,
+          nameId: res.id.toString(),
+          label: '@' + res.username,
+        });
+      } else {
+        setModNote(tr('profile.notFound'));
+      }
+    } catch {
+      setModNote(tr('mod.errFail'));
+    }
+  };
+
+  const doSanction = async () => {
+    const p = sanctPending;
+    if (!p) return;
+    setModBusy(true);
+    try {
+      if (p.verb === 'lift') {
+        await runAdminOp(app.getSecret(), {
+          action: 'unsanction-user',
+          nameId: p.nameId,
+        });
+        applyUnsanctionLocal(p.nameId);
+      } else if (p.verb === 'freeze') {
+        const j = await runAdminOp(app.getSecret(), {
+          action: 'freeze-user',
+          nameId: p.nameId,
+          target: p.dur,
+        });
+        applySanctionLocal({
+          nameId: p.nameId,
+          kind: 'freeze',
+          until: typeof j.until === 'number' ? j.until : null,
+          ts: Date.now(),
+        });
+      } else {
+        await runAdminOp(app.getSecret(), {
+          action: 'ban-user',
+          nameId: p.nameId,
+        });
+        applySanctionLocal({
+          nameId: p.nameId,
+          kind: 'ban',
+          until: null,
+          ts: Date.now(),
+        });
+      }
+      setModNote('');
+      setSanctInput('');
+      await afterModOp();
+    } catch (e) {
+      setModNote(modErrorText(e));
+      await afterModOp();
+    } finally {
+      setModBusy(false);
+      setSanctPending(null);
+    }
+  };
+
+  const sanctionLabel = (e: SanctionEntry) =>
+    '#' +
+    e.nameId +
+    ' · ' +
+    (e.kind === 'freeze'
+      ? tr('sanct.frozenBadge')
+      : tr('sanct.bannedBadge')) +
+    (e.kind === 'freeze' && e.until !== null
+      ? ' · ' +
+        tr('sanct.until', { date: new Date(e.until).toLocaleString() })
+      : '');
 
   const doRevoke = async () => {
     if (!revokeTarget) return;
@@ -472,6 +578,87 @@ export default function SettingsScreen() {
                 </View>
               ))
             )}
+            <Text style={[S.h2, { marginTop: 16 }]}>
+              {tr('sanct.listTitle')}
+            </Text>
+            {mod.sanctions.length === 0 ? (
+              <Text style={[S.small, { marginTop: 6 }]}>
+                {tr('sanct.none')}
+              </Text>
+            ) : (
+              mod.sanctions.map((e) => (
+                <View key={e.nameId} style={styles.modRow}>
+                  <Text
+                    style={[S.body, { flex: 1 }]}
+                    numberOfLines={2}
+                  >
+                    {sanctionLabel(e)}
+                  </Text>
+                  <Pressable
+                    onPress={() =>
+                      setSanctPending({
+                        verb: 'lift',
+                        nameId: e.nameId,
+                        label: '#' + e.nameId,
+                      })
+                    }
+                    hitSlop={6}
+                  >
+                    <Text style={styles.modBtnText}>
+                      {tr('sanct.liftBtn')}
+                    </Text>
+                  </Pressable>
+                </View>
+              ))
+            )}
+            <Text style={[S.h2, { marginTop: 16 }]}>
+              {tr('sanct.applyTitle')}
+            </Text>
+            <Text style={[S.small, { marginTop: 4 }]}>
+              {tr('sanct.applyNote')}
+            </Text>
+            <TextInput
+              style={styles.appointInput}
+              value={sanctInput}
+              onChangeText={setSanctInput}
+              placeholder={tr('sanct.namePh')}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <View
+              style={[
+                S.row,
+                { marginTop: 10, gap: 16, flexWrap: 'wrap' },
+              ]}
+            >
+              {(
+                [
+                  ['24h', 'sanct.dur24h'],
+                  ['7d', 'sanct.dur7d'],
+                  ['30d', 'sanct.dur30d'],
+                ] as const
+              ).map(([dur, key]) => (
+                <Pressable
+                  key={dur}
+                  onPress={() => void startSanction('freeze', dur)}
+                  hitSlop={6}
+                >
+                  <Text style={styles.modBtnText}>
+                    {tr('sanct.freezeBtn')} · {tr(key)}
+                  </Text>
+                </Pressable>
+              ))}
+              <Pressable
+                onPress={() => void startSanction('ban')}
+                hitSlop={6}
+              >
+                <Text
+                  style={[styles.modBtnText, { color: '#b3261e' }]}
+                >
+                  {tr('sanct.banBtn')}
+                </Text>
+              </Pressable>
+            </View>
             {modNote ? (
               <Text style={[S.small, { marginTop: 10 }]}>{modNote}</Text>
             ) : null}
@@ -634,6 +821,53 @@ export default function SettingsScreen() {
         onConfirm={doHiddenMediaOp}
         onCancel={() => {
           if (!modBusy) setHiddenMediaPending(null);
+        }}
+        busy={modBusy}
+      />
+      <ConfirmSheet
+        visible={!!sanctPending}
+        title={
+          sanctPending
+            ? (sanctPending.verb === 'freeze'
+                ? tr('sanct.freezeTitle')
+                : sanctPending.verb === 'ban'
+                  ? tr('sanct.banTitle')
+                  : tr('sanct.liftTitle')) +
+              ' — ' +
+              sanctPending.label
+            : ''
+        }
+        body={
+          sanctPending
+            ? sanctPending.verb === 'freeze'
+              ? tr('sanct.freezeNote') +
+                ' (' +
+                tr(
+                  sanctPending.dur === '7d'
+                    ? 'sanct.dur7d'
+                    : sanctPending.dur === '30d'
+                      ? 'sanct.dur30d'
+                      : 'sanct.dur24h',
+                ) +
+                ')'
+              : sanctPending.verb === 'ban'
+                ? tr('sanct.banNote')
+                : tr('sanct.liftNote')
+            : undefined
+        }
+        confirmLabel={
+          sanctPending
+            ? sanctPending.verb === 'freeze'
+              ? tr('sanct.freezeBtn')
+              : sanctPending.verb === 'ban'
+                ? tr('sanct.banBtn')
+                : tr('sanct.liftBtn')
+            : ''
+        }
+        cancelLabel={tr('settings.cancel')}
+        onConfirm={doSanction}
+        onCancel={() => {
+          if (!modBusy) setSanctPending(null);
         }}
         busy={modBusy}
       />

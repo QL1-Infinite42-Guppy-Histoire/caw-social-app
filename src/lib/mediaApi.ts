@@ -102,6 +102,18 @@ export class MediaApiError extends Error {
   }
 }
 
+/** True when a media write was refused because the acting
+ *  name is sanctioned (v0.7.9): the server answers 403 with
+ *  an "account sanctioned" error, and the UI swaps its
+ *  generic failure note for the sanction wording. */
+export function isSanctionedError(e: unknown): boolean {
+  return (
+    e instanceof MediaApiError &&
+    e.status === 403 &&
+    /sanction/i.test(e.serverError || '')
+  );
+}
+
 /** One-line detail for a failed media write, appended to the UI
  *  failure notes (v0.7.4). The bare "sharing failed" note hid
  *  WHICH step broke; the note now carries the error's own
@@ -428,6 +440,51 @@ export async function fetchHiddenPosts(): Promise<string[] | null> {
   }
 }
 
+/** One active user sanction (v0.7.9, GET /v1/sanctions):
+ *  a CAW name frozen until `until` (ms) or banned
+ *  (`until` null). The list carries ACTIVE sanctions
+ *  only, newest first. */
+export interface SanctionEntry {
+  nameId: string;
+  kind: 'freeze' | 'ban';
+  until: number | null;
+  ts: number;
+}
+
+/** The active-sanctions list (GET /v1/sanctions). Null on
+ *  any failure (callers keep the last good list). */
+export async function fetchSanctions(): Promise<SanctionEntry[] | null> {
+  try {
+    const res = await fetchTimeout(
+      MEDIA_API + '/v1/sanctions',
+      undefined,
+      15000,
+    );
+    if (!res.ok) return null;
+    const j = await res.json();
+    if (!j || !Array.isArray(j.sanctions)) return null;
+    const out: SanctionEntry[] = [];
+    for (const e of j.sanctions as Array<Record<string, unknown>>) {
+      if (
+        !e ||
+        e.nameId == null ||
+        (e.kind !== 'freeze' && e.kind !== 'ban')
+      ) {
+        continue;
+      }
+      out.push({
+        nameId: String(e.nameId),
+        kind: e.kind,
+        until: typeof e.until === 'number' ? e.until : null,
+        ts: typeof e.ts === 'number' ? e.ts : 0,
+      });
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 export interface AdminOpFields {
   action: string;
   nameId?: string | number | null;
@@ -471,9 +528,12 @@ export function buildAdminMessage(o: {
 export function adminOpErrorKey(
   status: number,
   msg: string,
-): 'notAdmin' | 'rootOnly' | 'changed' | 'notFound' | 'sig' | 'throttle' | 'bad' | 'fail' {
+): 'notAdmin' | 'rootOnly' | 'cannotSanction' | 'changed' | 'notFound' | 'sig' | 'throttle' | 'bad' | 'fail' {
   const m = String(msg || '');
-  if (status === 403) return m.includes('root only') ? 'rootOnly' : 'notAdmin';
+  if (status === 403) {
+    if (m.includes('cannot sanction')) return 'cannotSanction';
+    return m.includes('root only') ? 'rootOnly' : 'notAdmin';
+  }
   if (status === 409) return 'changed';
   if (status === 404) return 'notFound';
   if (status === 401) return 'sig';
@@ -614,6 +674,27 @@ export function filterModeratedItems<
         (a.type === 0 || a.type === 2) &&
         a.cawId &&
         hidden.has(String(a.cawId).toLowerCase())
+      ),
+  );
+}
+
+/** The author-side companion (v0.7.9): posts and Recaws
+ *  whose AUTHOR name is under an active sanction are
+ *  dropped for non-admins (admins keep them, marked).
+ *  Same item-shape discipline as filterModeratedItems —
+ *  only types 0 and 2 are posts. */
+export function filterSanctionedItems<
+  T extends { type: number; senderId: bigint },
+>(items: T[], sanctionedNames: Set<string>, isAdmin: boolean): T[] {
+  if (!items || !sanctionedNames || sanctionedNames.size === 0 || isAdmin) {
+    return items || [];
+  }
+  return items.filter(
+    (a) =>
+      !(
+        a &&
+        (a.type === 0 || a.type === 2) &&
+        sanctionedNames.has(a.senderId.toString())
       ),
   );
 }

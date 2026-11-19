@@ -48,6 +48,7 @@ import { backArrow } from '../lib/rtl';
 import {
   MediaApiError,
   filterModeratedItems,
+  filterSanctionedItems,
   invalidateAttachments,
   type PostAttachment,
 } from '../lib/mediaApi';
@@ -55,6 +56,7 @@ import {
   applyMediaHidden,
   applyMediaUnhidden,
   applyPostHidden,
+  applyUnsanctionLocal,
   modErrorText,
   refreshHiddenMedia,
   runAdminOp,
@@ -95,6 +97,9 @@ export default function PostDetailScreen({
    * replies leave the thread for non-admins. */
   const mod = useModeration();
   const postHidden = mod.isPostHidden(post.cawId);
+  /* Sanctions (v0.7.9): a sanctioned author's post opened
+   * directly gets the same not-shown state for non-admins. */
+  const postSanction = mod.sanctionFor(post.senderId);
   const [modPostPending, setModPostPending] = useState<TimelineItem | null>(
     null,
   );
@@ -169,6 +174,31 @@ export default function PostDetailScreen({
     }
   }, [app, modAttPending, bumpAttTick]);
 
+  /* Sanction lift (v0.7.9), acting on a post's AUTHOR. */
+  const [modUnsanctionPending, setModUnsanctionPending] =
+    useState<TimelineItem | null>(null);
+  const confirmModUnsanction = useCallback(async () => {
+    const item = modUnsanctionPending;
+    if (!item) return;
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: 'unsanction-user',
+        nameId: item.senderId.toString(),
+      });
+      applyUnsanctionLocal(item.senderId.toString());
+    } catch (e) {
+      setSlStatus((prev) => ({ ...prev, [item.hash]: modErrorText(e) }));
+    } finally {
+      setModBusy(false);
+      setModUnsanctionPending(null);
+    }
+  }, [app, modUnsanctionPending]);
+  const onModUnsanction = useCallback(
+    (item: TimelineItem) => setModUnsanctionPending(item),
+    [],
+  );
+
   const onModTogglePost = useCallback(
     (item: TimelineItem) => setModPostPending(item),
     [],
@@ -184,7 +214,11 @@ export default function PostDetailScreen({
   );
 
   const shownReplies = replies
-    ? filterModeratedItems(replies, mod.hiddenPosts, mod.isAdmin)
+    ? filterSanctionedItems(
+        filterModeratedItems(replies, mod.hiddenPosts, mod.isAdmin),
+        mod.sanctionedNames,
+        mod.isAdmin,
+      )
     : null;
 
   const load = useCallback(async () => {
@@ -444,8 +478,9 @@ export default function PostDetailScreen({
         <View style={{ width: 60 }} />
       </View>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 + insets.bottom }}>
-        {postHidden && !mod.isAdmin ? (
-          /* Direct-open of a hidden post (v0.7.6): the
+        {(postHidden || postSanction) && !mod.isAdmin ? (
+          /* Direct-open of a hidden post (v0.7.6) or of a
+           * sanctioned author's post (v0.7.9): the
            * hidden-by-a-moderator state stands in place of
            * the post, its reactions and its thread. */
           <View style={[S.emptyCard, styles.emptyCardPad]}>
@@ -473,6 +508,8 @@ export default function PostDetailScreen({
           modHiddenAttFor={mod.hiddenAttHashesFor}
           onModTogglePost={mod.isAdmin ? onModTogglePost : undefined}
           onModAttach={mod.isAdmin ? onModAttach : undefined}
+          modSanctionFor={mod.sanctionFor}
+          onModUnsanction={mod.isAdmin ? onModUnsanction : undefined}
           attTick={attTicks[post.cawId.toLowerCase()] ?? 0}
         />
         {failed ? (
@@ -585,6 +622,10 @@ export default function PostDetailScreen({
                     mod.isAdmin ? onModTogglePost : undefined
                   }
                   onModAttach={mod.isAdmin ? onModAttach : undefined}
+                  modSanctionFor={mod.sanctionFor}
+                  onModUnsanction={
+                    mod.isAdmin ? onModUnsanction : undefined
+                  }
                   attTick={attTicks[r.cawId.toLowerCase()] ?? 0}
                 />
               ))
@@ -713,6 +754,16 @@ export default function PostDetailScreen({
         cancelLabel={tr('compose.cancel')}
         onConfirm={confirmModAtt}
         onCancel={() => setModAttPending(null)}
+        busy={modBusy}
+      />
+      <ConfirmSheet
+        visible={!!modUnsanctionPending}
+        title={tr('sanct.liftTitle')}
+        body={tr('sanct.liftNote')}
+        confirmLabel={tr('sanct.liftBtn')}
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmModUnsanction}
+        onCancel={() => setModUnsanctionPending(null)}
         busy={modBusy}
       />
     </View>

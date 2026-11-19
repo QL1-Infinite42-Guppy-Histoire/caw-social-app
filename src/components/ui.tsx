@@ -72,6 +72,7 @@ import {
   hashFromMediaUrl,
   mediaFor,
   type PostAttachment,
+  type SanctionEntry,
 } from '../lib/mediaApi';
 import type { TimelineItem } from '../lib/cawApi';
 import type { ProfileCustom } from '../lib/profileCustom';
@@ -781,6 +782,16 @@ const SUPERLIKE_ON = X_GOLD;
  *  detection state is true. */
 const SUPER_RECAW_WASH = X_SUPER_WASH_LIGHT;
 
+/** The Frozen / Banned badge line (v0.7.9), in the Hidden
+ *  badge's slot and style. */
+function SanctionBadge({ kind }: { kind: 'freeze' | 'ban' }) {
+  return (
+    <Text style={postStyles.modBadgeText}>
+      {kind === 'freeze' ? tr('sanct.frozenBadge') : tr('sanct.bannedBadge')}
+    </Text>
+  );
+}
+
 /** The original post a like / share points at, shown as a quote box. */
 function TargetPostQuote({
   item,
@@ -788,6 +799,7 @@ function TargetPostQuote({
   onOpenProfile,
   modAdmin,
   modHiddenFor,
+  modSanctionFor,
 }: {
   item: TimelineItem;
   lang: string;
@@ -797,6 +809,9 @@ function TargetPostQuote({
    *  its place); admins see it with the Hidden badge. */
   modAdmin?: boolean;
   modHiddenFor?: (cawId: string) => boolean;
+  /** Sanctions (v0.7.9): same treatment when the target's
+   *  AUTHOR is sanctioned. */
+  modSanctionFor?: (senderId: bigint) => SanctionEntry | null;
 }) {
   const [post, setPost] = useState<TimelineItem | null>(null);
   const [author, setAuthor] = useState<string | null>(null);
@@ -817,7 +832,10 @@ function TargetPostQuote({
   }, [item.cawId]);
   if (!post || !post.text) return null;
   const targetHidden = !!(modHiddenFor && modHiddenFor(post.cawId));
-  if (targetHidden && !modAdmin) {
+  const targetSanction = modSanctionFor
+    ? modSanctionFor(post.senderId)
+    : null;
+  if ((targetHidden || targetSanction) && !modAdmin) {
     return (
       <View style={postStyles.quote}>
         <Text style={S.small}>{tr('mod.hiddenNote')}</Text>
@@ -836,6 +854,9 @@ function TargetPostQuote({
         <Text style={postStyles.modBadgeText}>
           {tr('mod.hiddenBadge')}
         </Text>
+      ) : null}
+      {targetSanction ? (
+        <SanctionBadge kind={targetSanction.kind} />
       ) : null}
       <View style={S.row}>
         <Avatar nameId={post.senderId} size={20} />
@@ -869,6 +890,7 @@ export function QuotedPostFrame({
   onOpenProfile,
   onOpenPost,
   modHidden,
+  modSanction,
 }: {
   post: TimelineItem;
   lang: string;
@@ -877,6 +899,9 @@ export function QuotedPostFrame({
   /** Moderation (v0.7.6): the quoted post is on the hidden
    *  list and the viewer is an admin — badge it. */
   modHidden?: boolean;
+  /** Sanctions (v0.7.9): the quoted post's author is
+   *  sanctioned and the viewer is an admin — badge it. */
+  modSanction?: 'freeze' | 'ban' | null;
 }) {
   const [author, setAuthor] = useState<string | null>(null);
   useEffect(() => {
@@ -905,6 +930,7 @@ export function QuotedPostFrame({
           {tr('mod.hiddenBadge')}
         </Text>
       ) : null}
+      {modSanction ? <SanctionBadge kind={modSanction} /> : null}
       <View style={S.row}>
         <Avatar nameId={post.senderId} size={20} />
         <Text style={[postStyles.quoteName, { marginStart: 6 }]}>
@@ -938,6 +964,7 @@ export function OriginalFrame({
   onOpenPost,
   modAdmin,
   modHiddenFor,
+  modSanctionFor,
 }: {
   cawId: string;
   lang: string;
@@ -947,6 +974,9 @@ export function OriginalFrame({
    *  for non-admins; admins see it badged. */
   modAdmin?: boolean;
   modHiddenFor?: (cawId: string) => boolean;
+  /** Sanctions (v0.7.9): same treatment when the original's
+   *  AUTHOR is sanctioned. */
+  modSanctionFor?: (senderId: bigint) => SanctionEntry | null;
 }) {
   const [post, setPost] = useState<TimelineItem | null | undefined>(
     undefined,
@@ -975,7 +1005,10 @@ export function OriginalFrame({
     );
   }
   const origHidden = !!(modHiddenFor && modHiddenFor(post.cawId));
-  if (origHidden && !modAdmin) {
+  const origSanction = modSanctionFor
+    ? modSanctionFor(post.senderId)
+    : null;
+  if ((origHidden || origSanction) && !modAdmin) {
     return (
       <View style={postStyles.quote}>
         <Text style={S.small}>{tr('mod.hiddenNote')}</Text>
@@ -989,6 +1022,7 @@ export function OriginalFrame({
       onOpenProfile={onOpenProfile}
       onOpenPost={onOpenPost}
       modHidden={origHidden}
+      modSanction={origSanction ? origSanction.kind : null}
     />
   );
 }
@@ -1290,6 +1324,13 @@ export interface PostCardProps {
   modHiddenAttFor?: (cawId: string) => string[];
   /** Admin Hide/Unhide for the row's OWN post. */
   onModTogglePost?: (item: TimelineItem) => void;
+  /** Sanctions (v0.7.9): the active sanction on a name, by
+   *  sender id — a sanctioned author's posts stay visible
+   *  to admins, dimmed and badged (Frozen / Banned), and
+   *  nested frames of their posts are badged too. */
+  modSanctionFor?: (senderId: bigint) => SanctionEntry | null;
+  /** Admin: lift the sanction on this row's author. */
+  onModUnsanction?: (item: TimelineItem) => void;
   /** Admin attachment op for this post. */
   onModAttach?: (
     item: TimelineItem,
@@ -1332,6 +1373,8 @@ function RecawCard({
   modHiddenAttFor,
   onModTogglePost,
   onModAttach,
+  modSanctionFor,
+  onModUnsanction,
   attTick,
 }: PostCardProps) {
   const [name, setName] = useState<string | null>(null);
@@ -1397,6 +1440,16 @@ function RecawCard({
     modHiddenFor &&
     modHiddenFor(original.cawId)
   );
+  /* Sanctions (v0.7.9): the recawer's own sanction badges
+   * the row; a sanctioned ORIGINAL author hides the nested
+   * post for non-admins, exactly like a hidden original. */
+  const ownSanction = modSanctionFor
+    ? modSanctionFor(item.senderId)
+    : null;
+  const origSanction =
+    original && modSanctionFor
+      ? modSanctionFor(original.senderId)
+      : null;
   const row = (
     <>
       <Avatar
@@ -1435,6 +1488,7 @@ function RecawCard({
             {tr('mod.hiddenBadge')}
           </Text>
         ) : null}
+        {ownSanction ? <SanctionBadge kind={ownSanction.kind} /> : null}
         {original === undefined ? (
           <View style={postStyles.quote}>
             <Text style={S.small}>{tr('tl.loading')}</Text>
@@ -1443,7 +1497,7 @@ function RecawCard({
           <View style={postStyles.quote}>
             <Text style={S.small}>{tr('tl.originalMissing')}</Text>
           </View>
-        ) : origHidden && !modAdmin ? (
+        ) : (origHidden || origSanction) && !modAdmin ? (
           <View style={postStyles.quote}>
             <Text style={S.small}>{tr('mod.hiddenNote')}</Text>
           </View>
@@ -1468,6 +1522,8 @@ function RecawCard({
             modHiddenAttFor={modHiddenAttFor}
             onModTogglePost={onModTogglePost}
             onModAttach={onModAttach}
+            modSanctionFor={modSanctionFor}
+            onModUnsanction={onModUnsanction}
             attTick={attTick}
           />
         )}
@@ -1479,17 +1535,33 @@ function RecawCard({
           </Pressable>
         </View>
         {/* The recaw's OWN moderation toggle (v0.7.6): it
-            hides the recaw post itself, never the original. */}
-        {modAdmin && onModTogglePost && !nested ? (
-          <View style={[S.row, { marginTop: 6 }]}>
-            <Pressable
-              onPress={() => onModTogglePost(item)}
-              hitSlop={6}
-            >
-              <Text style={postStyles.modBtnText}>
-                {ownHidden ? tr('mod.unhideBtn') : tr('mod.hideBtn')}
-              </Text>
-            </Pressable>
+            hides the recaw post itself, never the original.
+            The sanction lift (v0.7.9) sits beside it — it
+            acts on the recaw's AUTHOR, not the post. */}
+        {modAdmin &&
+        !nested &&
+        (onModTogglePost || (ownSanction && onModUnsanction)) ? (
+          <View style={[S.row, { marginTop: 6, gap: 16 }]}>
+            {onModTogglePost ? (
+              <Pressable
+                onPress={() => onModTogglePost(item)}
+                hitSlop={6}
+              >
+                <Text style={postStyles.modBtnText}>
+                  {ownHidden ? tr('mod.unhideBtn') : tr('mod.hideBtn')}
+                </Text>
+              </Pressable>
+            ) : null}
+            {ownSanction && onModUnsanction ? (
+              <Pressable
+                onPress={() => onModUnsanction(item)}
+                hitSlop={6}
+              >
+                <Text style={postStyles.modBtnText}>
+                  {tr('sanct.liftBtn')}
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
         {actionStatus ? (
@@ -1513,7 +1585,7 @@ function RecawCard({
       style={[
         nested ? postStyles.postNested : postStyles.post,
         isSuper && { backgroundColor: SUPER_RECAW_WASH },
-        ownHidden && { opacity: 0.55 },
+        (ownHidden || ownSanction) && { opacity: 0.55 },
       ]}
     >
       {row}
@@ -1543,6 +1615,8 @@ function PostCardBase({
   modHiddenAttFor,
   onModTogglePost,
   onModAttach,
+  modSanctionFor,
+  onModUnsanction,
   attTick,
 }: PostCardProps) {
   const [name, setName] = useState<string | null>(null);
@@ -1667,6 +1741,12 @@ function PostCardBase({
    * (this session's own hide, before any refetch) — those
    * are filtered out here and shown as placeholders. */
   const ownHidden = !!(modHiddenFor && modHiddenFor(item.cawId));
+  /* Sanctions (v0.7.9): the AUTHOR's active sanction — the
+   * card dims and badges like a hidden post (admins only;
+   * non-admin lists filter sanctioned authors out). */
+  const ownSanction = modSanctionFor
+    ? modSanctionFor(item.senderId)
+    : null;
   const hiddenAttHashes =
     modAdmin && modHiddenAttFor ? modHiddenAttFor(item.cawId) : [];
   const visibleAttachments = hiddenAttHashes.length
@@ -1734,6 +1814,8 @@ function PostCardBase({
         modHiddenAttFor={modHiddenAttFor}
         onModTogglePost={onModTogglePost}
         onModAttach={onModAttach}
+        modSanctionFor={modSanctionFor}
+        onModUnsanction={onModUnsanction}
         attTick={attTick}
       />
     );
@@ -1768,7 +1850,7 @@ function PostCardBase({
     <View
       style={[
         nested ? postStyles.postNested : postStyles.post,
-        ownHidden && { opacity: 0.55 },
+        (ownHidden || ownSanction) && { opacity: 0.55 },
       ]}
     >
       <Avatar
@@ -1799,6 +1881,7 @@ function PostCardBase({
             {tr('mod.hiddenBadge')}
           </Text>
         ) : null}
+        {ownSanction ? <SanctionBadge kind={ownSanction.kind} /> : null}
         {parsed?.ref?.kind === 'reply' && replyToName ? (
           <Text style={S.tiny}>
             {tr('tl.replyTo', { name: '@' + replyToName })}
@@ -1842,6 +1925,7 @@ function PostCardBase({
             onOpenPost={onOpenPost}
             modAdmin={modAdmin}
             modHiddenFor={modHiddenFor}
+            modSanctionFor={modSanctionFor}
           />
         ) : null}
         {item.type === 1 ? (
@@ -1851,6 +1935,7 @@ function PostCardBase({
             onOpenProfile={onOpenProfile}
             modAdmin={modAdmin}
             modHiddenFor={modHiddenFor}
+            modSanctionFor={modSanctionFor}
           />
         ) : null}
         {/* X-style action row (v0.6.0): icon + count, no word
@@ -2045,17 +2130,34 @@ function PostCardBase({
         {/* Admin Hide/Unhide for THIS post (v0.7.6): the web
             viewer's "mod-row" position, under the record
             link. The confirm sheet (with the on-chain
-            honesty copy) lives in the screens. */}
-        {modAdmin && onModTogglePost && item.type === 0 && !nested ? (
-          <View style={[S.row, { marginTop: 6 }]}>
-            <Pressable
-              onPress={() => onModTogglePost(item)}
-              hitSlop={6}
-            >
-              <Text style={postStyles.modBtnText}>
-                {ownHidden ? tr('mod.unhideBtn') : tr('mod.hideBtn')}
-              </Text>
-            </Pressable>
+            honesty copy) lives in the screens. The sanction
+            lift (v0.7.9) sits beside it — it acts on the
+            post's AUTHOR, not the post. */}
+        {modAdmin &&
+        item.type === 0 &&
+        !nested &&
+        (onModTogglePost || (ownSanction && onModUnsanction)) ? (
+          <View style={[S.row, { marginTop: 6, gap: 16 }]}>
+            {onModTogglePost ? (
+              <Pressable
+                onPress={() => onModTogglePost(item)}
+                hitSlop={6}
+              >
+                <Text style={postStyles.modBtnText}>
+                  {ownHidden ? tr('mod.unhideBtn') : tr('mod.hideBtn')}
+                </Text>
+              </Pressable>
+            ) : null}
+            {ownSanction && onModUnsanction ? (
+              <Pressable
+                onPress={() => onModUnsanction(item)}
+                hitSlop={6}
+              >
+                <Text style={postStyles.modBtnText}>
+                  {tr('sanct.liftBtn')}
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
         {actionStatus ? (

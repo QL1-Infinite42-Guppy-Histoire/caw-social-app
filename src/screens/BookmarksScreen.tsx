@@ -24,6 +24,7 @@ import {
   applyMediaHidden,
   applyMediaUnhidden,
   applyPostHidden,
+  applyUnsanctionLocal,
   modErrorText,
   refreshHiddenMedia,
   runAdminOp,
@@ -136,6 +137,32 @@ export default function BookmarksScreen({
     }
   }, [app, modAttPending, bumpAttTick]);
 
+  /* Sanction lift (v0.7.9), acting on a post's AUTHOR. */
+  const [modUnsanctionPending, setModUnsanctionPending] =
+    useState<TimelineItem | null>(null);
+  const confirmModUnsanction = useCallback(async () => {
+    const item = modUnsanctionPending;
+    if (!item) return;
+    setModBusy(true);
+    try {
+      await runAdminOp(app.getSecret(), {
+        action: 'unsanction-user',
+        nameId: item.senderId.toString(),
+      });
+      applyUnsanctionLocal(item.senderId.toString());
+      setModNote('');
+    } catch (e) {
+      setModNote(modErrorText(e));
+    } finally {
+      setModBusy(false);
+      setModUnsanctionPending(null);
+    }
+  }, [app, modUnsanctionPending]);
+  const onModUnsanction = useCallback(
+    (item: TimelineItem) => setModUnsanctionPending(item),
+    [],
+  );
+
   const onModTogglePost = useCallback(
     (item: TimelineItem) => setModPostPending(item),
     [],
@@ -235,7 +262,12 @@ export default function BookmarksScreen({
           keyExtractor={(id) => id}
           renderItem={({ item: id }) => {
             const post = resolved[id];
-            if (post && mod.isPostHidden(post.cawId) && !mod.isAdmin) {
+            if (
+              post &&
+              (mod.isPostHidden(post.cawId) ||
+                mod.sanctionFor(post.senderId)) &&
+              !mod.isAdmin
+            ) {
               return (
                 <View
                   style={{
@@ -278,6 +310,10 @@ export default function BookmarksScreen({
                     mod.isAdmin ? onModTogglePost : undefined
                   }
                   onModAttach={mod.isAdmin ? onModAttach : undefined}
+                  modSanctionFor={mod.sanctionFor}
+                  onModUnsanction={
+                    mod.isAdmin ? onModUnsanction : undefined
+                  }
                   attTick={attTicks[post.cawId.toLowerCase()] ?? 0}
                 />
               );
@@ -385,6 +421,16 @@ export default function BookmarksScreen({
         cancelLabel={tr('compose.cancel')}
         onConfirm={confirmModAtt}
         onCancel={() => setModAttPending(null)}
+        busy={modBusy}
+      />
+      <ConfirmSheet
+        visible={!!modUnsanctionPending}
+        title={tr('sanct.liftTitle')}
+        body={tr('sanct.liftNote')}
+        confirmLabel={tr('sanct.liftBtn')}
+        cancelLabel={tr('compose.cancel')}
+        onConfirm={confirmModUnsanction}
+        onCancel={() => setModUnsanctionPending(null)}
         busy={modBusy}
       />
     </View>

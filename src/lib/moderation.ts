@@ -30,12 +30,14 @@ import {
   adminOpErrorKey,
   fetchAdmins,
   fetchHiddenPosts,
+  fetchSanctions,
   listHiddenMedia,
   type AdminEntry,
   type AdminOpFields,
   type AdminRole,
   type HiddenMediaEntry,
   type MediaKind,
+  type SanctionEntry,
 } from './mediaApi';
 import { signerFor } from './wallet';
 import type { WalletKind } from './walletStore';
@@ -50,6 +52,8 @@ export interface ModSnapshot {
   role: AdminRole | null;
   hiddenPosts: Set<string>;
   hiddenMedia: HiddenMediaEntry[];
+  /** Active user sanctions (v0.7.9), newest first. */
+  sanctions: SanctionEntry[];
 }
 
 const EMPTY: ModSnapshot = {
@@ -57,6 +61,7 @@ const EMPTY: ModSnapshot = {
   role: null,
   hiddenPosts: new Set<string>(),
   hiddenMedia: [],
+  sanctions: [],
 };
 
 let snapshot: ModSnapshot = EMPTY;
@@ -79,6 +84,15 @@ export function moderationSnapshot(): ModSnapshot {
 
 export function isPostHidden(cawId: string | null | undefined): boolean {
   return !!cawId && snapshot.hiddenPosts.has(String(cawId).toLowerCase());
+}
+
+/** The active sanction on one CAW name, or null. */
+export function sanctionForName(
+  nameId: bigint | string | number | null | undefined,
+): SanctionEntry | null {
+  if (nameId == null || nameId === '') return null;
+  const key = String(nameId);
+  return snapshot.sanctions.find((s) => s.nameId === key) ?? null;
 }
 
 /** Hidden profile-media entries for one name, by kind. */
@@ -118,9 +132,10 @@ export function refreshModeration(
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
     try {
-      const [admins, posts] = await Promise.all([
+      const [admins, posts, sanctions] = await Promise.all([
         fetchAdmins(),
         fetchHiddenPosts(),
+        fetchSanctions(),
       ]);
       const me = address ? address.toLowerCase() : null;
       const nextAdmins = admins ?? snapshot.admins;
@@ -144,16 +159,19 @@ export function refreshModeration(
         posts !== null
           ? new Set(posts)
           : snapshot.hiddenPosts;
+      const nextSanctions = sanctions ?? snapshot.sanctions;
       const changed =
         nextAdmins !== snapshot.admins ||
         role !== snapshot.role ||
         nextPosts !== snapshot.hiddenPosts ||
-        hiddenMedia !== snapshot.hiddenMedia;
+        hiddenMedia !== snapshot.hiddenMedia ||
+        nextSanctions !== snapshot.sanctions;
       snapshot = {
         admins: nextAdmins,
         role,
         hiddenPosts: nextPosts,
         hiddenMedia,
+        sanctions: nextSanctions,
       };
       if (changed) notify();
     } finally {
@@ -178,6 +196,30 @@ export async function refreshHiddenMedia(
   } catch {
     /* keep the last good list */
   }
+}
+
+/** Optimistic local update after a successful freeze/ban —
+ *  the entry leads the list at once; the next refresh
+ *  reconciles with the server's truth. */
+export function applySanctionLocal(entry: SanctionEntry): void {
+  snapshot = {
+    ...snapshot,
+    sanctions: [
+      entry,
+      ...snapshot.sanctions.filter((s) => s.nameId !== entry.nameId),
+    ],
+  };
+  notify();
+}
+
+/** Optimistic local update after a successful unsanction. */
+export function applyUnsanctionLocal(nameId: string): void {
+  if (!snapshot.sanctions.some((s) => s.nameId === nameId)) return;
+  snapshot = {
+    ...snapshot,
+    sanctions: snapshot.sanctions.filter((s) => s.nameId !== nameId),
+  };
+  notify();
 }
 
 /** Optimistic local update after a successful post op — the
@@ -249,6 +291,8 @@ export function modErrorText(e: unknown): string {
         return tr('mod.errNotAdmin');
       case 'rootOnly':
         return tr('mod.errRootOnly');
+      case 'cannotSanction':
+        return tr('mod.errCannotSanction');
       case 'changed':
         return tr('mod.errChanged');
       case 'notFound':
@@ -275,6 +319,10 @@ export function useModeration(): ModSnapshot & {
   isRoot: boolean;
   isPostHidden: (cawId: string | null | undefined) => boolean;
   hiddenAttHashesFor: (cawId: string) => string[];
+  sanctionFor: (
+    nameId: bigint | string | number | null | undefined,
+  ) => SanctionEntry | null;
+  sanctionedNames: Set<string>;
 } {
   const [snap, setSnap] = useState<ModSnapshot>(snapshot);
   useEffect(() => subscribeModeration(() => setSnap(snapshot)), []);
@@ -283,6 +331,15 @@ export function useModeration(): ModSnapshot & {
       !!cawId && snap.hiddenPosts.has(String(cawId).toLowerCase()),
     [snap.hiddenPosts],
   );
+  const sanctionFor = useCallback(
+    (nameId: bigint | string | number | null | undefined) =>
+      nameId == null || nameId === ''
+        ? null
+        : (snap.sanctions.find((s) => s.nameId === String(nameId)) ??
+          null),
+    [snap.sanctions],
+  );
+  const sanctionedNames = new Set(snap.sanctions.map((s) => s.nameId));
   const hiddenAttHashesFor = useCallback(
     (cawId: string) => {
       const key = String(cawId).toLowerCase();
@@ -298,5 +355,7 @@ export function useModeration(): ModSnapshot & {
     isRoot: snap.role === 'root',
     isPostHidden,
     hiddenAttHashesFor,
+    sanctionFor,
+    sanctionedNames,
   };
 }
