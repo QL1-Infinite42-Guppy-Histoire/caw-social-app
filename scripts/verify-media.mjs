@@ -195,6 +195,62 @@ fakeFetch((url) => {
     fetchCalls.filter((u) => u.includes('/v1/profile/5')).length === 2);
 }
 
+{
+  // v0.7.10: a FAILED profile-media fetch is cached only for
+  // the short MEDIA_NEGATIVE_CACHE_MS TTL — within the TTL a
+  // repeat lookup does not refetch (no retry loop), but once
+  // it lapses the next lookup refetches and a recovered
+  // server's media shows within the same session. A success
+  // is then session-cached as before. Date.now is faked past
+  // the TTL so the test does not wait it out.
+  check('mediaFor: the negative-cache TTL is a short 30 s',
+    api.MEDIA_NEGATIVE_CACHE_MS === 30000);
+  let serverDown = true;
+  fakeFetch((url) => {
+    if (url === api.MEDIA_API + '/v1/profile/20') {
+      return serverDown
+        ? jsonRes({}, false, 500)
+        : jsonRes({ nameId: '20', icon: { url: 'https://x/media/back.jpg', size: 3 }, header: null, audio: null });
+    }
+    if (url === api.MEDIA_API + '/v1/profile/21') {
+      if (serverDown) throw new Error('network down');
+      return jsonRes({ nameId: '21', icon: { url: 'https://x/media/back21.jpg', size: 4 }, header: null, audio: null });
+    }
+    throw new Error('network down');
+  });
+  const realDateNow = Date.now;
+  const baseNow = realDateNow();
+  check('mediaFor: HTTP failure resolves null (negative entry)',
+    (await api.mediaFor(20n)) === null);
+  check('mediaFor: network failure resolves null (negative entry)',
+    (await api.mediaFor(21n)) === null);
+  check('mediaFor: within the TTL a failed lookup is NOT refetched',
+    (await api.mediaFor(20n)) === null &&
+      fetchCalls.filter((u) => u.includes('/v1/profile/20')).length === 1 &&
+      fetchCalls.filter((u) => u.includes('/v1/profile/21')).length === 1);
+  serverDown = false;
+  check('mediaFor: within the TTL the negative entry still serves null after recovery',
+    (await api.mediaFor(20n)) === null &&
+      fetchCalls.filter((u) => u.includes('/v1/profile/20')).length === 1);
+  Date.now = () => baseNow + api.MEDIA_NEGATIVE_CACHE_MS + 1000;
+  try {
+    const back = await api.mediaFor(20n);
+    check('mediaFor: after the TTL the HTTP failure is refetched and recovers',
+      !!back && back.icon && back.icon.url === 'https://x/media/back.jpg' &&
+        fetchCalls.filter((u) => u.includes('/v1/profile/20')).length === 2);
+    const back21 = await api.mediaFor(21n);
+    check('mediaFor: after the TTL the network failure is refetched and recovers',
+      !!back21 && back21.icon && back21.icon.url === 'https://x/media/back21.jpg' &&
+        fetchCalls.filter((u) => u.includes('/v1/profile/21')).length === 2);
+    const again = await api.mediaFor(20n);
+    check('mediaFor: the recovered success is session-cached (no refetch)',
+      again === back &&
+        fetchCalls.filter((u) => u.includes('/v1/profile/20')).length === 2);
+  } finally {
+    Date.now = realDateNow;
+  }
+}
+
 const CAW_A = '0x' + 'aa'.repeat(32);
 const CAW_B = '0x' + 'bb'.repeat(32);
 const CAW_C = '0x' + 'cc'.repeat(32);
@@ -442,9 +498,12 @@ check('reads: mediaFor / attachmentsFor use the 15 s read timeout (v0.7.5)',
   /\/v1\/posts\?caw=' \+ chunk\.join\(','\),\s+undefined,\s+15000,?\s*\)/.test(mediaSrc));
 check('reads: attachmentsFor caches only non-empty lists (v0.7.5)',
   mediaSrc.includes('if (okFetch && list.length > 0)'));
+check('reads: mediaFor caches failures only for the negative TTL (v0.7.10)',
+  mediaSrc.includes('MEDIA_NEGATIVE_CACHE_MS = 30000') &&
+  mediaSrc.includes('entry.negativeUntil = Date.now() + MEDIA_NEGATIVE_CACHE_MS'));
 const appJson = JSON.parse(readFileSync(ROOT + 'app.json', 'utf8'));
-check('app.json: version 0.7.9 / versionCode 57',
-  appJson.expo.version === '0.7.9' && appJson.expo.android.versionCode === 57);
+check('app.json: version 0.7.10 / versionCode 58',
+  appJson.expo.version === '0.7.10' && appJson.expo.android.versionCode === 58);
 
 /* ---- 9. moderation (v0.7.6) ---- */
 const EMPTY = api.MEDIA_EMPTY_SHA256;

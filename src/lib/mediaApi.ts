@@ -46,6 +46,15 @@
  * Empty results are no longer cached (only non-empty lists
  * are), and the read timeouts grew to 15 s so a slow cold read
  * through the relay stops feeding the empty path.
+ *
+ * v0.7.10 display fix: the same pinning on the profile-media
+ * path — mediaFor cached a FAILED fetch (HTTP error / network
+ * failure resolving to null) for the whole session, so one
+ * transient failure hid a name's icon / header / audio until
+ * the app restarted. Failures are now cached only for a short
+ * negative-cache TTL (MEDIA_NEGATIVE_CACHE_MS); a successful
+ * answer — media present, or a legitimately empty profile —
+ * is still cached for the session exactly as before.
  */
 import { sha256, type Wallet } from 'ethers';
 
@@ -333,29 +342,74 @@ function mimeForUri(uri: string): string {
 
 /* ---------------- profile media reads ---------------- */
 
-const mediaCache = new Map<string, Promise<ProfileMedia | null>>();
+/** How long a FAILED profile-media fetch stays cached (ms).
+ *  A down server must not turn every avatar on screen into a
+ *  retry loop, so failures are still cached — but only for
+ *  this short TTL (v0.7.10): once it lapses the next lookup
+ *  refetches, so a transient failure recovers within the
+ *  session instead of pinning the fallback look until the
+ *  app restarts. Successful answers are NOT subject to this
+ *  TTL — they are cached for the session as before. */
+export const MEDIA_NEGATIVE_CACHE_MS = 30000;
+
+interface MediaCacheEntry {
+  promise: Promise<ProfileMedia | null>;
+  /** Epoch ms until which a FAILED result stays cached;
+   *  0 while the fetch is in flight or when the result was
+   *  a success (present media or a legitimately empty
+   *  profile), which stays cached for the whole session. */
+  negativeUntil: number;
+}
+
+const mediaCache = new Map<string, MediaCacheEntry>();
 
 /**
  * The shared profile media for one name (icon / header / audio),
  * or null when the name has none — or when the server cannot be
- * reached. Cached per name for the session; failures resolve to
- * null and are cached too (a down server must not turn every
- * avatar on screen into a retry loop). Never rejects.
+ * reached. Successful answers are cached per name for the
+ * session; failures resolve to null and are cached only for
+ * MEDIA_NEGATIVE_CACHE_MS (a down server must not turn every
+ * avatar on screen into a retry loop, but a transient failure
+ * must not pin the fallback for the whole session either).
+ * Never rejects.
  */
 export function mediaFor(
   nameId: bigint | string | number,
 ): Promise<ProfileMedia | null> {
   const key = String(nameId);
-  if (!mediaCache.has(key)) {
-    const p = fetchTimeout(MEDIA_API + '/v1/profile/' + key, undefined, 15000)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) =>
-        j && (j.icon || j.header || j.audio) ? (j as ProfileMedia) : null,
-      )
-      .catch(() => null);
-    mediaCache.set(key, p);
+  const hit = mediaCache.get(key);
+  if (hit) {
+    if (hit.negativeUntil === 0 || hit.negativeUntil > Date.now()) {
+      return hit.promise;
+    }
+    mediaCache.delete(key);
   }
-  return mediaCache.get(key)!;
+  const entry: MediaCacheEntry = {
+    promise: Promise.resolve(null),
+    negativeUntil: 0,
+  };
+  let failed = false;
+  const p = fetchTimeout(MEDIA_API + '/v1/profile/' + key, undefined, 15000)
+    .then((r) => {
+      if (!r.ok) failed = true;
+      return r.ok ? r.json() : null;
+    })
+    .then((j) =>
+      j && (j.icon || j.header || j.audio) ? (j as ProfileMedia) : null,
+    )
+    .catch(() => {
+      failed = true;
+      return null;
+    })
+    .then((result) => {
+      if (result === null && failed) {
+        entry.negativeUntil = Date.now() + MEDIA_NEGATIVE_CACHE_MS;
+      }
+      return result;
+    });
+  entry.promise = p;
+  mediaCache.set(key, entry);
+  return p;
 }
 
 /** Drop one name's cached profile media (after a set / clear). */
