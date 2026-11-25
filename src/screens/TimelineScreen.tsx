@@ -544,8 +544,8 @@ export default function TimelineScreen() {
 
   /* ---------- SuperLike (v0.4.8; O-burn design v0.5.0;
    * two-leg design v0.6.3) ----------
-   * 25,000,000 O in total: the 10,000,000 O burn first, then
-   * the 15,000,000 O author payment. A failed burn means
+   * 5,000,000 O in total (v0.7.0 pricing): the 1,000,000 O burn first, then
+   * the 4,000,000 O author payment. A failed burn means
    * nothing happened; a failed payment after the burn leaves
    * a debt whose only retry is the payment-only sheet below
    * (see the pay-sheet block after SuperRecaw).
@@ -647,8 +647,8 @@ export default function TimelineScreen() {
 
   /* ---------- SuperRecaw (v0.5.0; two money legs v0.6.3) ----------
    * From the recaw choice sheet: the normal Recaw lands first,
-   * then the 20,000,000 O burn marks it as a SuperRecaw, then
-   * the 5,000,000 O author payment. A burn that fails after
+   * then the 3,000,000 O burn marks it as a SuperRecaw, then
+   * the 2,000,000 O author payment. A burn that fails after
    * the recaw landed leaves a debt whose only retry is the
    * burn-only sheet below; a payment that fails after the
    * burn leaves the payment-only debt (next block). */
@@ -1294,8 +1294,8 @@ export default function TimelineScreen() {
                 const it = recawChoice;
                 setRecawChoice(null);
                 if (it) {
-                  // v0.6.3: the gate mirrors the flow — the
-                  // full 25,000,000 total, or the burn alone
+                  // The gate mirrors the flow — the
+                  // full 5,000,000 total (SUPERRECAW_TOTAL_RAW), or the burn alone
                   // for one's own post (no author leg exists).
                   const need = app.myTokens.some(
                     (t) => t.id === it.senderId,

@@ -155,12 +155,12 @@ export async function performAction(
  * SuperLike （超いいね, v0.4.8; O-burn design v0.5.0; two-leg
  * design v0.6.3): see lib/superlike.ts. NOT a CAW protocol
  * action: the payment is TWO ordinary QL1 transactions —
- *   leg 1: the BURN of 10,000,000 O to the burn address,
+ *   leg 1: the BURN of 1,000,000 O to the burn address,
  *          carrying the post binding as trailing calldata.
  *          This leg defines the action (it is what the ⭐
  *          count reads), so it goes first: if it fails,
  *          nothing happened and there is no debt state.
- *   leg 2: a plain transfer of 15,000,000 O to the post
+ *   leg 2: a plain transfer of 4,000,000 O to the post
  *          author's owner. If THIS fails after the burn
  *          landed, the payment is recorded as a debt
  *          (lib/authorPay.ts) and Error('sl-pay-pending') is
@@ -176,7 +176,8 @@ export async function performAction(
  *    fresh) being my own address — so the author leg can
  *    never be a payment to oneself;
  *  - the O balance is re-read fresh on QL1; short of the
- *    25,000,000 total is a hard stop (Error('shortfall'),
+ *    5,000,000 total (v0.7.0 repricing; v0.6.3–v0.6.7 charged
+ *    25,000,000 in total) is a hard stop (Error('shortfall'),
  *    the balance attached as `balance`).
  * Throws Error('auth') / Error('locked') like performAction.
  * On success the marked-burn index is nudged (the count itself
@@ -238,9 +239,11 @@ export async function performSuperlike(
 /**
  * SuperRecaw (v0.5.0; two money legs since v0.6.3): the
  * normal Recaw action FIRST, then — only after it landed —
- * the 20,000,000 O burn carrying the SRC1 marker for the
- * original post, and last the 5,000,000 O plain transfer to
- * the original author. The O balance is checked fresh BEFORE
+ * the 3,000,000 O burn carrying the SRC1 marker for the
+ * original post, and last the 2,000,000 O plain transfer to
+ * the original author (5,000,000 O in total since the v0.7.0
+ * repricing; v0.6.3 charged 20,000,000 burned + 5,000,000 to
+ * the author). The O balance is checked fresh BEFORE
  * the recaw is signed, so an O shortfall refuses the whole
  * Super path (Error('shortfall')) and the UI can offer the
  * plain Recaw instead — never a half state.

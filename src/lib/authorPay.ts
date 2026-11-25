@@ -4,11 +4,13 @@
  * record for when that leg fails after the rest of the
  * action already landed.
  *
- * Since v0.6.3 (user decision 2026-11-13) both actions cost
- * 25,000,000 O in total: a marked BURN leg (see
- * lib/markedBurns.ts) plus a plain, UNMARKED O transfer to
- * the post's author — 15,000,000 O for a SuperLike,
- * 5,000,000 O for a SuperRecaw. The author leg carries no
+ * Since v0.6.3 (user decision 2026-11-13) both actions have
+ * a marked BURN leg (see lib/markedBurns.ts) plus a plain,
+ * UNMARKED O transfer to the post's author. v0.7.0
+ * (2026-11-18) repriced both to 5,000,000 O in total — the
+ * author leg is 4,000,000 O for a SuperLike and 2,000,000 O
+ * for a SuperRecaw (v0.6.3–v0.6.7: 25,000,000 in total,
+ * 15,000,000 / 5,000,000 to the author). The author leg carries no
  * marker and is never counted; it is money owed to a person,
  * so when it fails after the defining leg (the burn, or the
  * Recaw + burn) already landed, the debt is recorded here

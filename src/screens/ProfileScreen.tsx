@@ -874,7 +874,7 @@ export default function ProfileScreen({
    * guards and sheets as the timeline: own-post block,
    * known-shortfall hard stop. performSuperlike re-checks
    * everything against fresh chain reads before signing.
-   * 25,000,000 O in two legs — burn first, then the author
+   * 5,000,000 O in two legs (v0.7.0 pricing) — burn first, then the author
    * payment; a failed payment leaves the payment-only debt. */
   const [slItem, setSlItem] = useState<TimelineItem | null>(null);
   const [slName, setSlName] = useState('');
@@ -1999,8 +1999,8 @@ export default function ProfileScreen({
                 const it = recawChoice;
                 setRecawChoice(null);
                 if (it) {
-                  // v0.6.3: the gate mirrors the flow — the
-                  // full 25,000,000 total, or the burn alone
+                  // The gate mirrors the flow — the
+                  // full 5,000,000 total (SUPERRECAW_TOTAL_RAW), or the burn alone
                   // for one's own post (no author leg exists).
                   const need = app.myTokens.some(
                     (t) => t.id === it.senderId,

@@ -258,7 +258,7 @@ export default function PostDetailScreen({
    * The detail view renders the same PostCard as the feed and
    * the profile lists, so it offers the same SuperLike flow with
    * the same guards (own-post block, fresh-balance hard stop).
-   * 25,000,000 O in two legs; a failed author payment after
+   * 5,000,000 O in two legs (v0.7.0 pricing); a failed author payment after
    * the burn leaves the payment-only debt, retried from the
    * ⭐ tap like everywhere else. */
   const [slStatus, setSlStatus] = useState<Record<string, string>>({});
