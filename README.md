@@ -1115,8 +1115,7 @@ own wallet is the end-to-end check, as with the web version.
   `0xd2140E16aDf37194036865E90BbCA1139b739d0D`.
 - Keys never leave the phone: the secret lives only in
   expo-secure-store; the password gate stores a salted hash only.
-- Builds run on GitHub Actions (`eas build --local`, preview profile),
-  the same way as GuppyWallet.
+- Builds run on GitHub Actions (`eas build --local`, preview profile).
 
 ## License
 
