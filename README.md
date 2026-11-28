@@ -17,9 +17,15 @@ first one is its end-to-end check.
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.7.10** — released 2026-11-24.
+- **現在版 / Current: v0.7.11** — released 2026-11-28.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.7.10/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.7.11/caw-social.apk
+  v0.7.11 adds a planned ETH⇄QL1 Bridge announcement
+  row to the left drawer, between Get a name and
+  HuntersDEX. It is display only — not pressable, with
+  no destination — because the new bridge is not
+  deployed and not operating; its status badge reads
+  "soon...", the same literal in every language.
   v0.7.10 fixes profile media disappearing for the
   whole session after one transient failure: a failed
   profile-media fetch is now cached only for a short
