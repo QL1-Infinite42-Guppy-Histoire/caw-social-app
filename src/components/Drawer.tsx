@@ -307,10 +307,12 @@ export default function Drawer({
                 a Pressable: there is no destination, because
                 the new bridge (trustless vault v1.1,
                 implemented + verified) is NOT deployed and
-                not operating. The label and the status string
-                are literals, identical in every language —
-                "soon..." is the user's wording and is never
-                translated (no i18n key on purpose). */}
+                not operating. The label is a literal, identical
+                in every language. v0.7.12: the status badge is
+                no longer a literal — it is the localized
+                present-tense status tr('nav.inDevelopment')
+                (a statement of current fact, not a promise),
+                translated in all twenty languages. */}
             <View style={styles.row}>
               <View style={styles.rowIcon}>
                 <BridgeIcon size={23} color="#0f1419" />
@@ -318,7 +320,7 @@ export default function Drawer({
               <Text style={styles.rowLabel} numberOfLines={1}>
                 ETH⇄QL1 Bridge
               </Text>
-              <Text style={styles.planBadge}>soon...</Text>
+              <Text style={styles.planBadge}>{tr('nav.inDevelopment')}</Text>
             </View>
             <DrawerRow
               icon={<RepeatIcon size={23} color="#0f1419" />}

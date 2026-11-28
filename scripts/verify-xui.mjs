@@ -640,7 +640,10 @@ console.log('\n-- structure / reachability --');
   );
   ok(
     drawerSrc.includes('ETH⇄QL1 Bridge') &&
-      drawerSrc.includes('<Text style={styles.planBadge}>soon...</Text>') &&
+      drawerSrc.includes(
+        "<Text style={styles.planBadge}>{tr('nav.inDevelopment')}</Text>",
+      ) &&
+      !drawerSrc.includes('soon...') &&
       drawerSrc.includes('BridgeIcon') &&
       !drawerSrc.includes('label="ETH⇄QL1 Bridge"') &&
       drawerSrc.indexOf("tr('nav.getName')") <
@@ -648,7 +651,28 @@ console.log('\n-- structure / reachability --');
       drawerSrc.indexOf('styles.planBadge') <
         drawerSrc.indexOf('label="HuntersDEX"') &&
       uiSrc.includes('export function BridgeIcon'),
-    'planned bridge row (v0.7.11): a plain non-pressable announcement between Get a name and HuntersDEX — NOT a DrawerRow (no onPress, no destination; the bridge is not deployed), literal label + literal "soon..." badge in every language',
+    'planned bridge row (v0.7.11, badge localized v0.7.12): a plain non-pressable announcement between Get a name and HuntersDEX — NOT a DrawerRow (no onPress, no destination; the bridge is not deployed), literal label + localized "in development" badge via tr(\'nav.inDevelopment\') (the old literal "soon..." is gone)',
+  );
+  ok(
+    (() => {
+      const i18nSrc = read('src/i18n.ts');
+      const expected = [
+        'In development', '開発中', '开发中', '개발 중', 'En desarrollo',
+        'Geliştiriliyor', 'در حال توسعه', 'Dalam pengembangan',
+        'Đang phát triển', 'กำลังพัฒนา', 'In sviluppo',
+        'Em desenvolvimento', 'In ontwikkeling', 'W opracowaniu',
+        'У розробці', 'In Entwicklung', 'В разработке', 'قيد التطوير',
+        'विकासाधीन', 'En développement',
+      ];
+      const vals = [...i18nSrc.matchAll(/'nav\.inDevelopment': '([^']*)'/g)].map(
+        (m) => m[1],
+      );
+      return (
+        vals.length === 20 &&
+        expected.every((v) => vals.includes(v))
+      );
+    })(),
+    'bridge badge i18n (v0.7.12): nav.inDevelopment exists in all 20 language dicts with the per-language "in development" wording',
   );
   ok(
     !uiSrc.includes('superFrame') && !uiSrc.includes('LinearGradient') &&
