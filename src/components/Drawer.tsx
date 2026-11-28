@@ -17,7 +17,6 @@ import {
   Avatar,
   BellIcon,
   BookmarkIcon,
-  BridgeIcon,
   FlameIcon,
   RepeatIcon,
   S,
@@ -64,9 +63,7 @@ import { BurnHawkModal } from '../screens/BurnHawkScreen';
  *     (own profile page) / ウォレット (the wallet section) /
  *     自分の名前 (My names; the row's icon is the name's own
  *     avatar — names ARE avatars everywhere in this app) /
- *     名前を取る (Get a name) / ETH⇄QL1 Bridge (v0.7.11:
- *     a PLANNED announcement row only — not pressable, no
- *     destination; the new bridge is not deployed) /
+ *     名前を取る (Get a name) /
  *     HuntersDEX (the same
  *     modal as ever; renamed from HuntersExchange in
  *     v0.7.0) / BurnHawk (v0.7.0: the in-app HAWK burn
@@ -302,26 +299,6 @@ export default function Drawer({
               label={tr('nav.getName')}
               onPress={go(() => app.openHub('get'))}
             />
-            {/* v0.7.11: the planned ETH⇄QL1 Bridge — an
-                announcement row ONLY. It is a plain View, not
-                a Pressable: there is no destination, because
-                the new bridge (trustless vault v1.1,
-                implemented + verified) is NOT deployed and
-                not operating. The label is a literal, identical
-                in every language. v0.7.12: the status badge is
-                no longer a literal — it is the localized
-                present-tense status tr('nav.inDevelopment')
-                (a statement of current fact, not a promise),
-                translated in all twenty languages. */}
-            <View style={styles.row}>
-              <View style={styles.rowIcon}>
-                <BridgeIcon size={23} color="#0f1419" />
-              </View>
-              <Text style={styles.rowLabel} numberOfLines={1}>
-                ETH⇄QL1 Bridge
-              </Text>
-              <Text style={styles.planBadge}>{tr('nav.inDevelopment')}</Text>
-            </View>
             <DrawerRow
               icon={<RepeatIcon size={23} color="#0f1419" />}
               label="HuntersDEX"
@@ -461,19 +438,5 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0f1419',
     marginStart: 16,
-  },
-  /* v0.7.11: the planned bridge row's status badge — the web
-     viewer's .nav-plan-badge metrics in RN terms. */
-  planBadge: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#536471',
-    borderWidth: 1,
-    borderColor: '#eff3f4',
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    marginStart: 'auto',
-    overflow: 'hidden',
   },
 });

@@ -502,8 +502,8 @@ check('reads: mediaFor caches failures only for the negative TTL (v0.7.10)',
   mediaSrc.includes('MEDIA_NEGATIVE_CACHE_MS = 30000') &&
   mediaSrc.includes('entry.negativeUntil = Date.now() + MEDIA_NEGATIVE_CACHE_MS'));
 const appJson = JSON.parse(readFileSync(ROOT + 'app.json', 'utf8'));
-check('app.json: version 0.7.12 / versionCode 60',
-  appJson.expo.version === '0.7.12' && appJson.expo.android.versionCode === 60);
+check('app.json: version 0.7.13 / versionCode 61',
+  appJson.expo.version === '0.7.13' && appJson.expo.android.versionCode === 61);
 
 /* ---- 9. moderation (v0.7.6) ---- */
 const EMPTY = api.MEDIA_EMPTY_SHA256;

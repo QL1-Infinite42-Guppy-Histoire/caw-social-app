@@ -220,7 +220,7 @@ const AL = await import(OUT + '/lib/autoLock.js');
     appJson.expo.plugins.includes('./plugins/withAllowBackupFalse.js'),
     'S1: the local manifest plugin is registered',
   );
-  ok(appJson.expo.android.versionCode === 60, 'release: versionCode is 60');
+  ok(appJson.expo.android.versionCode === 61, 'release: versionCode is 61');
   const plugin = readFileSync(ROOT + '/plugins/withAllowBackupFalse.js', 'utf8');
   ok(
     plugin.includes('withAndroidManifest') &&
