@@ -17,9 +17,15 @@ first one is its end-to-end check.
 
 ![Build APK](https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/actions/workflows/build-apk.yml/badge.svg)
 
-- **現在版 / Current: v0.7.11** — released 2026-11-28.
+- **現在版 / Current: v0.7.12** — released 2026-11-28.
   APK 直リンク / direct download:
-  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.7.11/caw-social.apk
+  https://github.com/QL1-Infinite42-Guppy-Histoire/caw-social-app/releases/download/v0.7.12/caw-social.apk
+  v0.7.12 localizes the Bridge row's status badge:
+  it no longer reads "soon..."; it shows the
+  present-tense "in development" status in each of
+  the twenty languages (Japanese: 「開発中」). The
+  row itself is unchanged — display only, not
+  pressable, no destination.
   v0.7.11 adds a planned ETH⇄QL1 Bridge announcement
   row to the left drawer, between Get a name and
   HuntersDEX. It is display only — not pressable, with
