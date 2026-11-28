@@ -639,6 +639,18 @@ console.log('\n-- structure / reachability --');
     'drawer rows: profile / wallet / my names / get a name / HuntersDEX / BurnHawk (v0.7.0, between the DEX and bookmarks) / bookmarks / inbox, then settings low',
   );
   ok(
+    drawerSrc.includes('ETH⇄QL1 Bridge') &&
+      drawerSrc.includes('<Text style={styles.planBadge}>soon...</Text>') &&
+      drawerSrc.includes('BridgeIcon') &&
+      !drawerSrc.includes('label="ETH⇄QL1 Bridge"') &&
+      drawerSrc.indexOf("tr('nav.getName')") <
+        drawerSrc.indexOf('styles.planBadge') &&
+      drawerSrc.indexOf('styles.planBadge') <
+        drawerSrc.indexOf('label="HuntersDEX"') &&
+      uiSrc.includes('export function BridgeIcon'),
+    'planned bridge row (v0.7.11): a plain non-pressable announcement between Get a name and HuntersDEX — NOT a DrawerRow (no onPress, no destination; the bridge is not deployed), literal label + literal "soon..." badge in every language',
+  );
+  ok(
     !uiSrc.includes('superFrame') && !uiSrc.includes('LinearGradient') &&
       !uiSrc.includes('⭐'),
     'SuperRecaw renders FLAT: no gradient frame, no badge, no star emoji in ui.tsx',

@@ -280,6 +280,20 @@ export function RepeatIcon({ size = 18, color = '#536471' }: { size?: number; co
     </Svg>
   );
 }
+/** Bridge (v0.7.11): the planned ETH⇄QL1 Bridge drawer row's
+ *  mark — two opposing horizontal arrows (the lucide
+ *  arrow-right-left paths), same feather stroke style. The
+ *  row is an announcement only; the bridge is not deployed. */
+export function BridgeIcon({ size = 18, color = '#536471' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M8 3 4 7l4 4" />
+      <Path d="M4 7h16" />
+      <Path d="m16 21 4-4-4-4" />
+      <Path d="M20 17H4" />
+    </Svg>
+  );
+}
 /** Flame (v0.7.0): the BurnHawk drawer row's mark — a simple
  *  flame outline in the same feather stroke style. */
 export function FlameIcon({ size = 18, color = '#536471' }: { size?: number; color?: string }) {
